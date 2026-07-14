@@ -53,6 +53,15 @@ public sealed class ConsoleReporter : IReporter
             output.WriteLine($"{C(Bold)}{group.Key}{C(Reset)} {C(Dim)}({group.Count()} unused){C(Reset)}");
             foreach (var f in group)
             {
+                if (f.Kind == FindingKind.UnusedProjectReference)
+                {
+                    output.WriteLine(
+                        $"  {C(Red)}{f.SymbolKind,-10}{C(Reset)} {C(Cyan)}{f.ReferencedProject ?? f.Symbol}{C(Reset)}");
+                    output.WriteLine(
+                        $"             {C(Dim)}unused reference · {RelativePath(f.FilePath)}{C(Reset)}");
+                    continue;
+                }
+
                 var location = $"{RelativePath(f.FilePath)}:{f.Line}";
                 output.WriteLine(
                     $"  {C(Red)}{f.SymbolKind,-10}{C(Reset)} {C(Cyan)}{f.Symbol}{C(Reset)}");
@@ -125,7 +134,12 @@ public sealed class SarifReporter : IReporter
         {
             ruleId = f.Kind.ToString(),
             level = "warning",
-            message = new { text = $"Unused {f.SymbolKind} '{f.Symbol}' is never referenced." },
+            message = new
+            {
+                text = f.Kind == FindingKind.UnusedProjectReference
+                    ? $"Project '{f.Project}' references '{f.ReferencedProject ?? f.Symbol}' but uses no type from it."
+                    : $"Unused {f.SymbolKind} '{f.Symbol}' is never referenced.",
+            },
             locations = new[]
             {
                 new
@@ -133,7 +147,11 @@ public sealed class SarifReporter : IReporter
                     physicalLocation = new
                     {
                         artifactLocation = new { uri = new Uri(f.FilePath).AbsoluteUri },
-                        region = new { startLine = f.Line, startColumn = f.Column },
+                        // SARIF regions are 1-based; omit the region for findings without a line
+                        // (e.g. project references point at the .csproj as a whole).
+                        region = f.Line > 0
+                            ? (object)new { startLine = f.Line, startColumn = f.Column }
+                            : null,
                     },
                 },
             },

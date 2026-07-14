@@ -71,6 +71,7 @@ public sealed class DeadCodeAnalyzer
 
         var reachable = Traverse(state);
         BuildFindings(state, reachable, result);
+        BuildProjectReferenceFindings(solution, projects, state, result);
 
         if (state.UnresolvedTypeReferences > 0)
             result.LoadDiagnostics.Insert(0,
@@ -149,13 +150,62 @@ public sealed class DeadCodeAnalyzer
             if (!ShouldReport(symbol, dead)) continue;
             if (ToFinding(symbol) is { } finding) result.Findings.Add(finding);
         }
+    }
+
+    /// <summary>
+    /// Emit an <see cref="FindingKind.UnusedProjectReference"/> for each declared &lt;ProjectReference&gt;
+    /// whose referencing project's code touches NO symbol in the referenced project's assembly.
+    /// </summary>
+    /// <remarks>
+    /// CONSERVATIVE by design (invariant #8): a reference can be load-bearing with no symbol edges —
+    /// transitive restore, runtime-only deps, [InternalsVisibleTo]. We only look at references between
+    /// two C# projects that are BOTH in the analyzed set; anything else (non-C#, ignored, unresolved)
+    /// is left alone. When unsure we prefer a false negative (don't flag) over a false positive.
+    /// </remarks>
+    private void BuildProjectReferenceFindings(
+        Solution solution, List<Project> projects, GraphState state, AnalysisResult result)
+    {
+        // Only reason about references whose target is a project we actually analyzed; otherwise we
+        // have no usage data for it and could flag a genuinely-used reference.
+        var analyzed = projects.ToDictionary(p => p.Id, p => p);
+
+        foreach (var project in projects)
+        {
+            var used = state.UsedAssemblies.TryGetValue(project.AssemblyName, out var set)
+                ? set
+                : (IReadOnlySet<string>)System.Collections.Immutable.ImmutableHashSet<string>.Empty;
+
+            foreach (var reference in project.ProjectReferences)
+            {
+                if (!analyzed.TryGetValue(reference.ProjectId, out var referenced)) continue;
+
+                // Self-reference (defensive) — never flag.
+                if (string.Equals(referenced.AssemblyName, project.AssemblyName, StringComparison.Ordinal))
+                    continue;
+
+                if (used.Contains(referenced.AssemblyName)) continue; // reference IS exercised
+
+                result.Findings.Add(new Finding(
+                    FindingKind.UnusedProjectReference,
+                    referenced.Name,
+                    "project reference",
+                    "",
+                    project.Name,
+                    project.FilePath ?? project.Name,
+                    0,
+                    0,
+                    referenced.Name));
+            }
+        }
 
         result.Findings.Sort((a, b) =>
         {
             var byProject = string.CompareOrdinal(a.Project, b.Project);
             if (byProject != 0) return byProject;
             var byFile = string.CompareOrdinal(a.FilePath, b.FilePath);
-            return byFile != 0 ? byFile : a.Line.CompareTo(b.Line);
+            if (byFile != 0) return byFile;
+            var byLine = a.Line.CompareTo(b.Line);
+            return byLine != 0 ? byLine : string.CompareOrdinal(a.Symbol, b.Symbol);
         });
     }
 

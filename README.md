@@ -8,7 +8,8 @@ The paid tools (ReSharper/Rider, NDepend) own this space; the free Roslyn analyz
 Runs locally and in CI, and is **configured entirely in code** (`knip.json`).
 
 > Status: **working prototype.** Flagship feature (dead code) is implemented and validated on real
-> solutions. Unused project references and unused NuGet packages are on the roadmap below.
+> solutions. Unused `<ProjectReference>` detection is implemented; unused NuGet packages are on the
+> roadmap below.
 
 ## How it works
 
@@ -85,7 +86,10 @@ resolution degrades, and you may get false positives. Knip.NET detects this and 
 ## Roadmap
 
 1. ✅ **Dead code** (solution-wide unused symbols) — done.
-2. **Unused `<ProjectReference>`s** — no cross-project symbol used from a referenced project.
+2. ✅ **Unused `<ProjectReference>`s** — a reference whose declaring project uses no symbol from the
+   referenced project's assembly (`UnusedProjectReference` finding). Conservative: references with any
+   cross-project symbol edge (including `[InternalsVisibleTo]` usage) are kept; runtime-only/transitive
+   dependencies with no symbol edge may still be flagged, so triage before removing.
 3. **Unused `<PackageReference>`s** — no symbol from a package's namespaces referenced.
 4. Framework plugins (ASP.NET Core minimal APIs, EF Core, MassTransit, source generators),
    incremental/cached index, `--baseline` for gating only new findings.
