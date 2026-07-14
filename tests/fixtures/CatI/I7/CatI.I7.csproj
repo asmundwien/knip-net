@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <NoWarn>CS0067;CS0169;CS0649;IDE0051;IDE0052</NoWarn>
+    <!-- ISOLATED: this project deliberately references an UNDECLARED type so Roslyn yields a
+         TypeKind.Error, driving UnresolvedTypeReferences>0 and the unresolved-type warning (I7).
+         It is kept in its OWN Fixture.slnx so I8's cleanliness (Main solution) stays assertable.
+         It never builds in the gate (not in Knip.slnx); MSBuildWorkspace analyzes it in-memory. -->
+  </PropertyGroup>
+
+</Project>
