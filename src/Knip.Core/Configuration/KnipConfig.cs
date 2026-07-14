@@ -63,8 +63,18 @@ public sealed class EntryPointConfig
     /// <summary>Attribute names (with or without the "Attribute" suffix) that mark a member as an entry point.</summary>
     public List<string> Attributes { get; set; } =
     [
-        "Fact", "Theory", "TestMethod", "Test", "TestCase", "SetUp", "TearDown",
+        // xUnit
+        "Fact", "Theory",
+        // MSTest (test + lifecycle hooks — invoked by the framework, never by name in source)
+        "TestMethod", "DataTestMethod",
+        "TestInitialize", "TestCleanup",
+        "ClassInitialize", "ClassCleanup",
+        "AssemblyInitialize", "AssemblyCleanup",
+        // NUnit (test + one-time and per-test lifecycle hooks)
+        "Test", "TestCase", "SetUp", "TearDown", "OneTimeSetUp", "OneTimeTearDown",
+        // BenchmarkDotNet
         "Benchmark", "GlobalSetup",
+        // ASP.NET Core routing
         "HttpGet", "HttpPost", "HttpPut", "HttpDelete", "HttpPatch", "Route",
     ];
 

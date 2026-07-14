@@ -7,7 +7,15 @@
   "entryPoints": {
     // Members the framework/runtime invokes without a by-name reference in your code.
     "symbolNames": ["Main", "ConfigureServices", "Configure"],
-    "attributes": ["Fact", "Theory", "TestMethod", "HttpGet", "HttpPost", "HttpPut", "HttpDelete"],
+    // Test frameworks (incl. MSTest/NUnit lifecycle hooks the runner invokes) + ASP.NET routing.
+    "attributes": [
+      "Fact", "Theory",
+      "TestMethod", "DataTestMethod",
+      "TestInitialize", "TestCleanup", "ClassInitialize", "ClassCleanup",
+      "AssemblyInitialize", "AssemblyCleanup",
+      "Test", "TestCase", "SetUp", "TearDown", "OneTimeSetUp", "OneTimeTearDown",
+      "HttpGet", "HttpPost", "HttpPut", "HttpDelete"
+    ],
     "baseTypes": [
       "Microsoft.AspNetCore.Mvc.ControllerBase",
       "Microsoft.AspNetCore.Components.ComponentBase"
