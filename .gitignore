@@ -1,0 +1,16 @@
+# Build output
+bin/
+obj/
+TestResults/
+*.binlog
+
+# IDE / editor state
+.vs/
+.idea/
+*.user
+*.suo
+.DS_Store
+
+# Never commit feed credentials (feed auth lives on the machine/CI, not in the repo)
+nuget.config
+NuGet.config

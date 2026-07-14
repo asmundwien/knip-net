@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Knip.Cli</RootNamespace>
+
+    <!-- Packaged as a .NET global tool: `dotnet tool install -g Hdir.Knip` -> `dotnet knip` -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dotnet-knip</ToolCommandName>
+    <PackageId>Hdir.Knip</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Knip for .NET — finds solution-wide dead code (and, later, unused project/package references) via Roslyn.</Description>
+    <RollForward>LatestMajor</RollForward>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Locator must be able to find the SDK's MSBuild; keep it out of the way of Roslyn's copy. -->
+    <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
+    <!-- Do not ship MSBuild assemblies; Locator loads the SDK's copies at runtime (MSBL001). -->
+    <PackageReference Include="Microsoft.Build.Framework" Version="17.11.48" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Knip.Core\Knip.Core.csproj" />
+  </ItemGroup>
+
+</Project>

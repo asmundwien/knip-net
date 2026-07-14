@@ -1,0 +1,98 @@
+# Knip.NET
+
+[Knip](https://knip.dev) for .NET — a **free, solution-wide dead-code finder** built on Roslyn.
+The paid tools (ReSharper/Rider, NDepend) own this space; the free Roslyn analyzers only catch
+*private* unused members inside a single file. Knip.NET closes the gap: it reports code that is
+**unreferenced across the entire solution**, including public/internal types and members.
+
+Runs locally and in CI, and is **configured entirely in code** (`knip.json`).
+
+> Status: **working prototype.** Flagship feature (dead code) is implemented and validated on real
+> solutions. Unused project references and unused NuGet packages are on the roadmap below.
+
+## How it works
+
+1. **Load** the `.sln`/`.slnx`/`.csproj` via Roslyn's `MSBuildWorkspace` → every project's
+   `Compilation` + `SemanticModel`.
+2. **Build a reachability graph.** Walk every syntax tree, recording each declared symbol and the
+   "uses" edges from it (signature types, attributes, method-body references, `new`, generic args —
+   so e.g. `AddScoped<IFoo, Foo>()` keeps `Foo` alive). Graph nodes are keyed by **documentation
+   comment ID** (`M:Ns.Type.Method(...)`), which unifies a symbol across project boundaries — the
+   critical trick that makes cross-project analysis correct (Roslyn does *not* give you reference
+   equality for a symbol seen from source vs. from a referenced assembly).
+3. **Seed roots** from configurable entry points: `Main`, `[Fact]`/`[HttpGet]`/… attributes,
+   `*Controller` and `ControllerBase` subtypes, `IHostedService` implementers, DI-registered types,
+   and (optionally) the public API of library projects.
+4. **Mark and sweep.** BFS from roots over the graph; declared-but-unreachable symbols are dead.
+
+Overrides and interface implementations are kept alive when their abstraction is used; constructors,
+overrides, and interface impls are excluded from reporting to avoid noise.
+
+## Usage
+
+```bash
+# from the repo (dev):
+dotnet run --project src/Knip.Cli -- path/to/Your.sln
+
+# or install as a global tool:
+dotnet pack src/Knip.Cli -c Release
+dotnet tool install -g Hdir.Knip --add-source src/Knip.Cli/bin/Release
+dotnet-knip Your.sln            # also invokable as `dotnet knip`
+```
+
+Options: `-s/--solution`, `-c/--config`, `-f/--format console|json|sarif`, `-v/--verbose`,
+`--no-fail`. **Exit codes:** `0` clean · `1` unused code found (CI gate) · `2` error.
+
+### CI
+
+```yaml
+- run: dotnet restore Your.sln        # REQUIRED — see below
+- run: dotnet-knip Your.sln --format sarif > knip.sarif
+```
+
+`--format json`/`sarif` give machine-readable output; SARIF surfaces as annotations in
+GitHub/Azure DevOps. A non-empty result exits `1` to fail the build (use `--no-fail` to report-only).
+
+## Configuration (`knip.json`)
+
+Discovered automatically (nearest `knip.json` up the tree) or passed with `--config`.
+See [`knip.json`](./knip.json) for a fully-annotated example. Key knobs:
+
+- `entryPoints` — attributes / base types / name patterns / symbol names that seed reachability.
+- `roots.treatAllPublicAsUsed` — for **library solutions** consumed by other repos, treats the
+  public surface as used so you only see internally-dead code. `roots.publicApiProjects` scopes this
+  to specific projects.
+- `ignore.files` / `ignore.symbols` / `ignore.namespaces` / `ignore.projects` — globs
+  (`**`, `*`, `?`) for generated code, reflection/serialization targets, etc.
+
+## Important: restore the solution first
+
+Like Knip needs `node_modules`, Knip.NET needs a **restored, resolvable** solution. If packages are
+missing (e.g. an unauthenticated private feed), their types become *error types*, overload
+resolution degrades, and you may get false positives. Knip.NET detects this and prints a warning
+(`N reference(s) to unresolved types …`). Always `dotnet restore` (with feeds authenticated) first.
+
+## Known limitations (prototype)
+
+- **Invisible usage** beyond the built-in heuristics — reflection (`Activator.CreateInstance`,
+  `Type.GetType`), non-generic DI (`AddScoped(typeof(Foo))` / assembly scanning), and data-bound
+  Razor/Blazor/XAML members — needs `ignore`/`entryPoints` config. This is the moat the paid tools
+  charge for; framework-aware "plugins" are the path to closing it.
+- Enum members and constructors are not reported.
+- Whole-solution `MSBuildWorkspace` load is the main cost; fine for the solutions tested (~2s for 10
+  projects), but very large solutions will want a persisted index.
+
+## Roadmap
+
+1. ✅ **Dead code** (solution-wide unused symbols) — done.
+2. **Unused `<ProjectReference>`s** — no cross-project symbol used from a referenced project.
+3. **Unused `<PackageReference>`s** — no symbol from a package's namespaces referenced.
+4. Framework plugins (ASP.NET Core minimal APIs, EF Core, MassTransit, source generators),
+   incremental/cached index, `--baseline` for gating only new findings.
+
+## Project layout
+
+```
+src/Knip.Core/   Roslyn engine: Configuration, Analysis (graph + walker), Model, Reporting
+src/Knip.Cli/    dotnet global tool: arg parsing, MSBuild registration, exit codes
+```

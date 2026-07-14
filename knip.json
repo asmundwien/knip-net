@@ -1,0 +1,40 @@
+{
+  // Knip.NET configuration (config-as-code). All keys are optional; defaults are tuned for
+  // ASP.NET Core + xUnit/NUnit. Only what you set here overrides the defaults.
+
+  // "solution": "path/to/Your.sln",   // or pass on the CLI: dotnet-knip Your.sln
+
+  "entryPoints": {
+    // Members the framework/runtime invokes without a by-name reference in your code.
+    "symbolNames": ["Main", "ConfigureServices", "Configure"],
+    "attributes": ["Fact", "Theory", "TestMethod", "HttpGet", "HttpPost", "HttpPut", "HttpDelete"],
+    "baseTypes": [
+      "Microsoft.AspNetCore.Mvc.ControllerBase",
+      "Microsoft.AspNetCore.Components.ComponentBase"
+    ],
+    "implementedInterfaces": ["Microsoft.Extensions.Hosting.IHostedService"],
+    "namePatterns": ["*Controller"]
+  },
+
+  "roots": {
+    // For a solution of shared libraries consumed by OTHER repos, the public surface is "used"
+    // externally. Flip this on to report only internally-dead code (private/internal helpers).
+    "treatAllPublicAsUsed": false,
+
+    // Or scope it: project-name globs whose public API is treated as the used surface.
+    "publicApiProjects": ["*.Abstractions", "*.Contracts"]
+  },
+
+  "ignore": {
+    // Generated code and build output are ignored by default; add project-specific patterns here.
+    "files": ["**/*.g.cs", "**/obj/**", "**/bin/**", "**/Migrations/**"],
+    // Reflection/serialization targets that look dead but aren't. Fully-qualified name globs.
+    "symbols": ["*.Dtos.*", "MyApp.Generated.*"],
+    "namespaces": [],
+    "projects": []
+  },
+
+  "output": {
+    "format": "console"   // console | json | sarif
+  }
+}

@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Knip.Cli/Knip.Cli.csproj" />
+    <Project Path="src/Knip.Core/Knip.Core.csproj" />
+  </Folder>
+</Solution>
