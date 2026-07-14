@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="../I4.Kept/CatI.I4.Kept.csproj" />
+  <Project Path="../I4.Skipped/CatI.I4.Skipped.csproj" />
+</Solution>
