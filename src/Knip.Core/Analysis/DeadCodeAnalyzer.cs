@@ -76,10 +76,23 @@ public sealed class DeadCodeAnalyzer
             foreach (var tree in compilation.SyntaxTrees)
             {
                 ct.ThrowIfCancellationRequested();
-                if (Glob.IsMatchAny(tree.FilePath, _config.Ignore.Files)) continue;
+                var root = await tree.GetRootAsync(ct);
+
+                // H11: BUILT-IN generated trees are WALKED (their outbound edges/roots keep the user
+                // symbols they reference alive — extending G8 from symbols to files) but every symbol
+                // they DECLARE is marked "never report" (recorded by the walker into
+                // state.GeneratedDeclarations). Checked BEFORE ignore.files so this holds even when a
+                // generated pattern also sits in the (default) ignore list.
+                var isGenerated = GeneratedCode.IsGenerated(tree, root);
+
+                // I1 (UNCHANGED): a user-configured ignore.files match that is NOT built-in generated is
+                // dropped WHOLESALE — not walked, not reported.
+                if (!isGenerated && Glob.IsMatchAny(tree.FilePath, _config.Ignore.Files)) continue;
+
                 var model = compilation.GetSemanticModel(tree);
-                var walker = new ReferenceWalker(model, _config, isPublicApi, solutionAssemblies, state);
-                walker.Visit(await tree.GetRootAsync(ct));
+                var walker = new ReferenceWalker(
+                    model, _config, isPublicApi, solutionAssemblies, state, generatedTree: isGenerated);
+                walker.Visit(root);
             }
 
             // Plugin pass: AFTER the core walk of this project (declared nodes exist to edge to),
@@ -184,7 +197,7 @@ public sealed class DeadCodeAnalyzer
         foreach (var (id, symbol) in state.Declared)
         {
             if (!dead.Contains(id)) continue;
-            if (!ShouldReport(symbol, dead)) continue;
+            if (!ShouldReport(id, symbol, dead, state)) continue;
             if (ToFinding(symbol) is { } finding) result.Findings.Add(finding);
         }
     }
@@ -247,8 +260,13 @@ public sealed class DeadCodeAnalyzer
         });
     }
 
-    private bool ShouldReport(ISymbol symbol, HashSet<string> dead)
+    private bool ShouldReport(string id, ISymbol symbol, HashSet<string> dead, GraphState state)
     {
+        // H11: never report a declaration that lives in a BUILT-IN generated tree — walked for its edges,
+        // but its own dead code is not the user's to delete. Mirrors the ignore-for-reporting path below
+        // (in the graph, suppressed for reporting only).
+        if (state.GeneratedDeclarations.Contains(id)) return false;
+
         // Report the outermost dead symbol only: if the containing type is dead, skip the member.
         for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)
             if (SymbolId.For(container) is { } containerId && dead.Contains(containerId)) return false;
