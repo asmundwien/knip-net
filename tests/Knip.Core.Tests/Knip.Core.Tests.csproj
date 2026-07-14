@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Knip.Core.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+    <!-- Fixture solutions are compiled at runtime by MSBuildWorkspace; they are not built as part
+         of this project and are never added to Knip.slnx. -->
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <!-- The TEST project registers MSBuild (Knip.Core is locator-free by invariant #9). -->
+    <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
+    <!-- Do not ship MSBuild assemblies; Locator loads the SDK's copies at runtime (MSBL001).
+         Mirrors Knip.Cli.csproj — needed because Knip.Core drags in Build.Framework transitively. -->
+    <PackageReference Include="Microsoft.Build.Framework" Version="17.11.48" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Core only. Fixtures are loaded by path at runtime, NOT project-referenced. -->
+    <ProjectReference Include="..\..\src\Knip.Core\Knip.Core.csproj" />
+  </ItemGroup>
+
+</Project>

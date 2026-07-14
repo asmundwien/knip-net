@@ -3,4 +3,7 @@
     <Project Path="src/Knip.Cli/Knip.Cli.csproj" />
     <Project Path="src/Knip.Core/Knip.Core.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Knip.Core.Tests/Knip.Core.Tests.csproj" />
+  </Folder>
 </Solution>
