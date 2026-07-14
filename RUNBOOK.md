@@ -294,6 +294,55 @@ same problem and solves it with `--production` mode; same shape applies here.
   (test code not analyzed at all, orphaned tests not reported, `InternalsVisibleTo` edges
   lost), but usable; pinned by K4.
 - Acceptance: battery category K promoted to Contract.
+- **Test-project classification (K7 — DECIDED 2026-07-15).** Signal order, first match wins:
+  (1) explicit `testProjects` config globs override everything; (2) auto-detect via referenced
+  test-framework assemblies in the `Compilation` (`MSTest.TestFramework`, `xunit.core`,
+  `nunit.framework`) — prefer this over the MSBuild `IsTestProject` property (Roslyn's Project
+  model doesn't surface it; do NOT build MSBuild-evaluation machinery for it — use only if it turns
+  out cheaply readable); (3) name globs (`*Tests`, `*.Test`, `*.Tests`) as fallback. Zero test
+  projects detected in production mode → warn LOUDLY on stderr AND in the machine-readable
+  diagnostics block (WS8); never fail, exit codes unchanged. `-v` lists each project's
+  classification and WHICH signal classified it (nobody trusts `OnlyUsedByTests` without seeing
+  the classification). K7 promotes with a fixture per signal + the zero-detection warning.
+
+### WS8 — Agent-first interface (the JSON output IS the product API)
+
+Agents are first-class users: the canonical downstream flow is **agent runs knip → triages →
+deletes → verifies → opens PR**. Everything an agent needs must be in the machine output — no
+stderr scraping, no source-diving for symbol boundaries, no guessing whether the run was
+trustworthy. **Priority: WS8a jumps the queue** — WS3/WS7/WS-enum must emit their finding kinds
+into the WS8 vocabulary rather than inventing their own; WS2's `UnusedProjectReference` folds into
+the v2 design. WS8b–d run in the **reporting/CLI lane, parallel to the analyzer lane**; coordinate
+merges on `Finding`/`BuildFindings`, which both lanes touch.
+
+- **WS8a — Design proposal (→ human sign-off; user-facing API, §6 gate).** One doc proposing:
+  - **JSON v2:** root `formatVersion`; a `reliability` block (restore/load failures,
+    unresolved-type count, projects loaded vs failed, production-mode classification warnings,
+    overall `degraded: bool`); a `summary` block (counts by project × kind × confidence);
+    per-finding: stable `id` (content hash of kind+symbol+project), full deletion `span`
+    (start/end covering attributes + XML docs), `confidence` (high|medium|low), `hazards[]`
+    (publicApi, serializationShaped, configBoundType, …), `remediation` (deleteSymbol |
+    removeFromInterface | removeProjectReference | removePackageReference | deleteCodeAndTests).
+    Propose the confidence/hazard RULES explicitly — they encode §3.8 and need human eyes (L9).
+  - **CLI surface:** `--why <symbol-or-id>` (flagged → incoming-edge report; alive → shortest root
+    path with file:line hops); `--print-config` (effective merged config as JSON); unknown-key
+    warnings extended from `plugins.*` to ALL of knip.json.
+  - **Config schema:** a published JSON Schema for knip.json, in-repo, referenced via `$schema` in
+    the example config.
+  - Console output stays human-first; SARIF unchanged except mapping new fields into existing SARIF
+    slots (e.g. `partialFingerprints` for IDs).
+- **WS8b — Implement JSON v2 + reliability + schema** (after sign-off). v2 is a BREAKING change to
+  the JSON shape, acceptable pre-1.0 — do NOT maintain both shapes.
+- **WS8c — `--why` + `--print-config`.** If `--why` needs extra edge provenance that costs memory,
+  gate it behind the flag (two-pass acceptable).
+- **WS8d — AGENTS.md:** the canonical agent recipe — run → check `reliability.degraded` → triage by
+  confidence → delete by span → build + tests → re-run knip asserting no new LIVE-code flags
+  (deleting dead code legitimately uncovers newly-dead symbols, so don't assert identical output) →
+  baseline/ignore the remainder with reasons. Terse, imperative, exit-code table, one full JSON
+  example. README links to it.
+- **Hazards:** §3.7/§3.8 unchanged — WS8 ENRICHES the finding set, never changes it; low confidence
+  is NOT license to emit previously-suppressed findings. `--why` output is prose + file:line, never
+  raw graph keys (invariant #1 stays internal).
 
 ## 6. Orchestration protocol
 
@@ -409,18 +458,23 @@ Keep this section updated as tasks complete — it is the handoff memory between
       **B6 doc-comment-ID collision** (identical signatures in different assemblies merged into
       one graph node → false negative; SymbolId now assembly-qualifies keys via the DEFINING
       assembly, preserving invariant #1 — B1/B3 cross-project tests stay green).
-- [ ] Pending human DECISIONS (D-rows — **escalate to the human BEFORE writing any code**,
-      even when the fix looks obviously correct; this is a process rule, learned from B6):
-      **H11** — source-generated trees are dropped wholesale by `ignore.files **/*.g.cs`, losing
-      edges FROM generated code (decide: walk generated trees for edges while never reporting
-      their declarations). **K7** — test-project classification default for WS7 production mode
-      (IsTestProject prop vs package refs vs name globs; and whether to warn on zero test projects).
-- [ ] **PRIORITY (before first WS5 plugin): MSTest/NUnit entry-point defaults gap.** Real-solution
-      run (Tjenesteportalen) showed the default `entryPoints.attributes` lack MSTest
-      `TestInitialize`/`TestCleanup`/`ClassInitialize`/`ClassCleanup`/`AssemblyInitialize`/
-      `AssemblyCleanup`/`DataTestMethod` and NUnit `OneTimeSetUp`/`OneTimeTearDown` → 50 such
-      methods flagged + cascading FPs (a §3.8 FP class on plain MSTest/NUnit). Fix the defaults +
-      add F-category battery rows with dead-sibling proof.
+- Process rule (learned from B6): **D-rows escalate to the human BEFORE writing any code**, even
+  when the fix looks obviously correct. Disposition sign-off ≠ merging the concrete diff. Remaining
+  open D-rows: **L9** (confidence rules, blocks WS8b — decided at WS8a sign-off), and the interface-
+  member-remediation backlog row below.
+- [x] **H11 DECIDED 2026-07-15** (walk generated trees for edges/roots, never report their decls;
+      I1 wholesale-drop unchanged) — implementation pending (analyzer lane; see H11 appendix row).
+- [x] **K7 DECIDED 2026-07-15** (classification signal order + zero-detection warning) — feeds WS7;
+      see the WS7 card and K7 appendix row.
+- [x] **MSTest/NUnit entry-point defaults gap FIXED** — added the MSTest lifecycle + NUnit one-time
+      attributes to default `entryPoints.attributes`; battery rows F9–F11 (Contract). Removed a
+      §3.8 FP class seen on Tjenesteportalen.
+- [ ] **WS8 — Agent-first interface (JSON output = product API). WS8a design PROPOSAL JUMPS THE
+      QUEUE** (→ human sign-off, §6). WS3/WS7/WS-enum must emit their finding kinds into the WS8
+      vocabulary, not invent their own; WS2's `UnusedProjectReference` folds into v2. WS8b (JSON v2
+      + reliability + schema), WS8c (`--why`/`--print-config`), WS8d (AGENTS.md) run in the
+      reporting/CLI lane, parallel to the analyzer lane — coordinate `Finding`/`BuildFindings`
+      merges. Battery = Appendix category L (L9 is a D-row blocking WS8b). See the §5 WS8 card.
 - [ ] **`ignore.symbols` bare-name matching fix** (user-facing knip.json semantics → §6): methods
       match by BARE name, not FQN, because the display format renders methods without
       namespace/type. Undermines the I2 contract test's meaning. Needs a real task (fix the match
@@ -439,12 +493,16 @@ Keep this section updated as tasks complete — it is the handoff memory between
       used-assembly sets tracked in `AddEdge`. Conservative: runtime-only/transitive refs (zero
       symbol edges) are a documented FP surface (README "triage before removing"); a future
       opt-out `knip.json` key would need sign-off (not added).
-- [ ] WS3 unused PackageReferences
+- [ ] WS3 unused PackageReferences — **BLOCKED on WS8a**: emit its finding kind into the WS8 v2
+      vocabulary, don't invent a bespoke shape.
 - [x] WS4 net472 multi-target + legacy csproj — both TFMs build `-warnaserror` (Roslyn 4.14 for
       net472, 5.6 for net10); ZERO `#if` in any source (all divergence at csproj level; BCL gaps
       via PolySharp + a shim file); legacy-format fixture authored. **Windows-only e2e of the
       legacy fixture NOT yet run — needs a Windows/VS Build Tools runner.**
-- [~] WS5 plugin seam + first plugins — design SIGNED OFF 2026-07-14 (`docs/ws5-plugin-seam.md`):
+- [~] WS5 plugin seam + first plugins — **SEAM + `reflection` plugin LANDED** (H1/H2 promoted to
+      Contract; suite 95/15; both TFMs green). Remaining plugins queued: `scanningDi` (→H4/H12),
+      `blazorParameter` (→H6), `serialization` (→H5) — each promotes its H row with a decoy fixture.
+      Design SIGNED OFF 2026-07-14 (`docs/ws5-plugin-seam.md`):
       additive-only symbol-typed `IContributionSink` choke point (invariants #1/#5/#8 hold
       structurally), per-project `Contribute`, built-in plugins only (no external assembly loading).
       New `plugins.*` knip.json keys APPROVED. Conditions: unknown plugin ids AND unknown per-plugin
@@ -457,7 +515,11 @@ Keep this section updated as tasks complete — it is the handoff memory between
       (global tool `Hdir.Knip`, marketplace/feed publish) still TODO and human-approved.
 - [ ] WS7 production-mode analysis / test-only reachability (Appendix A category K). Real-world
       signal: Tjenesteportalen has ~151 production findings kept alive only by test roots in default
-      mode — high-value.
+      mode — high-value. K7 classification DECIDED (see WS7 card). **BLOCKED on WS8a**: emit
+      `OnlyUsedByTests` into the WS8 v2 vocabulary.
+- [ ] WS8 — Agent-first interface (JSON = product API). **WS8a design proposal is the current
+      queue-jumper** (→ sign-off, §6); WS8b–d in the reporting/CLI lane. Battery = Appendix L. See
+      the §5 WS8 card.
 
 ---
 
@@ -607,7 +669,7 @@ is what we tell users today.
 | H8 `G-moat` | WebForms `.aspx`/`.ascx` code-behind referenced only from markup (WS4-relevant) | alive | `ignore.files` on code-behind |
 | H9 `G-moat` | Types referenced only from `web.config`/`app.config` (WCF services, HTTP modules, providers) | alive | `ignore.symbols` |
 | H10 `G-moat` | `dynamic` dispatch `((dynamic)x).M()` | alive (undecidable — document as designed FP + mitigation) | `ignore.symbols` |
-| H11 `D` | Source-generated code references user symbols, but `**/*.g.cs` is ignored by default → edges FROM generated code are lost | decide: always walk generated trees for edges while never reporting their declarations | config today |
+| H11 `G-feat` | Source-generated code references user symbols, but `**/*.g.cs` is ignored by default → edges FROM generated code are lost | DECIDED 2026-07-15: WALK generated trees for their outbound edges/roots, NEVER report declarations inside them (extends the G8 rule). "Generated" = built-in default patterns (`**/*.g.cs`, `*.Designer.cs`…) + generator-produced in-memory trees + `[GeneratedCode]`/auto-generated header heuristics. **I1 stays pinned as-is** (user `ignore.files` keeps wholesale-drop: not walked, not reported); only BUILT-IN generated handling becomes walk-don't-report. A new opt-out config key = §6 mini sign-off before code. Battery: (a) user partial method used only from its generated counterpart → alive; (b) dead symbol declared in a generated file → never reported; (c) decoy unrelated dead user symbol still flagged. Measure the added semantic cost on fixtures; record in ledger. | walk-don't-report |
 | H12 `G-moat` | MassTransit consumers registered via `AddConsumer`/scanning | alive | `entryPoints` |
 
 ### I. Config, ignore & diagnostics
@@ -647,4 +709,22 @@ alive. K1 pins that default; the rest assert production mode (`--production` / `
 | K4 `C` | Workaround: `ignore.projects` excluding the test project | test-only production method flagged (verify — expected green) |
 | K5 `G-feat` | Transitive: A used by B; B used only by tests | production mode flags BOTH A and B |
 | K6 `G-feat` | Production code genuinely used by production AND by tests | never flagged in production mode (tests don't taint) |
-| K7 `D` | Test-project classification default (`IsTestProject` prop vs package refs vs name globs) and whether production mode warns when zero test projects are detected | decide with the human |
+| K7 `G-feat` | Test-project classification default and zero-test-project warning | DECIDED 2026-07-15 (see WS7 card): signal order = explicit `testProjects` globs → referenced test-framework assemblies (`MSTest.TestFramework`/`xunit.core`/`nunit.framework`) → name globs (`*Tests`/`*.Test`/`*.Tests`). Zero detected in production mode → loud warning (stderr + machine diagnostics), never fail. `-v` shows each project's classification + the signal. Promotes with a fixture per signal + the zero-detection warning |
+
+### L. Agent contract — the machine output as product API (WS8 feed)
+
+Agents are first-class users (run → triage → delete → verify → PR). These rows pin what the JSON
+must guarantee. Rows promote to `C` as WS8b–d land; **L9 (confidence rules) blocks WS8b** — it is
+the "agents may act autonomously" line and is decided with the human at WS8a sign-off.
+
+| ID | Scenario | Expected |
+|---|---|---|
+| L1 `G-feat` | JSON v2 on a mixed fixture | validates against the shipped output-format JSON Schema |
+| L2 `G-feat` | Two consecutive runs, same fixture | identical finding ids and order (extends J4) |
+| L3 `G-feat` | Broken-restore fixture (reuse I7) / clean (I8) | `reliability.degraded: true` with failure detail / `false` with zeroes |
+| L4 `G-feat` | Delete every high-confidence finding strictly by reported span, then build | compiles green — spans are complete deletion units (the interface-level anti-vacuous test) |
+| L5 `G-feat` | `--why` on a flagged / on an alive symbol | "no incoming edges" report / root-to-symbol path; exit 0 |
+| L6 `G-feat` | `--print-config` with partial knip.json | effective config = file merged over defaults, valid JSON on stdout |
+| L7 `G-feat` | Unknown top-level + unknown nested config key | one warning each, naming the key; analysis proceeds, exit unchanged |
+| L8 `G-feat` | Summary block vs findings array | counts agree exactly |
+| L9 `D` | Confidence rule table (high/medium/low criteria) | decide with the human at WS8a sign-off — the "agents may act autonomously" line |
