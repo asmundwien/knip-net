@@ -72,6 +72,22 @@ missing (e.g. an unauthenticated private feed), their types become *error types*
 resolution degrades, and you may get false positives. Knip.NET detects this and prints a warning
 (`N reference(s) to unresolved types …`). Always `dotnet restore` (with feeds authenticated) first.
 
+## Target frameworks & legacy (`packages.config`) support
+
+Both projects multi-target **`net10.0;net472`**:
+
+- **`net10.0`** (Roslyn/`Microsoft.CodeAnalysis` 5.6.0) is the shipped global tool and the default on
+  any OS. Use it for SDK-style solutions.
+- **`net472`** (Roslyn 4.14.0 — the last major with `netstandard2.0` support) exists so the engine can
+  run on **full-framework MSBuild** (Visual Studio Build Tools). That is the only MSBuild that can
+  evaluate **legacy, non-SDK `.csproj` + `packages.config`** solutions (e.g. `net48` code). Because it
+  needs full-framework MSBuild, the net472 path is **Windows-only** — it compiles everywhere but can
+  only *run* on Windows with VS Build Tools installed. A hand-authored legacy fixture lives at
+  `tests/fixtures/WS4Legacy/` for a future Windows end-to-end job.
+
+The engine (`Knip.Core` — walker/analyzer/graph) is version- and OS-agnostic and compiles unchanged
+against both Roslyn 4.x and 5.x; only build/loading glue differs per framework.
+
 ## Known limitations (prototype)
 
 - **Invisible usage** beyond the built-in heuristics — reflection (`Activator.CreateInstance`,

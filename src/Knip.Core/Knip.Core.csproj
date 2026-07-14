@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;net472</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
@@ -11,9 +11,41 @@
     <NoWarn>$(NoWarn);RS1039;CS0618</NoWarn>
   </PropertyGroup>
 
-  <ItemGroup>
+  <!-- net472-only down-level BCL shims. Compiled and globally-imported ONLY for net472 so the
+       analysis sources stay byte-identical across TFMs (no #if in walker/analyzer/graph — invariant #9).
+       On net10.0 these files are excluded and the BCL/runtime methods are used directly. -->
+  <ItemGroup Condition="'$(TargetFramework)'!='net472'">
+    <Compile Remove="Compatibility\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)'=='net472'">
+    <Using Include="Knip.Core.Compatibility" />
+  </ItemGroup>
+
+  <!-- net10.0 uses Roslyn 5.x (matches the .NET 10 SDK). -->
+  <ItemGroup Condition="'$(TargetFramework)'=='net10.0'">
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="5.6.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="5.6.0" />
+  </ItemGroup>
+
+  <!-- net472 pins Roslyn 4.x — the last major with netstandard2.0 support, so the engine compiles
+       for full-framework MSBuild (needed to evaluate legacy .csproj + packages.config solutions).
+       Every semantic-model API this engine uses (GetCollectionInitializerSymbolInfo,
+       GetDeconstructionInfo, GetForEachStatementInfo, GetAwaitExpressionInfo, GetQueryClauseInfo,
+       IImplicitIndexerReferenceOperation) exists on the common 4.x + 5.x surface — no #if needed here. -->
+  <ItemGroup Condition="'$(TargetFramework)'=='net472'">
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.14.0" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.14.0" />
+    <!-- Workspaces.MSBuild 4.14.0 drags Microsoft.Build.Tasks.Core 17.13.9 transitively, which carries
+         a known high-severity advisory (NU1903, GHSA-h4j7-5rxr-p4wc). Pin the patched 17.14.8. These
+         MSBuild assemblies are never shipped: MSBuildLocator loads the machine's copies at runtime, so
+         reference-only (ExcludeAssets=runtime;PrivateAssets=all) — mirrors the Build.Framework pin in
+         Knip.Cli. The net10.0 (Roslyn 5.6.0) path uses Workspaces.MSBuild.Contracts and is unaffected. -->
+    <PackageReference Include="Microsoft.Build.Tasks.Core" Version="17.14.28" ExcludeAssets="runtime" PrivateAssets="all" />
+    <!-- Reference assemblies so net472 COMPILES cross-platform (no full .NET Framework install). -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <!-- Compile-time source generator that supplies compiler-intrinsic polyfills (System.Index,
+         System.Range, IsExternalInit) the net472 BCL lacks. Generator-only: nothing ships at runtime. -->
+    <PackageReference Include="PolySharp" Version="1.15.0" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

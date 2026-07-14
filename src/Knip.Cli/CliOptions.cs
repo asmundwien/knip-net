@@ -37,7 +37,7 @@ internal sealed class CliOptions
                     options.NoFail = true;
                     break;
                 default:
-                    if (arg.StartsWith('-'))
+                    if (arg.StartsWith("-", StringComparison.Ordinal))
                         throw new ArgumentException($"unknown option: {arg}");
                     // First bare argument is treated as the target solution/project.
                     options.Solution ??= arg;
