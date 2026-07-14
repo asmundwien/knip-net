@@ -195,10 +195,51 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         // Compound assignment (a += b) invokes a user-defined operator; simple assignment may apply
         // an implicit user-defined conversion on the right-hand side.
         if (node.IsKind(SyntaxKind.SimpleAssignmentExpression))
+        {
             RecordConversion(node.Right);
+            // Tuple deconstruction (`var (a, b) = obj`, `(a, b) = obj`) invokes a user-defined
+            // Deconstruct with no IdentifierName node at the use site.
+            RecordDeconstruction(node);
+        }
         else
+        {
             RecordReference(node);
+        }
         base.VisitAssignmentExpression(node);
+    }
+
+    // Collection initializers (`new C { 1, 2 }`) lower each element to an Add(...) call with no
+    // IdentifierName node at the use site. GetCollectionInitializerSymbolInfo on each element
+    // resolves to the invoked Add method (CandidateSymbols fallback when overload resolution fails).
+    public override void VisitInitializerExpression(InitializerExpressionSyntax node)
+    {
+        if (node.IsKind(SyntaxKind.CollectionInitializerExpression) && _context.Count > 0)
+        {
+            var source = _context.Peek();
+            foreach (var element in node.Expressions)
+            {
+                var info = _model.GetCollectionInitializerSymbolInfo(element);
+                if (info.Symbol is { } symbol)
+                    AddEdge(source, symbol);
+                else
+                    foreach (var candidate in info.CandidateSymbols)
+                        AddEdge(source, candidate);
+            }
+        }
+        base.VisitInitializerExpression(node);
+    }
+
+    private void RecordDeconstruction(AssignmentExpressionSyntax node)
+    {
+        if (_context.Count == 0) return;
+        RecordDeconstructionInfo(_model.GetDeconstructionInfo(node), _context.Peek());
+    }
+
+    private void RecordDeconstructionInfo(DeconstructionInfo info, string source)
+    {
+        if (info.Method is { } method) AddEdge(source, method);
+        foreach (var nested in info.Nested)
+            RecordDeconstructionInfo(nested, source);
     }
 
     // Element access (obj[i], obj[^1], obj[1..]) invokes a member with no IdentifierName/GenericName
