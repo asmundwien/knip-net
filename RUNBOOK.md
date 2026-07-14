@@ -67,12 +67,20 @@ Exit codes: `0` clean, `1` findings (CI gate), `2` error.
 Each of these encodes a bug that was already found and fixed, or a design decision the human
 made. Reject any diff that violates one, even if its tests pass.
 
-1. **Graph keys are documentation-comment IDs, never symbol references.**
+1. **Graph keys are assembly-qualified documentation-comment IDs, never symbol references.**
    Roslyn does NOT give reference-equal symbols for the same method seen from source vs. from
    a referenced assembly; `SymbolEqualityComparer` across projects silently drops every
    cross-project edge and defeats "solution-wide". All graph state is string-keyed via
    `SymbolId.For(...)` (`src/Knip.Core/Analysis/SymbolId.cs`). Any diff reintroducing
    symbol-keyed dictionaries/sets in `GraphState` or the walker is wrong.
+   **Key format is `DefiningAssembly::docId`** (e.g. `MyLib::M:Ns.Type.Method(System.String)`).
+   The bare doc-comment ID is NOT enough: two projects can declare an identical
+   namespace+type+signature, whose doc-comment IDs are identical, and merge into one node —
+   one project's use then keeps the other's dead copy alive (the B6 false negative, fixed
+   2026-07-14). The qualifier MUST be `symbol.OriginalDefinition.ContainingAssembly` (the
+   assembly that *defines* the symbol, identical from source and metadata viewpoints) — NOT the
+   referencing compilation, or cross-project identity breaks (B1/B3 are the regression guard).
+   Do NOT "simplify" the assembly prefix away: it is load-bearing, not decoration.
 
 2. **`MSBuildLocator.RegisterDefaults()` runs before any Roslyn-MSBuild type is touched.**
    That is why `Program.cs` is 9 lines and all workspace usage hides behind the
@@ -113,8 +121,17 @@ made. Reject any diff that violates one, even if its tests pass.
   returns **401 in unauthenticated sandboxes**. Analysis of real Hdir solutions is only
   accurate where `dotnet restore` succeeds. Implementation agents should validate on
   **self-contained fixtures** (WS1), not on Hdir solutions, unless the environment has feed auth.
-- Real-solution smoke target when auth exists: `Hego.Common.sln` (expects ~7 findings with
-  `treatAllPublicAsUsed: true`; treat significant deviation as a regression signal).
+- Real-solution smoke target when auth exists: `Hego.Common.sln`. The old "~7 findings"
+  expectation PREDATES WS1b + B6 and is now STALE — WS1b closed 12 false-positive classes and
+  B6 collision-splitting flags more, so the count may legitimately move. **Re-baseline the
+  expected finding set on the first authenticated run; do not treat deviation from ~7 as a
+  regression until re-baselined.**
+- Scale/real-solution data point (Tjenesteportalen, authenticated run 2026-07-14):
+  `Hdir.Selvbetjening.HelseaktorportalBackend.sln` — 10 projects, 2,853 symbols, 634 roots,
+  ~3.6 s analysis, ~335 MB, restore clean, 313 findings. Three hand-verified production findings
+  were all correct. Surfaced the MSTest/NUnit entry-point defaults gap (see §5 / ledger) and a
+  strong WS7 signal (test roots keep production code alive in default mode — 151 production
+  findings are a floor).
 - WS4 (legacy projects) ultimately needs **Windows + Visual Studio Build Tools** to run
   end-to-end. Cross-platform agents can still do the multi-targeting/compile work; flag the
   Windows-only verification for the human or a Windows runner.
@@ -392,22 +409,55 @@ Keep this section updated as tasks complete — it is the handoff memory between
       **B6 doc-comment-ID collision** (identical signatures in different assemblies merged into
       one graph node → false negative; SymbolId now assembly-qualifies keys via the DEFINING
       assembly, preserving invariant #1 — B1/B3 cross-project tests stay green).
-- [ ] Pending human DECISIONS surfaced by the battery (skip-tagged, not blocking):
+- [ ] Pending human DECISIONS (D-rows — **escalate to the human BEFORE writing any code**,
+      even when the fix looks obviously correct; this is a process rule, learned from B6):
       **H11** — source-generated trees are dropped wholesale by `ignore.files **/*.g.cs`, losing
       edges FROM generated code (decide: walk generated trees for edges while never reporting
       their declarations). **K7** — test-project classification default for WS7 production mode
       (IsTestProject prop vs package refs vs name globs; and whether to warn on zero test projects).
-      Also NOTED: `ignore.symbols` matches methods by BARE name, not FQN (the display format renders
-      methods without namespace/type) — the "FQN glob" contract is misleading for members.
-- [ ] WS-enum (new, decided 2026-07-14 from G6): member-level enum dead-code support.
-      Enum members need their own graph nodes + reference tracking. Until then G6 stays
-      `G-feat`; today the tool never reports individual dead enum members.
-- [ ] WS2 unused ProjectReferences
+- [ ] **PRIORITY (before first WS5 plugin): MSTest/NUnit entry-point defaults gap.** Real-solution
+      run (Tjenesteportalen) showed the default `entryPoints.attributes` lack MSTest
+      `TestInitialize`/`TestCleanup`/`ClassInitialize`/`ClassCleanup`/`AssemblyInitialize`/
+      `AssemblyCleanup`/`DataTestMethod` and NUnit `OneTimeSetUp`/`OneTimeTearDown` → 50 such
+      methods flagged + cascading FPs (a §3.8 FP class on plain MSTest/NUnit). Fix the defaults +
+      add F-category battery rows with dead-sibling proof.
+- [ ] **`ignore.symbols` bare-name matching fix** (user-facing knip.json semantics → §6): methods
+      match by BARE name, not FQN, because the display format renders methods without
+      namespace/type. Undermines the I2 contract test's meaning. Needs a real task (fix the match
+      to honor FQN globs for members) + strengthen I2.
+- [ ] **Load-diagnostics: distinguish real project-load failures from restore-audit noise.**
+      MSBuildWorkspace surfaced harmless NU1900/NU1903 audit advisories as "Msbuild failed when
+      processing" while the load actually completed. Real load failures must stay LOUD (invariant
+      #6 degraded-analysis warning); audit noise must not masquerade as load failure.
+- [ ] Backlog (no action yet): interface members flagged because ALL callers use the concrete type
+      (real case `IKontaktregisterFasade.HentPasientInformasjon`) are CORRECT findings, but the
+      remediation is "remove from the interface," not "delete the method" — candidate for a distinct
+      finding kind / remediation hint. Add as a D row when convenient.
+- [ ] WS-enum (decided 2026-07-14 from G6): member-level enum dead-code support.
+      Enum members need their own graph nodes + reference tracking. Until then G6 stays `G-feat`.
+- [x] WS2 unused ProjectReferences — new `FindingKind.UnusedProjectReference`; per-project
+      used-assembly sets tracked in `AddEdge`. Conservative: runtime-only/transitive refs (zero
+      symbol edges) are a documented FP surface (README "triage before removing"); a future
+      opt-out `knip.json` key would need sign-off (not added).
 - [ ] WS3 unused PackageReferences
-- [ ] WS4 net472 multi-target + legacy csproj (floor: .NET Framework 4.8)
-- [ ] WS5 plugin seam + first plugins
-- [ ] WS6 packaging (global tool, CI action, repo CI)
-- [ ] WS7 production-mode analysis / test-only reachability (Appendix A category K)
+- [x] WS4 net472 multi-target + legacy csproj — both TFMs build `-warnaserror` (Roslyn 4.14 for
+      net472, 5.6 for net10); ZERO `#if` in any source (all divergence at csproj level; BCL gaps
+      via PolySharp + a shim file); legacy-format fixture authored. **Windows-only e2e of the
+      legacy fixture NOT yet run — needs a Windows/VS Build Tools runner.**
+- [~] WS5 plugin seam + first plugins — design SIGNED OFF 2026-07-14 (`docs/ws5-plugin-seam.md`):
+      additive-only symbol-typed `IContributionSink` choke point (invariants #1/#5/#8 hold
+      structurally), per-project `Contribute`, built-in plugins only (no external assembly loading).
+      New `plugins.*` knip.json keys APPROVED. Conditions: unknown plugin ids AND unknown per-plugin
+      keys emit a VISIBLE warning (no silent no-op); plugin ids are camelCase (`scanningDi`);
+      default-ON = `reflection` + `scanningDi`, `blazorParameter`/`serialization` OFF (no detection
+      magic); add an F8-style battery row pinning the default-enabled set; every plugin fixture ships
+      a DECOY (unrelated dead symbol asserted STILL flagged with the plugin ON — over-rooting guard);
+      `-v` emits per-plugin contribution counts (roots/edges) + wall-time per project.
+- [~] WS6 — repo CI (build + test GitHub Action) DONE (`.github/workflows/ci.yml`). Packaging
+      (global tool `Hdir.Knip`, marketplace/feed publish) still TODO and human-approved.
+- [ ] WS7 production-mode analysis / test-only reachability (Appendix A category K). Real-world
+      signal: Tjenesteportalen has ~151 production findings kept alive only by test roots in default
+      mode — high-value.
 
 ---
 
