@@ -33,24 +33,24 @@ public sealed class CatETests
         AssertExactly(await FindingsIn("CatE.E01"), "CatE.E01.Box.Unused()");
     }
 
-    [Fact(Skip = "E02 — WS1b: user-defined operator + via a + b is falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E02_operator_plus_alive()
     {
         AssertExactly(await FindingsIn("CatE.E02"),
             "CatE.E02.Money.operator -(CatE.E02.Money, CatE.E02.Money)");
     }
 
-    [Fact(Skip = "E03 — WS1b: implicit conversion operator via assignment is falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E03_implicit_conversion_alive()
     {
         AssertExactly(await FindingsIn("CatE.E03"),
             "CatE.E03.Celsius.explicit operator double(CatE.E03.Celsius)");
     }
 
-    [Fact(Skip = "E04 — WS1b: operator ==/!= via comparison are falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E04_equality_operators_alive()
     {
         // CORRECT: both == and != stay alive; nothing in this scenario is dead.
