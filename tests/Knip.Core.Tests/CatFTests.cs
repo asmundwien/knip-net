@@ -148,4 +148,35 @@ public sealed class CatFTests
             new HashSet<string> { "CatF.F8.EmptyProbeController" },
             flipped);
     }
+
+    [Fact] // F9: MSTest [TestInitialize] setup method rooted by DEFAULT config -> keeps the helper it
+           // calls and the containing type alive; an unattributed sibling is flagged (dead-sibling),
+           // proving the attribute (not mere presence in a test class) is what roots it.
+    public async Task F9_mstest_testinitialize_roots_setup_and_helper()
+    {
+        var findings = await FindingsIn("CatF.F9"); // default config
+        Assert.Equal(
+            new HashSet<string> { "CatF.F9.LifecycleTests.UnattributedSetup()" },
+            findings);
+    }
+
+    [Fact] // F10: MSTest static [ClassInitialize]/[AssemblyInitialize] hooks and [DataTestMethod] are all
+           // rooted by DEFAULT config; an unattributed static sibling is flagged (dead-sibling).
+    public async Task F10_mstest_static_hooks_and_datatestmethod_rooted_by_default()
+    {
+        var findings = await FindingsIn("CatF.F10"); // default config
+        Assert.Equal(
+            new HashSet<string> { "CatF.F10.StaticHooks.UnattributedStaticSetup()" },
+            findings);
+    }
+
+    [Fact] // F11: NUnit [OneTimeSetUp]/[OneTimeTearDown] hooks rooted by DEFAULT config; a same-shaped
+           // unattributed sibling is flagged (dead-sibling).
+    public async Task F11_nunit_one_time_hooks_rooted_by_default()
+    {
+        var findings = await FindingsIn("CatF.F11"); // default config
+        Assert.Equal(
+            new HashSet<string> { "CatF.F11.Fixture.NotAHook()" },
+            findings);
+    }
 }

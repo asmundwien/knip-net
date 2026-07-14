@@ -570,6 +570,9 @@ deterministic type-based fallback for pattern `Dispose`). E12/E13 were green fro
 | F6 `C` | Top-level statements | synthesized Main + host type rooted |
 | F7 `C` | Configured `symbolNames` (classic `Main`, `ConfigureServices`) | rooted |
 | F8 `C` | Entry-point config REPLACED with empty lists | framework defaults gone; previously-rooted code flagged (config actually applies) |
+| F9 `C` | MSTest `[TestInitialize]` setup method (DEFAULT config) | setup + a helper it calls alive; unattributed sibling flagged |
+| F10 `C` | MSTest static `[ClassInitialize]`/`[AssemblyInitialize]` + `[DataTestMethod]` (DEFAULT config) | all rooted; unattributed static sibling flagged |
+| F11 `C` | NUnit `[OneTimeSetUp]`/`[OneTimeTearDown]` (DEFAULT config) | both rooted; unattributed sibling flagged |
 
 ### G. Language corners
 
