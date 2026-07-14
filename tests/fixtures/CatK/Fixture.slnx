@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="CatK.csproj" />
+  <Project Path="K4.Lib/CatK.K4.Lib.csproj" />
+  <Project Path="K4.Tests/CatK.K4.Tests.csproj" />
+</Solution>
