@@ -28,18 +28,18 @@ public sealed class CatHTests
     private static void AssertExactly(IReadOnlySet<string> actual, params string[] expectedDead) =>
         Assert.Equal(new HashSet<string>(expectedDead), actual);
 
-    // H1 — CONFIRMED RED TODAY: [Handle(), NeverCalled()] (Handle flagged; reflection is invisible).
-    [Fact(Skip = "H1 — WS5: reflection plugin (GetMethod(\"X\").Invoke); mitigation today: ignore.symbols [\"CatH.H1.Service.Handle()\"]")]
-    [Trait("status", "moat")]
+    // H1 — PROMOTED (WS5 reflection plugin): GetMethod("Handle").Invoke keeps Handle() alive.
+    [Fact]
+    [Trait("status", "contract")]
     public async Task H1_reflection_invoked_member_alive()
     {
         // FUTURE: Handle() ALIVE (reached only via GetMethod("Handle").Invoke); NeverCalled() flagged.
         AssertExactly(await FindingsIn("CatH.H1"), "CatH.H1.Service.NeverCalled()");
     }
 
-    // H2 — CONFIRMED RED TODAY: [Plugin, UnusedPlugin] (Plugin flagged; the string name is invisible).
-    [Fact(Skip = "H2 — WS5: reflection plugin (Type.GetType(\"Ns.Foo\")); mitigation today: ignore.symbols [\"CatH.H2.Plugin\"]")]
-    [Trait("status", "moat")]
+    // H2 — PROMOTED (WS5 reflection plugin): Type.GetType("CatH.H2.Plugin") keeps Plugin alive.
+    [Fact]
+    [Trait("status", "contract")]
     public async Task H2_string_named_type_alive()
     {
         // FUTURE: Plugin ALIVE (named only in the "CatH.H2.Plugin" string); UnusedPlugin flagged.

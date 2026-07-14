@@ -22,7 +22,10 @@ public sealed class Plugin
     public void Run() { }
 }
 
-// DEAD SIBLING (honest): never named in any string or code -> flagged today AND in future.
+// DEAD SIBLING / OVER-ROOTING DECOY (honest): never named in any string or code -> flagged today AND
+// with the reflection plugin ON. The plugin resolves EXACTLY the string it sees ("CatH.H2.Plugin") via
+// GetTypeByMetadataName; a blanket "root every Plugin-ish type" plugin would wrongly keep this alive.
+// The H2 ALIVE-with-plugin test (and the WS5 over-rooting guard) assert it stays flagged.
 public sealed class UnusedPlugin
 {
     public void Run() { }

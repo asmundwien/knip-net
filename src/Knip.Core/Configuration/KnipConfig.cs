@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Knip.Core.Plugins;
 
 namespace Knip.Core.Configuration;
 
@@ -17,6 +18,54 @@ public sealed class KnipConfig
     public RootConfig Roots { get; set; } = new();
     public IgnoreConfig Ignore { get; set; } = new();
     public OutputConfig Output { get; set; } = new();
+
+    /// <summary>
+    /// Built-in analysis plugins, keyed by camelCase plugin id (e.g. "reflection"). Each block sets
+    /// <c>enabled</c> plus optional per-plugin settings. A plugin absent here uses its default-enabled
+    /// state (see <see cref="PluginRegistry"/>). Unknown ids / unknown per-plugin keys produce a
+    /// visible warning (see <see cref="ValidatePlugins"/>) — they never silently no-op.
+    /// </summary>
+    public Dictionary<string, PluginSettings> Plugins { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>Resolve whether a built-in plugin runs: explicit config wins, else its registry default.</summary>
+    public bool IsPluginEnabled(PluginDescriptor descriptor) =>
+        Plugins.TryGetValue(descriptor.Id, out var settings) && settings.Enabled is { } enabled
+            ? enabled
+            : descriptor.DefaultEnabled;
+
+    /// <summary>The plugin's own config block, or an empty (disabled) block if it has none.</summary>
+    public PluginSettings PluginSettingsFor(string id) =>
+        Plugins.TryGetValue(id, out var settings) ? settings : PluginSettings.None;
+
+    /// <summary>
+    /// Warn on config that would otherwise silently no-op: an unknown plugin id (e.g. a typo like
+    /// <c>reflectoin</c>) or an unknown per-plugin setting key (e.g. <c>enabldd</c>). Emitted through
+    /// the LoadDiagnostics channel so it is VISIBLE. Returns the warning strings (empty when clean).
+    /// </summary>
+    public IReadOnlyList<string> ValidatePlugins()
+    {
+        var known = PluginRegistry.All.ToDictionary(d => d.Id, StringComparer.Ordinal);
+        var warnings = new List<string>();
+
+        foreach (var (id, settings) in Plugins)
+        {
+            if (!known.TryGetValue(id, out var descriptor))
+            {
+                warnings.Add(
+                    $"unknown plugin '{id}' in knip.json 'plugins' — no such built-in plugin. " +
+                    $"Known plugins: {string.Join(", ", known.Keys.OrderBy(k => k, StringComparer.Ordinal))}.");
+                continue;
+            }
+
+            foreach (var key in settings.Extra.Keys)
+                if (!descriptor.SettingKeys.Contains(key))
+                    warnings.Add(
+                        $"unknown setting 'plugins.{id}.{key}' in knip.json — the '{id}' plugin does not " +
+                        $"recognize this key (it will be ignored).");
+        }
+
+        return warnings;
+    }
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
