@@ -81,21 +81,22 @@ public sealed class CatBTests
             findings);
     }
 
-    // B6 — DECISION (skipped). Two projects declare an IDENTICAL namespace+type+signature
-    // (CatB.B6.Duplicate.Collide). Doc-comment IDs carry no assembly, so both copies collapse to ONE
-    // graph node. Project X reaches Collide from a rooted entry point; project Y has no use site.
-    // OBSERVED under default config: NO CatB.B6 finding — the shared node is live (X's use), so Y's
-    // otherwise-dead copy is also considered live. A collision can only confer EXTRA liveness, i.e. a
-    // possible false NEGATIVE, which is aligned with invariant #3.8 (false positives are the risk).
-    // Also note DeadCodeAnalyzer.state.Declared is keyed by id with TryAdd, so only ONE of the two
-    // Duplicate symbols is ever a reporting candidate regardless of liveness. This test pins the
-    // observed empty finding set; a human decides whether merging identical cross-project nodes is
-    // the intended contract.
-    [Trait("status", "decision")]
-    [Fact(Skip = "B6 — decision pending: doc-comment-ID collision across projects")]
-    public async Task B6_identical_signature_collision_confers_extra_liveness()
+    // B6 — CONTRACT. Two projects declare an IDENTICAL namespace+type+signature
+    // (CatB.B6.Duplicate.Collide). Doc-comment IDs carry no assembly, but SymbolId qualifies each key
+    // with the DEFINING assembly, so the two copies are DISTINCT graph nodes. Project X (assembly
+    // CatB.B6.ProjX) reaches its Duplicate.Collide from a rooted entry point
+    // (XStartup.ConfigureServices) — X's whole Duplicate type stays alive. Project Y (assembly
+    // CatB.B6.ProjY) has NO use site for its identical copy, so Y's Duplicate type is genuinely dead.
+    // ShouldReport rolls a fully-dead type up to the outermost dead symbol, so the finding is the type
+    // CatB.B6.Duplicate (Y's copy), not the member. This pins the fix for the former doc-comment-ID
+    // collision (previously a false NEGATIVE: X's use kept Y's dead copy alive -> empty finding set).
+    [Trait("status", "contract")]
+    [Fact]
+    public async Task B6_identical_signature_collision_flags_unused_duplicate()
     {
         var findings = await FindingsIn("CatB.B6");
-        Assert.Empty(findings);
+        Assert.Equal(
+            new HashSet<string> { "CatB.B6.Duplicate" },
+            findings);
     }
 }
