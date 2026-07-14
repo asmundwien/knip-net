@@ -151,6 +151,63 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         base.VisitImplicitObjectCreationExpression(node);
     }
 
+    // User-defined binary operators (e.g. a + b, a == b, a != b) are invoked with no IdentifierName/
+    // GenericName node at the use site. GetSymbolInfo on the binary expression resolves to the
+    // user-defined operator method when one applies (null/BCL for built-in operands — AddEdge drops
+    // non-solution targets, so recording unconditionally is safe).
+    public override void VisitBinaryExpression(BinaryExpressionSyntax node)
+    {
+        RecordReference(node);
+        base.VisitBinaryExpression(node);
+    }
+
+    // Explicit casts ((T)x) carry a user-defined conversion operator with no IdentifierName node.
+    public override void VisitCastExpression(CastExpressionSyntax node)
+    {
+        RecordReference(node);
+        base.VisitCastExpression(node);
+    }
+
+    // Implicit user-defined conversions (e.g. `Celsius c = 21.5;`, passing an argument, `return x;`)
+    // are invoked with no operator token or IdentifierName node. GetConversion on the source
+    // expression exposes the conversion method when the compiler applied a user-defined conversion.
+    public override void VisitEqualsValueClause(EqualsValueClauseSyntax node)
+    {
+        RecordConversion(node.Value);
+        base.VisitEqualsValueClause(node);
+    }
+
+    public override void VisitArgument(ArgumentSyntax node)
+    {
+        RecordConversion(node.Expression);
+        base.VisitArgument(node);
+    }
+
+    public override void VisitReturnStatement(ReturnStatementSyntax node)
+    {
+        if (node.Expression is { } expr) RecordConversion(expr);
+        base.VisitReturnStatement(node);
+    }
+
+    public override void VisitAssignmentExpression(AssignmentExpressionSyntax node)
+    {
+        // Compound assignment (a += b) invokes a user-defined operator; simple assignment may apply
+        // an implicit user-defined conversion on the right-hand side.
+        if (node.IsKind(SyntaxKind.SimpleAssignmentExpression))
+            RecordConversion(node.Right);
+        else
+            RecordReference(node);
+        base.VisitAssignmentExpression(node);
+    }
+
+    private void RecordConversion(ExpressionSyntax expression)
+    {
+        if (_context.Count == 0) return;
+        var conversion = _model.GetConversion(expression);
+        if (conversion.IsUserDefined && conversion.MethodSymbol is { } method)
+            AddEdge(_context.Peek(), method);
+    }
+
     private void RecordReference(SyntaxNode node)
     {
         if (_context.Count == 0) return;
