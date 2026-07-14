@@ -306,6 +306,66 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (info.GetResultMethod is { } getResult) AddEdge(source, getResult);
     }
 
+    // LINQ query syntax (`from x in xs where ... select ...`) lowers each clause to a method call
+    // (Where/Select/SelectMany/Join/GroupJoin/OrderBy/GroupBy/Cast/...) with NO IdentifierName node at
+    // the use site, so the walker would otherwise miss the edge and flag the bound provider methods
+    // dead. Each clause surfaces the method it binds:
+    //   - GetSymbolInfo(whereClause/selectClause/groupClause/orderingClause) → its method (may be null
+    //     for a degenerate/identity select; AddEdge no-ops on null).
+    //   - GetQueryClauseInfo(fromClause/joinClause/letClause/continuation).OperationInfo (a SymbolInfo)
+    //     → the SelectMany/Cast/Join/GroupJoin/Select bound for 2nd-and-later from, joins, let, into.
+    // Only the methods the query actually binds are edged (siblings like an unused GroupBy stay dead).
+    public override void VisitQueryExpression(QueryExpressionSyntax node)
+    {
+        if (_context.Count > 0)
+        {
+            var source = _context.Peek();
+            RecordQueryClauseInfo(_model.GetQueryClauseInfo(node.FromClause), source);
+            RecordQueryBody(node.Body, source);
+        }
+        base.VisitQueryExpression(node);
+    }
+
+    private void RecordQueryBody(QueryBodySyntax body, string source)
+    {
+        foreach (var clause in body.Clauses)
+        {
+            switch (clause)
+            {
+                case OrderByClauseSyntax orderBy:
+                    foreach (var ordering in orderBy.Orderings)
+                        RecordSymbolInfo(_model.GetSymbolInfo(ordering), source);
+                    break;
+                // where, from (2nd+), join, let carry the invoked method on OperationInfo.
+                case WhereClauseSyntax:
+                case FromClauseSyntax:
+                case JoinClauseSyntax:
+                case LetClauseSyntax:
+                    RecordQueryClauseInfo(_model.GetQueryClauseInfo(clause), source);
+                    break;
+            }
+        }
+
+        // select / group ... by ... — the terminal projection.
+        RecordSymbolInfo(_model.GetSymbolInfo(body.SelectOrGroup), source);
+
+        // `into` continuation reintroduces a range variable and recurses into a nested body.
+        if (body.Continuation is { } continuation)
+            RecordQueryBody(continuation.Body, source);
+    }
+
+    private void RecordQueryClauseInfo(QueryClauseInfo info, string source) =>
+        RecordSymbolInfo(info.OperationInfo, source);
+
+    private void RecordSymbolInfo(SymbolInfo info, string source)
+    {
+        if (info.Symbol is { } symbol)
+            AddEdge(source, symbol);
+        else
+            foreach (var candidate in info.CandidateSymbols)
+                AddEdge(source, candidate);
+    }
+
     // Pattern-based `Dispose` on a ref struct in a `using` statement / local `using` declaration is
     // invoked by the using lowering with no IdentifierName node at the use site. No public
     // SemanticModel info API surfaces the bound pattern-dispose method (GetOperation on the
