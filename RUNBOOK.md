@@ -377,13 +377,28 @@ Keep this section updated as tasks complete — it is the handoff memory between
       containing-type roots (3 real bugs found & fixed during initial build)
 - [x] Console/JSON/SARIF reporters, exit codes, knip.json config + discovery
 - [x] Git repository initialized; runbook + battery contract (Appendix A) written
-- [~] WS1 test battery per Appendix A (incl. triage run). DONE & green: categories
-      **A, C, D, E, G** (47 passing / 1 skipped). Triage matched every hypothesis except
-      **C6** (see below). REMAINING: B, F, I, J, H, K.
+- [x] WS1 test battery per Appendix A — ALL 11 categories (A–K) implemented, triaged, merged.
+      Suite: **79 passing / 17 skipped / 96 total**, green on main. The 17 skips are all
+      intentional deferrals: 11 WS5 moat (category H), 5 WS7 production-mode (category K),
+      1 enum-feature (G6). Every alive-assertion carries a dead sibling or red-flip evidence.
 - [x] WS1b core-walker gap fixes — all 12 confirmed false positives closed and promoted to
       Contract: E1–E11 (implicit-invocation members) + **C6** (extension-syntax call did not
       edge the declaring static class → whole class falsely flagged; fixed by edging the
       reduced extension method's ContainingType + ReducedFrom).
+- [x] Bugs found by the battery and FIXED (all with a promoted Contract test):
+      **SARIF `$schema`** (reporter emitted `schema`, non-compliant with SARIF 2.1.0; J5),
+      **malformed knip.json** (CLI crashed exit 134 + stack trace instead of clean exit 2;
+      Runner now wraps `KnipConfig.Load`; I6),
+      **B6 doc-comment-ID collision** (identical signatures in different assemblies merged into
+      one graph node → false negative; SymbolId now assembly-qualifies keys via the DEFINING
+      assembly, preserving invariant #1 — B1/B3 cross-project tests stay green).
+- [ ] Pending human DECISIONS surfaced by the battery (skip-tagged, not blocking):
+      **H11** — source-generated trees are dropped wholesale by `ignore.files **/*.g.cs`, losing
+      edges FROM generated code (decide: walk generated trees for edges while never reporting
+      their declarations). **K7** — test-project classification default for WS7 production mode
+      (IsTestProject prop vs package refs vs name globs; and whether to warn on zero test projects).
+      Also NOTED: `ignore.symbols` matches methods by BARE name, not FQN (the display format renders
+      methods without namespace/type) — the "FQN glob" contract is misleading for members.
 - [ ] WS-enum (new, decided 2026-07-14 from G6): member-level enum dead-code support.
       Enum members need their own graph nodes + reference tracking. Until then G6 stays
       `G-feat`; today the tool never reports individual dead enum members.
@@ -440,7 +455,7 @@ a feature" means. If triage finds a `C` row red, that is a bug report — escala
 | B3 `C` | `internal` member used cross-project via `InternalsVisibleTo` | alive |
 | B4 `C` | `publicApiProjects` glob: unused public API in matching project | not flagged |
 | B5 `C` | `treatAllPublicAsUsed`: only private/internal dead code flagged | as stated |
-| B6 `D` | Two projects declare identical namespace+type+signature (doc-comment IDs collide, no assembly in key) | document collision behavior; note a collision merges nodes and can only confer extra liveness (false negative — aligned with §3.8); decide fix vs. documented limitation |
+| B6 `C` | Two projects declare identical namespace+type+signature (doc-comment IDs collide, no assembly in key) | DECIDED 2026-07-14: FIXED — SymbolId now assembly-qualifies keys via the DEFINING assembly (`Assembly::docId`), so the copies are distinct nodes and the unused one is flagged; invariant #1 preserved (B1/B3 green) |
 
 ### C. Overloads, generics, delegates
 
