@@ -57,8 +57,8 @@ public sealed class CatETests
         AssertExactly(await FindingsIn("CatE.E04"));
     }
 
-    [Fact(Skip = "E05 — WS1b: pattern-based foreach GetEnumerator/Enumerator falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E05_foreach_pattern_alive()
     {
         // CORRECT: GetEnumerator + the Enumerator type stay alive (MoveNext/Current live within it);
@@ -66,16 +66,16 @@ public sealed class CatETests
         AssertExactly(await FindingsIn("CatE.E05"), "CatE.E05.Numbers.GetSomethingElse()");
     }
 
-    [Fact(Skip = "E06 — WS1b: custom awaitable GetAwaiter/Awaiter falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E06_awaitable_alive()
     {
         // CORRECT: GetAwaiter + the Awaiter type stay alive (IsCompleted/GetResult live within it).
         AssertExactly(await FindingsIn("CatE.E06"));
     }
 
-    [Fact(Skip = "E07 — WS1b: pattern-based Dispose in using is falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E07_pattern_dispose_alive()
     {
         AssertExactly(await FindingsIn("CatE.E07"), "CatE.E07.Scope.Close()");
