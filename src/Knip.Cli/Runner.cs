@@ -31,7 +31,16 @@ internal static class Runner
         }
 
         var configPath = options.ConfigPath ?? KnipConfig.Discover(Directory.GetCurrentDirectory());
-        var config = KnipConfig.Load(configPath);
+        KnipConfig config;
+        try
+        {
+            config = KnipConfig.Load(configPath);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"error: {ex.Message}");
+            return 2;
+        }
 
         var target = options.Solution ?? config.Solution ?? DiscoverTarget();
         if (target is null)

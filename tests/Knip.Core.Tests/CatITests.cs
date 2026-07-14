@@ -141,8 +141,7 @@ public sealed class CatITests
     // starts at line ~58, so JsonException propagates unhandled. The assertions below encode the
     // TRUE contract and are kept intact; the row is Skip-marked (like CatB's B6 decision row) only so
     // the suite gate stays green while the bug is loudly recorded. Un-skip verifies the fix.
-    [Fact(Skip = "I6 — BUG: malformed knip.json exits 134 with an unhandled JsonException + stack " +
-                 "trace instead of exit 2 + clean error. Fix: wrap KnipConfig.Load in Runner.RunAsync.")]
+    [Fact]
     public void I6_malformed_config_exits_two_without_stack_trace()
     {
         var solution = Path.Combine(RepoRoot(), "tests", "fixtures", "CatI", "I5.Cli", "Fixture.slnx");

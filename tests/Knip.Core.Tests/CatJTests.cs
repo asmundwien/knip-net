@@ -100,12 +100,11 @@ public sealed class CatJTests
         // version must be exactly "2.1.0".
         Assert.Equal("2.1.0", root.GetProperty("version").GetString());
 
-        // A schema URI must be present. NOTE: the CLI emits the property as "schema"; the SARIF
-        // 2.1.0 spec names it "$schema". We accept either here so this row asserts the load-bearing
-        // contract (a schema pointer exists) — the naming deviation is surfaced as a bug in the
-        // agent report, not fixed by editing src or weakening the located-result assertions below.
-        var hasSchema = root.TryGetProperty("$schema", out _) || root.TryGetProperty("schema", out _);
-        Assert.True(hasSchema, "SARIF output is missing a schema pointer ($schema/schema).");
+        // A schema URI must be present under the SARIF 2.1.0 spec name "$schema" (GitHub
+        // code-scanning keys on it).
+        Assert.True(
+            root.TryGetProperty("$schema", out _),
+            "SARIF output is missing the \"$schema\" pointer required by SARIF 2.1.0.");
 
         var runs = root.GetProperty("runs");
         Assert.Equal(1, runs.GetArrayLength());
