@@ -173,7 +173,8 @@ public sealed class DeadCodeAnalyzer
         {
             var used = state.UsedAssemblies.TryGetValue(project.AssemblyName, out var set)
                 ? set
-                : (IReadOnlySet<string>)System.Collections.Immutable.ImmutableHashSet<string>.Empty;
+                // ISet (not IReadOnlySet) is the common surface across net10.0 and net472 BCLs.
+                : (ISet<string>)System.Collections.Immutable.ImmutableHashSet<string>.Empty;
 
             foreach (var reference in project.ProjectReferences)
             {
