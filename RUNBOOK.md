@@ -122,8 +122,8 @@ made. Reject any diff that violates one, even if its tests pass.
 ## 5. Work streams
 
 Order matters: **WS1 first** — without mechanical verification you cannot safely accept work
-from implementation agents. WS2/WS3 next (same graph, high value, low risk). WS4 and WS5/WS6
-can then proceed in parallel.
+from implementation agents. WS2/WS3/WS7 next (same graph, high value, low risk). WS4 and
+WS5/WS6 can then proceed in parallel.
 
 ### WS1 — Test battery: the feature contract (PREREQUISITE — do this before anything else)
 
@@ -230,6 +230,31 @@ generators, Razor/Blazor/XAML data binding.
 - Consider `--baseline` (gate only NEW findings) from the roadmap when packaging for CI —
   it is what makes adoption on brownfield solutions tolerable.
 
+### WS7 — Production-mode analysis (test-only reachability — the systematic false negative)
+
+The tool is deliberately biased toward false negatives (§3.8: never flag live code). Most
+false negatives are scattered one-offs; this one is **structural**: every `[Fact]`/`[Theory]`
+method is a root, so production code referenced *only by its own tests* is reachable and never
+flagged — tested-but-dead code is invisible. For the pre-migration deletion use case this is
+the largest deletable unit there is (dead feature + its whole test suite). Knip (JS) has the
+same problem and solves it with `--production` mode; same shape applies here.
+
+- Classify projects test vs production: `testProjects` config globs, defaulting to detection
+  via the `IsTestProject` MSBuild property or test-framework package references
+  (xunit/nunit/mstest).
+- Tag each root with its origin and run **two-color reachability**: reachable from production
+  roots → alive; reachable ONLY via test roots → new `FindingKind.OnlyUsedByTests`, a distinct
+  kind because the remediation is different ("delete the code AND its tests"). Report the
+  referencing test symbols alongside the finding so the deletion unit is obvious.
+- Transitivity matters: A used by B, B used only by tests → both are test-only (K6).
+- **Off by default** — default semantics stay as pinned by B1/K1; enable via
+  `--production` / config. Note the deliberate tension with fixture B1: B1 pins graph
+  *identity* in default mode; category K governs production mode.
+- Workaround until this lands (document in README): `ignore.projects: ["*Tests*"]` — blunt
+  (test code not analyzed at all, orphaned tests not reported, `InternalsVisibleTo` edges
+  lost), but usable; pinned by K4.
+- Acceptance: battery category K promoted to Contract.
+
 ## 6. Orchestration protocol
 
 **Task slicing.** One work-stream bullet ≈ one implementation-agent task. Never hand an agent
@@ -317,6 +342,7 @@ Keep this section updated as tasks complete — it is the handoff memory between
 - [ ] WS4 net472 multi-target + legacy csproj (floor: .NET Framework 4.8)
 - [ ] WS5 plugin seam + first plugins
 - [ ] WS6 packaging (global tool, CI action, repo CI)
+- [ ] WS7 production-mode analysis / test-only reachability (Appendix A category K)
 
 ---
 
@@ -333,6 +359,7 @@ and the test asserts the exact finding set: **live code is never flagged; the de
 | `C` Contract | Must pass now. A red `C` test blocks everything. |
 | `G-core` | Suspected core-walker false positive. Test asserts correct behavior, is skip-tagged, and spawns a WS1b fix task. |
 | `G-moat` | Invisible-usage gap — the reason paid tools are paid. Skip-tagged pending WS5 plugins; the row lists today's mitigation. |
+| `G-feat` | Planned-feature gap — asserts the behavior of a not-yet-built feature; skip-tagged pending its work stream. |
 | `D` Decision | Behavior is a product decision to confirm with the human before pinning. |
 
 Rules: a Gap test is **never deleted, only promoted**. Promoting `G-*` → `C` is what "shipping
@@ -481,3 +508,18 @@ is what we tell users today.
 | J4 `C` | `--format json` | parses; findings sorted project→file→line (stable across runs) |
 | J5 `C` | `--format sarif` | valid SARIF 2.1.0 minimal schema; one result per finding with location |
 | J6 `C` | Findings/diagnostics on stdout vs progress on stderr | machine output never polluted by `-v` progress |
+
+### K. Test-only reachability — the systematic false negative (WS7 feed)
+
+Default mode treats test roots like any other root, so tested-but-dead production code is
+alive. K1 pins that default; the rest assert production mode (`--production` / `testProjects`).
+
+| ID | Scenario | Expected |
+|---|---|---|
+| K1 `C` | Default mode: production method referenced only from a `[Fact]` test | alive — pins default semantics AND documents the known false negative |
+| K2 `G-feat` | Production mode: production method + type reachable only via test roots | flagged as `OnlyUsedByTests` (distinct finding kind) |
+| K3 `G-feat` | Production mode: the K2 finding lists the referencing test symbols | remediation unit ("delete code and tests") visible in output |
+| K4 `C` | Workaround: `ignore.projects` excluding the test project | test-only production method flagged (verify — expected green) |
+| K5 `G-feat` | Transitive: A used by B; B used only by tests | production mode flags BOTH A and B |
+| K6 `G-feat` | Production code genuinely used by production AND by tests | never flagged in production mode (tests don't taint) |
+| K7 `D` | Test-project classification default (`IsTestProject` prop vs package refs vs name globs) and whether production mode warns when zero test projects are detected | decide with the human |
