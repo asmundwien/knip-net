@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- G8 exercises top-level statements (<Main>$), which require an executable output. -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- G9 uses pointer/unsafe parameter types. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- Deliberate dead code lives here; silence unused-member warnings so a fixture build is quiet. -->
+    <NoWarn>CS0067;CS0169;CS0649;IDE0051;IDE0052;CS8321</NoWarn>
+    <!-- Not part of Knip.slnx; only ever compiled at runtime by MSBuildWorkspace. -->
+  </PropertyGroup>
+
+</Project>
