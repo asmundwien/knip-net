@@ -377,8 +377,16 @@ Keep this section updated as tasks complete — it is the handoff memory between
       containing-type roots (3 real bugs found & fixed during initial build)
 - [x] Console/JSON/SARIF reporters, exit codes, knip.json config + discovery
 - [x] Git repository initialized; runbook + battery contract (Appendix A) written
-- [ ] WS1 test battery per Appendix A (incl. triage run) ← **NEXT, blocks everything**
-- [ ] WS1b core-walker gap fixes (Appendix A category E)
+- [~] WS1 test battery per Appendix A (incl. triage run). DONE & green: categories
+      **A, C, D, E, G** (47 passing / 1 skipped). Triage matched every hypothesis except
+      **C6** (see below). REMAINING: B, F, I, J, H, K.
+- [x] WS1b core-walker gap fixes — all 12 confirmed false positives closed and promoted to
+      Contract: E1–E11 (implicit-invocation members) + **C6** (extension-syntax call did not
+      edge the declaring static class → whole class falsely flagged; fixed by edging the
+      reduced extension method's ContainingType + ReducedFrom).
+- [ ] WS-enum (new, decided 2026-07-14 from G6): member-level enum dead-code support.
+      Enum members need their own graph nodes + reference tracking. Until then G6 stays
+      `G-feat`; today the tool never reports individual dead enum members.
 - [ ] WS2 unused ProjectReferences
 - [ ] WS3 unused PackageReferences
 - [ ] WS4 net472 multi-target + legacy csproj (floor: .NET Framework 4.8)
@@ -443,7 +451,7 @@ a feature" means. If triage finds a `C` row red, that is a bug report — escala
 | C3 `C` | `services.AddScoped<IFoo, Foo>()` | `Foo` alive via generic-arg edge |
 | C4 `C` | Method group passed as delegate: `list.Select(Transform)` | `Transform` alive |
 | C5 `C` | `nameof(Method)` as only reference | alive (conservative: name-token counts as use) |
-| C6 `C` | Extension method called via extension syntax; unused sibling | used alive, sibling flagged |
+| C6 `C` | Extension method called via extension syntax; unused sibling | used alive, sibling flagged (triage found this RED — declaring static class was not edged; fixed in WS1b) |
 | C7 `C` | Delegate type used as parameter type only | delegate type alive |
 | C8 `C` | Type used only as generic constraint `where T : IFoo` | `IFoo` alive |
 | C9 `C` | Type used only in `typeof(Foo)` / `is Foo` / `as Foo` | alive |
@@ -460,24 +468,28 @@ a feature" means. If triage finds a `C` row red, that is a bug report — escala
 | D6 `C` | Override-of-override chain, base member used | whole chain alive |
 | D7 `C` | Unused attribute class (never applied) | flagged; applied attribute alive |
 
-### E. Implicitly-invoked members — suspected core gaps (WS1b feed)
+### E. Implicitly-invoked members — core gaps CLOSED in WS1b
 
-No `IdentifierName`/`GenericName`/object-creation node appears at the use site, so the current
-walker likely records no edge → **false positive on plain C#**. Highest-priority fixes.
+No `IdentifierName`/`GenericName`/object-creation node appears at the use site, so the walker
+recorded no edge → **false positive on plain C#**. Triage confirmed E1–E11 as real core-walker
+false positives; **all fixed in WS1b and promoted `G-core` → `C`** (edges now recovered via
+`GetSymbolInfo`/`GetOperation`/`GetForEachStatementInfo`/`GetAwaitExpressionInfo`/
+`GetCollectionInitializerSymbolInfo`/`GetDeconstructionInfo`/`GetQueryClauseInfo`, plus a
+deterministic type-based fallback for pattern `Dispose`). E12/E13 were green from the start.
 
 | ID | Scenario | Expected |
 |---|---|---|
-| E1 `G-core` | Custom indexer used via `obj[i]` | indexer alive |
-| E2 `G-core` | `operator +` used via `a + b` | operator alive |
-| E3 `G-core` | Implicit conversion operator used via assignment/argument | operator alive |
-| E4 `G-core` | `operator ==`/`!=` used via comparison | operators alive |
-| E5 `G-core` | `foreach` over custom (non-interface, pattern-based) enumerable | `GetEnumerator`/`MoveNext`/`Current` alive |
-| E6 `G-core` | `await` on custom awaitable | `GetAwaiter`/`IsCompleted`/`GetResult` alive |
-| E7 `G-core` | Pattern-based `Dispose` (ref struct in `using`) | `Dispose` alive |
-| E8 `G-core` | Collection initializer `new C { 1, 2 }` | `Add` alive |
-| E9 `G-core` | Tuple deconstruction `var (a, b) = obj` | `Deconstruct` alive |
-| E10 `G-core` | LINQ query syntax over custom provider | `Select`/`Where`/`SelectMany` alive |
-| E11 `G-core` | Index/Range pattern members `obj[^1]`, `obj[1..]` | `Length`/`Slice` alive |
+| E1 `C` | Custom indexer used via `obj[i]` | indexer alive |
+| E2 `C` | `operator +` used via `a + b` | operator alive |
+| E3 `C` | Implicit conversion operator used via assignment/argument | operator alive |
+| E4 `C` | `operator ==`/`!=` used via comparison | operators alive |
+| E5 `C` | `foreach` over custom (non-interface, pattern-based) enumerable | `GetEnumerator`/`MoveNext`/`Current` alive |
+| E6 `C` | `await` on custom awaitable | `GetAwaiter`/`IsCompleted`/`GetResult` alive |
+| E7 `C` | Pattern-based `Dispose` (ref struct in `using`) | `Dispose` alive |
+| E8 `C` | Collection initializer `new C { 1, 2 }` | `Add` alive |
+| E9 `C` | Tuple deconstruction `var (a, b) = obj` | `Deconstruct` alive |
+| E10 `C` | LINQ query syntax over custom provider | `Select`/`Where`/`SelectMany` alive |
+| E11 `C` | Index/Range pattern members `obj[^1]`, `obj[1..]` | `Length`/`Slice` alive |
 | E12 `C` | Object initializer `new Foo { Bar = 1 }` | `Bar` setter/property alive (IdentifierName exists — expected green) |
 | E13 `C` | Event subscribed with `+=` / raised | event alive; unused event flagged |
 
@@ -503,7 +515,7 @@ walker likely records no edge → **false positive on plain C#**. Highest-priori
 | G3 `C` | Primary-constructor class (C# 12), used | no spurious findings |
 | G4 `C` | `async` methods and iterators (`yield`) | treated as normal methods |
 | G5 `C` | Nested private type used only by outer type | alive |
-| G6 `D` | Enum members | dead enum members are among the most common real cleanup finds — decide with the human: pin "never reported" as a limitation, or plan member-level enum support; do not pin as `C` by default |
+| G6 `G-feat` | Enum members | DECIDED 2026-07-14: plan member-level enum support (new WS-enum). Today the tool never reports individual dead enum members (only whole dead enums); test pins today's behavior, skip-tagged pending WS-enum |
 | G7 `C` | Constructors / static ctors / finalizers | never reported — §3.7 |
 | G8 `C` | Compiler-generated symbols (`<Main>$`, lambdas, anonymous types) | never reported |
 | G9 `C` | Unsafe/pointer parameter type `Foo*` | `Foo` alive (pointer unwrap edge) |
