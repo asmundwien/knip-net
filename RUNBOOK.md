@@ -118,6 +118,12 @@ made. Reject any diff that violates one, even if its tests pass.
 - WS4 (legacy projects) ultimately needs **Windows + Visual Studio Build Tools** to run
   end-to-end. Cross-platform agents can still do the multi-targeting/compile work; flag the
   Windows-only verification for the human or a Windows runner.
+- **Scale is unvalidated.** Evidence so far: 10 projects / ~1,100 symbols / ~2 s. The
+  portfolio use case implies solutions an order of magnitude larger; MSBuildWorkspace
+  load time, memory, and partial-load failures at that size are unknowns. On the first
+  large-solution run, capture wall time, peak memory, and workspace diagnostics; if load
+  fails or runtime is unusable, escalate — do not silently shrink the analysis scope to
+  make it pass.
 
 ## 5. Work streams
 
@@ -134,9 +140,22 @@ promoting a Gap test to Contract — never by prose.
 
 - Create `tests/Knip.Core.Tests/` (xUnit) and `tests/fixtures/` containing small,
   **self-contained** solutions (no external/private packages; nuget.org only, offline-friendly).
+- **Fixture architecture (decided):** one fixture solution per appendix category (A–K),
+  each scenario isolated in its own namespace (e.g. `CatE.E05`), **no references across
+  scenario namespaces**. One solution per category bounds MSBuildWorkspace loads (test
+  runtime stays tolerable — a slow gate is a skipped gate) without letting scenarios keep
+  each other's code alive. Fixture projects are **never added to `Knip.slnx`** — they
+  contain deliberate dead code; the `-warnaserror` gate applies to the tool only.
 - Tests call `KnipEngine.RunAsync` on a fixture and assert the **exact finding set**
   (symbol display names) — both what IS flagged and what is NOT. One `MSBuildLocator`
   registration per test process — use a collection fixture; registering twice throws.
+- **Fixtures must prove they exercise the scenario (anti-vacuous-green rule).** A green
+  "X stays alive" test is worthless if the fixture accidentally roots X some other way —
+  the test then pins nothing. Every *alive* assertion therefore ships with a **dead
+  sibling**: a symbol identical except for the use-site under test, asserted flagged.
+  The sibling is the built-in mutation check. Where a sibling is impractical, the task
+  report must show the **red flip** instead: remove the use-site, run the test, paste the
+  failure. No alive-assertion is accepted without one of the two.
 - Implement every scenario in Appendix A, honoring its status:
   - **Contract** tests must be green before WS1 is done.
   - **Core-gap** tests are written to assert the *correct* behavior and are expected red;
@@ -146,7 +165,8 @@ promoting a Gap test to Contract — never by prose.
   - Appendix statuses are hypotheses until first run — the first battery task is a **triage
     run** that corrects statuses against reality and reports surprises to the human.
 - Acceptance: `dotnet test` green locally and in CI (skips visible, never deleted);
-  the appendix table updated with triaged statuses.
+  the appendix table updated with triaged statuses; every alive-assertion has its dead
+  sibling in the fixture or red-flip evidence in the task report.
 
 ### WS1b — Close core-walker gaps surfaced by the battery
 
@@ -160,8 +180,11 @@ risk" rule (§3.8) on plain C#.
 - One fix task per gap: usually a new `Visit*` override or a switch to
   `SemanticModel.GetOperation`-based edge recording for the affected node kinds.
 - Definition of done per task: its battery test un-skipped and green; no Contract test
-  regressed. WS1b blocks WS2/WS3 sign-off on real solutions (dead-code deletions must not
-  be recommended while known plain-C# false positives exist).
+  regressed. **The only allowed edit to test files is removing the `Skip`/status tag**
+  (plus the appendix status update) — any changed assertion or fixture edit in a WS1b
+  diff escalates to the human, no exceptions. WS1b blocks WS2/WS3 sign-off on real
+  solutions (dead-code deletions must not be recommended while known plain-C# false
+  positives exist).
 
 ### WS2 — Unused `<ProjectReference>` detection
 
@@ -275,11 +298,30 @@ Also check the diff itself: no `bin/`/`obj/` files, no deleted invariants, no ne
 `#if` outside the allowed places (WS4), README/knip.json updated when behavior or config
 changed.
 
-**Review checklist (orchestrator, per diff):**
+**Review checklist (orchestrator, per diff). These are mechanical checks — do not
+substitute judgment for them; a diff that fails one is bounced even if it "looks fine":**
 1. Does it violate any §3 invariant? → reject with the invariant number.
-2. Does any new heuristic have a fixture proving live code is not flagged? → if not, bounce back.
-3. Did tests change to accommodate the diff? If an existing assertion was weakened, escalate.
+2. Any new heuristic must ADD a fixture with at least one NOT-flagged (live) assertion
+   in the same diff. Absent → bounce; do not accept a promise to add it later.
+3. Any edit to an existing test assertion or fixture, in any task, escalates to the
+   human — do not evaluate whether the weakening "seems reasonable"; that judgment is
+   exactly what a bad diff exploits. (Gap-promotion tasks: only `Skip` removal is allowed,
+   see WS1b.)
 4. Is the change in the right layer (analysis vs loading vs CLI)? See invariant #9.
+
+**Real-solution deletion gate — before ANY deletion recommendation on a real codebase.**
+Green fixtures prove the tool's mechanics; they say nothing about a specific real
+solution. All three steps, in order:
+1. Restore-warning check clean (invariant #6 output shows zero unresolved-type warnings).
+2. Mechanical proof: apply the proposed deletions on a branch of the *target* solution;
+   its build and its own test suite must stay green. This is the strongest automated
+   check a dead-code finder has — use it. But note what it cannot catch:
+   reflection/DI-scanning/serializer usage (Appendix H) compiles fine with the code
+   deleted and breaks at runtime.
+3. Until the relevant WS5 plugins exist: a human reviews EVERY finding in
+   category-H-shaped code (reflection, `Type.GetType`, scanning DI, serialized DTOs,
+   config-registered types) plus a random sample of the rest. Deletion without this
+   review is forbidden — this is the §3.8 product risk made operational.
 
 **Escalate to the human when:**
 - A §3 invariant genuinely needs changing (don't change it yourself).
@@ -289,9 +331,9 @@ changed.
 - Two consecutive attempts at a task fail verification — stop, summarize what broke, ask.
 - Anything requires publishing (feed, marketplace) — publishing is human-approved, always.
 
-**Never:** run against Hdir production solutions and recommend deletions without the
-restore-warning check being clean; commit fixture changes that reduce coverage; "fix" a false
-positive by removing a report category instead of adding a root/edge.
+**Never:** recommend deletions on a real solution without the full deletion gate above
+(restore-clean is necessary, not sufficient); commit fixture changes that reduce coverage;
+"fix" a false positive by removing a report category instead of adding a root/edge.
 
 ## 7. Git hygiene
 
@@ -349,8 +391,11 @@ Keep this section updated as tasks complete — it is the handoff memory between
 ## Appendix A — Test battery (the feature contract)
 
 Every row is one test. IDs are stable — reference them in commits, skips, and task prompts.
-For each scenario the fixture contains BOTH the used and the unused variant where applicable,
-and the test asserts the exact finding set: **live code is never flagged; the dead sibling is.**
+For each scenario the fixture contains BOTH the used and the unused variant, and the test
+asserts the exact finding set: **live code is never flagged; the dead sibling is.** The dead
+sibling is not decoration — it is the mutation check proving the fixture actually exercises
+the scenario (anti-vacuous-green rule, §5 WS1). Where a sibling is impractical, red-flip
+evidence is required instead.
 
 **Statuses** (hypotheses until the WS1 triage run corrects them against reality):
 
@@ -387,7 +432,7 @@ a feature" means. If triage finds a `C` row red, that is a bug report — escala
 | B3 `C` | `internal` member used cross-project via `InternalsVisibleTo` | alive |
 | B4 `C` | `publicApiProjects` glob: unused public API in matching project | not flagged |
 | B5 `C` | `treatAllPublicAsUsed`: only private/internal dead code flagged | as stated |
-| B6 `D` | Two projects declare identical namespace+type+signature (doc-comment IDs collide, no assembly in key) | document collision behavior; decide fix vs. known limitation |
+| B6 `D` | Two projects declare identical namespace+type+signature (doc-comment IDs collide, no assembly in key) | document collision behavior; note a collision merges nodes and can only confer extra liveness (false negative — aligned with §3.8); decide fix vs. documented limitation |
 
 ### C. Overloads, generics, delegates
 
@@ -458,7 +503,7 @@ walker likely records no edge → **false positive on plain C#**. Highest-priori
 | G3 `C` | Primary-constructor class (C# 12), used | no spurious findings |
 | G4 `C` | `async` methods and iterators (`yield`) | treated as normal methods |
 | G5 `C` | Nested private type used only by outer type | alive |
-| G6 `C` | Enum members | never reported (documented limitation — pin it) |
+| G6 `D` | Enum members | dead enum members are among the most common real cleanup finds — decide with the human: pin "never reported" as a limitation, or plan member-level enum support; do not pin as `C` by default |
 | G7 `C` | Constructors / static ctors / finalizers | never reported — §3.7 |
 | G8 `C` | Compiler-generated symbols (`<Main>$`, lambdas, anonymous types) | never reported |
 | G9 `C` | Unsafe/pointer parameter type `Foo*` | `Foo` alive (pointer unwrap edge) |
