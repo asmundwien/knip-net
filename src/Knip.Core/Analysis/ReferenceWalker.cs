@@ -2,6 +2,7 @@ using Knip.Core.Configuration;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Operations;
 
 namespace Knip.Core.Analysis;
 
@@ -198,6 +199,30 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         else
             RecordReference(node);
         base.VisitAssignmentExpression(node);
+    }
+
+    // Element access (obj[i], obj[^1], obj[1..]) invokes a member with no IdentifierName/GenericName
+    // at the use site, so the walker would otherwise miss the edge and flag the member dead.
+    //   - Custom indexer `obj[i]`: GetSymbolInfo resolves to the indexer property (IsIndexer).
+    //     Arrays/BCL resolve to null/non-solution — AddEdge drops those, so recording is safe.
+    //   - Index/Range over the Length/Slice pattern (`obj[^1]`, `obj[1..]`): GetSymbolInfo on the
+    //     element access does NOT surface the pattern members. GetOperation yields an
+    //     IImplicitIndexerReferenceOperation exposing the Length symbol plus the indexer/Slice.
+    public override void VisitElementAccessExpression(ElementAccessExpressionSyntax node)
+    {
+        RecordReference(node);
+        RecordImplicitIndexerMembers(node);
+        base.VisitElementAccessExpression(node);
+    }
+
+    private void RecordImplicitIndexerMembers(SyntaxNode node)
+    {
+        if (_context.Count == 0) return;
+        if (_model.GetOperation(node) is not IImplicitIndexerReferenceOperation implicitIndexer) return;
+
+        var source = _context.Peek();
+        if (implicitIndexer.LengthSymbol is { } length) AddEdge(source, length);
+        if (implicitIndexer.IndexerSymbol is { } indexer) AddEdge(source, indexer);
     }
 
     private void RecordConversion(ExpressionSyntax expression)

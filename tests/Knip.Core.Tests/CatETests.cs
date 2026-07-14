@@ -25,8 +25,8 @@ public sealed class CatETests
 
     // ---- Confirmed G-core (correct assertion, expected red, skipped for WS1b) ----------------
 
-    [Fact(Skip = "E01 — WS1b: custom indexer via obj[i] is falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E01_indexer_alive()
     {
         // CORRECT: the indexer stays alive; only the unused method is flagged.
@@ -103,8 +103,8 @@ public sealed class CatETests
             "CatE.E10.Query<T>.GroupBy<TResult>(System.Func<T, TResult>)");
     }
 
-    [Fact(Skip = "E11 — WS1b: index/range members (indexer + Slice) are falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E11_index_range_members_alive()
     {
         // CORRECT: indexer + Slice + Length stay alive; only the unused SubList is flagged.
