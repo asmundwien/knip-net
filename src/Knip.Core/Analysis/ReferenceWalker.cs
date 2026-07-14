@@ -425,6 +425,17 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (info.Symbol is { } symbol)
         {
             AddEdge(source, symbol);
+            // Extension syntax (`obj.Used()`) resolves to a REDUCED extension method: the declaring
+            // static class name never appears in source, so nothing else edges its TYPE node and it
+            // would be flagged dead (hiding the genuinely-live method under the outermost-only rule).
+            // Edge the reduced method's ContainingType (the static class) so it stays reachable, and
+            // normalize the method edge to the unreduced declaration (ReducedFrom) so the method-node
+            // id matches the source declaration.
+            if (symbol is IMethodSymbol { MethodKind: MethodKind.ReducedExtension, ReducedFrom: { } reduced })
+            {
+                AddEdge(source, reduced.ContainingType);
+                AddEdge(source, reduced);
+            }
             return;
         }
         // Overload resolution failed (often because an argument type is unresolved): keep every

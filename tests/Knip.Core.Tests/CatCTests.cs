@@ -87,10 +87,8 @@ public sealed class CatCTests
 
     // ---- Confirmed core gap (correct assertion, expected red, skipped for follow-up) ----------
 
-    [Fact(Skip = "C6 — core-gap: extension method invoked via extension syntax keeps the method " +
-                 "alive but NOT its containing static class, so the whole static class is falsely " +
-                 "flagged (reported: CatC.C6.WidgetExtensions). CORRECT: only Unused is dead.")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task C6_extension_method_used_alive_sibling_flagged()
     {
         // CORRECT: the invoked extension method (Used) — and therefore its containing class — stays
