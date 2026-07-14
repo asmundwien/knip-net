@@ -95,8 +95,8 @@ public sealed class CatETests
         AssertExactly(await FindingsIn("CatE.E09"), "CatE.E09.Point.DeconstructOther(int, int)");
     }
 
-    [Fact(Skip = "E10 — WS1b: LINQ query-syntax Select/Where/SelectMany are falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E10_linq_query_methods_alive()
     {
         AssertExactly(await FindingsIn("CatE.E10"),
