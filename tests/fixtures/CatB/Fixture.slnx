@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="B1B2.Lib/CatB.B1B2.Lib.csproj" />
+  <Project Path="B1B2.Consumer/CatB.B1B2.Consumer.csproj" />
+  <Project Path="B3.Lib/CatB.B3.Lib.csproj" />
+  <Project Path="B3.Consumer/CatB.B3.Consumer.csproj" />
+  <Project Path="B4.Api/CatB.B4.Api.csproj" />
+  <Project Path="B5.Lib/CatB.B5.Lib.csproj" />
+  <Project Path="B6.ProjX/CatB.B6.ProjX.csproj" />
+  <Project Path="B6.ProjY/CatB.B6.ProjY.csproj" />
+</Solution>
