@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Consumer/WS2.Consumer.csproj" />
+  <Project Path="UsedLib/WS2.UsedLib.csproj" />
+  <Project Path="UnusedLib/WS2.UnusedLib.csproj" />
+  <Project Path="HazardLib/WS2.HazardLib.csproj" />
+</Solution>

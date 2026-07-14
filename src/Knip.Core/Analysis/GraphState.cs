@@ -20,10 +20,26 @@ internal sealed class GraphState
     /// <summary>Count of references to unresolved (error) types — a signal the solution isn't fully restored.</summary>
     public int UnresolvedTypeReferences;
 
+    /// <summary>
+    /// Per source-project usage of OTHER solution assemblies: source assembly NAME → the set of
+    /// other solution assembly NAMEs whose symbols that project's code actually touches. Populated
+    /// from cross-assembly edges as the walk runs; consumed to detect unused &lt;ProjectReference&gt;s.
+    /// String-keyed by assembly name (invariant #1) — no symbol-reference-keyed collections.
+    /// </summary>
+    public Dictionary<string, HashSet<string>> UsedAssemblies { get; } = new(StringComparer.Ordinal);
+
     public void AddEdge(string source, string target)
     {
         if (!Edges.TryGetValue(source, out var set))
             Edges[source] = set = new HashSet<string>(StringComparer.Ordinal);
         set.Add(target);
+    }
+
+    /// <summary>Record that <paramref name="sourceAssembly"/>'s code references a symbol in <paramref name="targetAssembly"/>.</summary>
+    public void RecordAssemblyUse(string sourceAssembly, string targetAssembly)
+    {
+        if (!UsedAssemblies.TryGetValue(sourceAssembly, out var set))
+            UsedAssemblies[sourceAssembly] = set = new HashSet<string>(StringComparer.Ordinal);
+        set.Add(targetAssembly);
     }
 }

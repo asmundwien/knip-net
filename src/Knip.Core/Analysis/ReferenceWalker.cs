@@ -21,6 +21,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     private readonly bool _publicApiProject;
     private readonly IReadOnlySet<string> _solutionAssemblies;
     private readonly GraphState _state;
+    private readonly string? _ownAssembly;
     private readonly Stack<string> _context = new();
 
     public ReferenceWalker(
@@ -36,6 +37,8 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         _publicApiProject = publicApiProject;
         _solutionAssemblies = solutionAssemblies;
         _state = state;
+        // The assembly this tree belongs to — the source project of every edge this walker records.
+        _ownAssembly = model.Compilation.Assembly.Name;
     }
 
     // ---- declarations: establish the "current member" context ------------------------------
@@ -502,6 +505,16 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         // Only keep edges to symbols defined somewhere in the solution (source in any project).
         var assembly = target.OriginalDefinition.ContainingAssembly?.Name;
         if (assembly is null || !_solutionAssemblies.Contains(assembly)) return;
+
+        // Cross-assembly edge: this project's code touches a symbol OWNED by another solution
+        // assembly. Record (ownAssembly -> targetAssembly) so DeadCodeAnalyzer can tell which
+        // <ProjectReference>s are actually exercised. Guard on ownAssembly being a distinct solution
+        // assembly so intra-project references don't register as "uses" of a reference.
+        if (_ownAssembly is not null
+            && !string.Equals(assembly, _ownAssembly, StringComparison.Ordinal))
+        {
+            _state.RecordAssemblyUse(_ownAssembly, assembly);
+        }
 
         var targetId = SymbolId.For(target);
         if (targetId is null || string.Equals(targetId, sourceId, StringComparison.Ordinal)) return;

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <NoWarn>CS0067;CS0169;CS0649;IDE0051;IDE0052</NoWarn>
+    <!-- Not part of Knip.slnx; only ever compiled at runtime by MSBuildWorkspace. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- USED: Consumer.Main references WS2.UsedLib.Greeter -> reference is exercised (NOT flagged). -->
+    <ProjectReference Include="..\UsedLib\WS2.UsedLib.csproj" />
+    <!-- UNUSED: no Consumer symbol ever touches a WS2.UnusedLib type -> flagged. -->
+    <ProjectReference Include="..\UnusedLib\WS2.UnusedLib.csproj" />
+    <!-- HAZARD: Consumer touches an INTERNAL type of WS2.HazardLib exposed via [InternalsVisibleTo].
+         This produces a genuine cross-assembly symbol edge, so the reference is (correctly) NOT
+         flagged. Documents that internals-visible usage is still real usage. -->
+    <ProjectReference Include="..\HazardLib\WS2.HazardLib.csproj" />
+  </ItemGroup>
+
+</Project>
