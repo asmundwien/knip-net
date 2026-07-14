@@ -81,15 +81,15 @@ public sealed class CatETests
         AssertExactly(await FindingsIn("CatE.E07"), "CatE.E07.Scope.Close()");
     }
 
-    [Fact(Skip = "E08 — WS1b: collection-initializer Add is falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E08_collection_initializer_add_alive()
     {
         AssertExactly(await FindingsIn("CatE.E08"), "CatE.E08.Bag.Add(string)");
     }
 
-    [Fact(Skip = "E09 — WS1b: tuple-deconstruction Deconstruct is falsely flagged")]
-    [Trait("status", "core-gap")]
+    [Fact]
+    [Trait("status", "contract")]
     public async Task E09_deconstruct_alive()
     {
         AssertExactly(await FindingsIn("CatE.E09"), "CatE.E09.Point.DeconstructOther(int, int)");
