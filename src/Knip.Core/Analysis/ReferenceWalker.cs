@@ -266,6 +266,89 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (implicitIndexer.IndexerSymbol is { } indexer) AddEdge(source, indexer);
     }
 
+    // `foreach` over a pattern-based (duck-typed) enumerable binds GetEnumerator/MoveNext/Current
+    // (and DisposeMethod for a pattern enumerator implementing pattern dispose) with no IdentifierName
+    // node at the use site. GetForEachStatementInfo surfaces each bound member; the enumerator TYPE
+    // stays alive automatically once its members are edged.
+    public override void VisitForEachStatement(ForEachStatementSyntax node)
+    {
+        RecordForEachMembers(node);
+        base.VisitForEachStatement(node);
+    }
+
+    private void RecordForEachMembers(CommonForEachStatementSyntax node)
+    {
+        if (_context.Count == 0) return;
+        var info = _model.GetForEachStatementInfo(node);
+        var source = _context.Peek();
+        if (info.GetEnumeratorMethod is { } getEnumerator) AddEdge(source, getEnumerator);
+        if (info.MoveNextMethod is { } moveNext) AddEdge(source, moveNext);
+        if (info.CurrentProperty is { } current) AddEdge(source, current);
+        if (info.DisposeMethod is { } dispose) AddEdge(source, dispose);
+    }
+
+    // `await` on a custom awaitable binds GetAwaiter/IsCompleted/GetResult with no IdentifierName node
+    // at the use site. GetAwaitExpressionInfo surfaces each bound member; the awaiter TYPE stays alive
+    // automatically once its members are edged.
+    public override void VisitAwaitExpression(AwaitExpressionSyntax node)
+    {
+        RecordAwaitMembers(node);
+        base.VisitAwaitExpression(node);
+    }
+
+    private void RecordAwaitMembers(AwaitExpressionSyntax node)
+    {
+        if (_context.Count == 0) return;
+        var info = _model.GetAwaitExpressionInfo(node);
+        var source = _context.Peek();
+        if (info.GetAwaiterMethod is { } getAwaiter) AddEdge(source, getAwaiter);
+        if (info.IsCompletedProperty is { } isCompleted) AddEdge(source, isCompleted);
+        if (info.GetResultMethod is { } getResult) AddEdge(source, getResult);
+    }
+
+    // Pattern-based `Dispose` on a ref struct in a `using` statement / local `using` declaration is
+    // invoked by the using lowering with no IdentifierName node at the use site. No public
+    // SemanticModel info API surfaces the bound pattern-dispose method (GetOperation on the
+    // resource does not expose it), so we resolve it deterministically: from the resource's type,
+    // find the accessible instance parameterless method named `Dispose` and edge to it. This mirrors
+    // how the compiler binds pattern dispose; it is additive and solution-scoped via AddEdge.
+    public override void VisitUsingStatement(UsingStatementSyntax node)
+    {
+        if (node.Declaration is { } declaration)
+            foreach (var variable in declaration.Variables)
+                RecordPatternDispose(declaration.Type, variable);
+        else if (node.Expression is { } expression)
+            RecordPatternDisposeForType(_model.GetTypeInfo(expression).Type);
+        base.VisitUsingStatement(node);
+    }
+
+    public override void VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node)
+    {
+        if (!node.UsingKeyword.IsKind(SyntaxKind.None))
+            foreach (var variable in node.Declaration.Variables)
+                RecordPatternDispose(node.Declaration.Type, variable);
+        base.VisitLocalDeclarationStatement(node);
+    }
+
+    private void RecordPatternDispose(TypeSyntax declaredType, VariableDeclaratorSyntax variable)
+    {
+        // `using var x = ...` has an implicit type; take the initializer's type when the declared
+        // type node doesn't resolve to a concrete type.
+        var type = _model.GetTypeInfo(declaredType).Type;
+        if (type is null or IErrorTypeSymbol && variable.Initializer is { } init)
+            type = _model.GetTypeInfo(init.Value).Type;
+        RecordPatternDisposeForType(type);
+    }
+
+    private void RecordPatternDisposeForType(ITypeSymbol? type)
+    {
+        if (_context.Count == 0 || type is null) return;
+        var source = _context.Peek();
+        foreach (var member in type.GetMembers("Dispose"))
+            if (member is IMethodSymbol { Parameters.IsEmpty: true, IsStatic: false })
+                AddEdge(source, member);
+    }
+
     private void RecordConversion(ExpressionSyntax expression)
     {
         if (_context.Count == 0) return;
