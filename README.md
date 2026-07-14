@@ -65,6 +65,14 @@ See [`knip.json`](./knip.json) for a fully-annotated example. Key knobs:
   to specific projects.
 - `ignore.files` / `ignore.symbols` / `ignore.namespaces` / `ignore.projects` — globs
   (`**`, `*`, `?`) for generated code, reflection/serialization targets, etc.
+- `plugins` — built-in, config-gated analysis plugins that keep alive usages the core walker cannot
+  see. Keyed by camelCase plugin id; `plugins.<id>.enabled` turns one on/off, with optional
+  per-plugin settings under the same object. Plugins are **add-only** — a plugin can prevent a false
+  positive (keep code alive) but can never mark live code dead. **`reflection` ships ON**
+  (`Type.GetType("Ns.Foo")`, `Activator.CreateInstance`, `typeof(T).GetMethod("X")`/
+  `x.GetType().GetMethod("X")` and friends → keep the named type/member alive). Unknown plugin ids
+  and unknown per-plugin keys print a **visible warning** rather than silently no-opping, so a typo
+  is caught. Run with `-v` to see each plugin's contribution counts and per-project wall-time.
 
 ## Important: restore the solution first
 

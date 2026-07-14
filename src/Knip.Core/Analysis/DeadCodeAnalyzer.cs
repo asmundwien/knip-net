@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Knip.Core.Configuration;
 using Knip.Core.Model;
+using Knip.Core.Plugins;
 using Microsoft.CodeAnalysis;
 
 namespace Knip.Core.Analysis;
@@ -21,7 +22,17 @@ public sealed class DeadCodeAnalyzer
 
     private readonly KnipConfig _config;
 
-    public DeadCodeAnalyzer(KnipConfig config) => _config = config;
+    // Built-in plugins resolved once from config: only those enabled, in registry order.
+    private readonly IReadOnlyList<(PluginDescriptor Descriptor, IKnipPlugin Plugin)> _plugins;
+
+    public DeadCodeAnalyzer(KnipConfig config)
+    {
+        _config = config;
+        _plugins = PluginRegistry.All
+            .Where(config.IsPluginEnabled)
+            .Select(d => (d, d.Factory()))
+            .ToList();
+    }
 
     public async Task<AnalysisResult> AnalyzeAsync(Solution solution, IProgress<string>? progress, CancellationToken ct)
     {
@@ -38,6 +49,14 @@ public sealed class DeadCodeAnalyzer
         var solutionAssemblies = projects
             .Select(p => p.AssemblyName)
             .ToHashSet(StringComparer.Ordinal);
+
+        // Config typos (unknown plugin id / unknown per-plugin key) surface as VISIBLE warnings rather
+        // than silently no-opping. Prepended so they lead the diagnostics list.
+        foreach (var warning in _config.ValidatePlugins())
+            result.LoadDiagnostics.Add(warning);
+
+        // The single choke point through which every plugin mutates the graph (invariants #1, #5, add-only).
+        var sink = new ContributionSink(state, solutionAssemblies);
 
         foreach (var project in projects)
         {
@@ -61,6 +80,24 @@ public sealed class DeadCodeAnalyzer
                 var model = compilation.GetSemanticModel(tree);
                 var walker = new ReferenceWalker(model, _config, isPublicApi, solutionAssemblies, state);
                 walker.Visit(await tree.GetRootAsync(ct));
+            }
+
+            // Plugin pass: AFTER the core walk of this project (declared nodes exist to edge to),
+            // BEFORE AddPolymorphismEdges/Traverse (contributions must feed reachability). Each plugin
+            // pulls its own semantic models from `compilation`; the sink owns key derivation + #5 filter.
+            foreach (var (descriptor, plugin) in _plugins)
+            {
+                ct.ThrowIfCancellationRequested();
+                sink.ResetCounts();
+                var pluginWatch = Stopwatch.StartNew();
+                var context = new PluginContext(compilation, project, _config.PluginSettingsFor(descriptor.Id), sink);
+                plugin.Contribute(context, ct);
+                pluginWatch.Stop();
+                // Observability (-v): per plugin, per project — contribution counts + wall-time. Routed
+                // through the progress/stderr channel so machine output on stdout stays clean (J6 invariant).
+                progress?.Report(
+                    $"plugin {descriptor.Id} on {project.Name}: +{sink.RootsAdded} root(s), " +
+                    $"+{sink.EdgesAdded} edge(s) in {pluginWatch.Elapsed.TotalMilliseconds:0}ms");
             }
         }
 

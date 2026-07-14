@@ -44,5 +44,23 @@
 
   "output": {
     "format": "console"   // console | json | sarif
+  },
+
+  "plugins": {
+    // Built-in analysis plugins keep alive usages the core walker cannot see (reflection strings,
+    // scanning DI, serialized DTOs, markup binding). Each plugin is ADD-ONLY: it can keep code alive
+    // (avoid a false positive) but never mark live code dead. Keyed by camelCase plugin id.
+    //
+    // Unknown plugin ids and unknown per-plugin keys are NOT silently ignored — they print a visible
+    // "warning:" so a typo (e.g. "reflectoin" or "enabldd") is caught instead of quietly no-opping.
+
+    // reflection — ON by default. Keeps alive types/members named only via reflection strings/typeof:
+    //   Type.GetType("Ns.Foo"), Activator.CreateInstance(typeof(Foo)/"Ns.Foo"),
+    //   typeof(T).GetMethod("X") / x.GetType().GetMethod("X") (also GetProperty/GetField/GetEvent).
+    // Conservative: only contributes when it can resolve the target symbol from the string/typeof.
+    "reflection": { "enabled": true }
+
+    // scanningDi (later task) — assembly-scanning / non-generic DI (Scrutor, MediatR, MassTransit).
+    // blazorParameter / serialization — OFF by default; enable if your solution uses them.
   }
 }

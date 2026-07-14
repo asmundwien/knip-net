@@ -20,6 +20,9 @@ public sealed class Service
     // ALIVE (future): reached only by the reflected GetMethod("Handle").Invoke above.
     public void Handle() { }
 
-    // DEAD SIBLING (honest): identical shape, never named anywhere -> flagged today AND in future.
+    // DEAD SIBLING / OVER-ROOTING DECOY (honest): identical shape, never named anywhere -> flagged
+    // today AND with the reflection plugin ON. A blanket plugin that rooted every member named in any
+    // GetMethod string, or every member of a reflected type, would wrongly keep this alive — the H1
+    // ALIVE-with-plugin test (and the WS5 over-rooting guard) assert it stays flagged.
     public void NeverCalled() { }
 }
