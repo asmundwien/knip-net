@@ -19,7 +19,9 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     private readonly SemanticModel _model;
     private readonly KnipConfig _config;
     private readonly bool _publicApiProject;
-    private readonly IReadOnlySet<string> _solutionAssemblies;
+    // ISet (not IReadOnlySet) is the common surface across the net10.0 and net472 BCLs — IReadOnlySet<T>
+    // does not exist on net472. Only .Contains is used here, and it is never mutated after construction.
+    private readonly ISet<string> _solutionAssemblies;
     private readonly GraphState _state;
     private readonly string? _ownAssembly;
     private readonly Stack<string> _context = new();
@@ -28,7 +30,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         SemanticModel model,
         KnipConfig config,
         bool publicApiProject,
-        IReadOnlySet<string> solutionAssemblies,
+        ISet<string> solutionAssemblies,
         GraphState state)
         : base(SyntaxWalkerDepth.Node)
     {

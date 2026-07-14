@@ -216,6 +216,9 @@ public sealed class CatITests
         psi.ArgumentList.Add("run");
         psi.ArgumentList.Add("--project");
         psi.ArgumentList.Add(cliProject);
+        // The CLI multi-targets (net10.0;net472); pick the runnable TFM (net472 is Windows-only e2e).
+        psi.ArgumentList.Add("--framework");
+        psi.ArgumentList.Add("net10.0");
         psi.ArgumentList.Add("--no-build"); // build happens once in the verification gate
         psi.ArgumentList.Add("--");
         foreach (var a in args) psi.ArgumentList.Add(a);

@@ -2,13 +2,15 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;net472</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <RootNamespace>Knip.Cli</RootNamespace>
 
-    <!-- Packaged as a .NET global tool: `dotnet tool install -g Hdir.Knip` -> `dotnet knip` -->
+    <!-- Packaged as a .NET global tool: `dotnet tool install -g Hdir.Knip` -> `dotnet knip`.
+         Only the net10.0 TFM ships as the tool; net472 exists so the engine can be built against
+         full-framework MSBuild for legacy (packages.config) solutions on Windows. -->
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>dotnet-knip</ToolCommandName>
     <PackageId>Hdir.Knip</PackageId>
@@ -20,8 +22,25 @@
   <ItemGroup>
     <!-- Locator must be able to find the SDK's MSBuild; keep it out of the way of Roslyn's copy. -->
     <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
-    <!-- Do not ship MSBuild assemblies; Locator loads the SDK's copies at runtime (MSBL001). -->
+  </ItemGroup>
+
+  <!-- Do not ship MSBuild assemblies; Locator loads the SDK's/VS's copies at runtime (MSBL001).
+       Version is per-TFM: net472's Roslyn 4.14.0 requires Build.Framework >= 17.13.9, so pin the
+       patched 17.14.28 there (avoids an NU1605 downgrade vs. the transitive floor). -->
+  <ItemGroup Condition="'$(TargetFramework)'=='net10.0'">
     <PackageReference Include="Microsoft.Build.Framework" Version="17.11.48" ExcludeAssets="runtime" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(TargetFramework)'=='net472'">
+    <PackageReference Include="Microsoft.Build.Framework" Version="17.14.28" ExcludeAssets="runtime" PrivateAssets="all" />
+    <!-- Roslyn 4.14.0's Workspaces.MSBuild drags Microsoft.Build transitively into this exe; Locator
+         (MSBL001) requires MSBuild assemblies to be reference-only so it can load the machine's copies
+         at runtime. Pin the patched 17.14.28 (reference-only) to satisfy that and avoid the advisory. -->
+    <PackageReference Include="Microsoft.Build" Version="17.14.28" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.14.28" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.Build.Tasks.Core" Version="17.14.28" ExcludeAssets="runtime" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.NET.StringTools" Version="17.14.28" ExcludeAssets="runtime" PrivateAssets="all" />
+    <!-- Reference assemblies so net472 COMPILES cross-platform (no full .NET Framework install). -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
   <ItemGroup>
