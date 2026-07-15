@@ -443,6 +443,9 @@ public sealed class DeadCodeAnalyzer
             INamedTypeSymbol => FindingKind.UnusedType,
             IMethodSymbol => FindingKind.UnusedMethod,
             IPropertySymbol => FindingKind.UnusedProperty,
+            // An enum member is an IFieldSymbol whose containing type is an enum — report it as its own
+            // kind (clearer remediation than a bare field) BEFORE the generic field case.
+            IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } => FindingKind.UnusedEnumMember,
             IFieldSymbol => FindingKind.UnusedField,
             IEventSymbol => FindingKind.UnusedEvent,
             _ => null,
@@ -487,6 +490,7 @@ public sealed class DeadCodeAnalyzer
         IMethodSymbol => "method",
         IPropertySymbol { IsIndexer: true } => "indexer",
         IPropertySymbol => "property",
+        IFieldSymbol { ContainingType.TypeKind: TypeKind.Enum } => "enum member",
         IFieldSymbol { IsConst: true } => "const",
         IFieldSymbol => "field",
         IEventSymbol => "event",

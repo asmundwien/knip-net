@@ -567,8 +567,11 @@ Keep this section updated as tasks complete — it is the handoff memory between
       (real case `IKontaktregisterFasade.HentPasientInformasjon`) are CORRECT findings, but the
       remediation is "remove from the interface," not "delete the method" — candidate for a distinct
       finding kind / remediation hint. Add as a D row when convenient.
-- [ ] WS-enum (decided 2026-07-14 from G6): member-level enum dead-code support.
-      Enum members need their own graph nodes + reference tracking. Until then G6 stays `G-feat`.
+- [x] WS-enum (decided 2026-07-14 from G6; DONE 2026-07-15): member-level enum dead-code support.
+      Enum members are declared as graph nodes (`VisitEnumMemberDeclaration` → `Declare`), reference-
+      tracked via the existing member-access/identifier path, and reported as new
+      `FindingKind.UnusedEnumMember` (remediation `DeleteSymbol`). Outermost-only (§3.7): a whole-dead
+      enum reports the TYPE only. G6 promoted `G-feat` → `C`.
 - [x] WS2 unused ProjectReferences — new `FindingKind.UnusedProjectReference`; per-project
       used-assembly sets tracked in `AddEdge`. Conservative: runtime-only/transitive refs (zero
       symbol edges) are a documented FP surface (README "triage before removing"); a future
@@ -735,7 +738,7 @@ deterministic type-based fallback for pattern `Dispose`). E12/E13 were green fro
 | G3 `C` | Primary-constructor class (C# 12), used | no spurious findings |
 | G4 `C` | `async` methods and iterators (`yield`) | treated as normal methods |
 | G5 `C` | Nested private type used only by outer type | alive |
-| G6 `G-feat` | Enum members | DECIDED 2026-07-14: plan member-level enum support (new WS-enum). Today the tool never reports individual dead enum members (only whole dead enums); test pins today's behavior, skip-tagged pending WS-enum |
+| G6 `C` | Enum members | DONE 2026-07-15 (WS-enum): enum members are first-class graph nodes. An unused member in a LIVE enum is flagged (`UnusedEnumMember`); used members (incl. `[Flags]` members OR'd into a live composite) stay alive; a whole-dead enum reports the TYPE only (outermost-only §3.7) |
 | G7 `C` | Constructors / static ctors / finalizers | never reported — §3.7 |
 | G8 `C` | Compiler-generated symbols (`<Main>$`, lambdas, anonymous types) | never reported |
 | G9 `C` | Unsafe/pointer parameter type `Foo*` | `Foo` alive (pointer unwrap edge) |

@@ -75,6 +75,12 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     public override void VisitInterfaceDeclaration(InterfaceDeclarationSyntax node) => Enter(node, base.VisitInterfaceDeclaration);
     public override void VisitRecordDeclaration(RecordDeclarationSyntax node) => Enter(node, base.VisitRecordDeclaration);
     public override void VisitEnumDeclaration(EnumDeclarationSyntax node) => Enter(node, base.VisitEnumDeclaration);
+
+    // Enum MEMBERS are named constants (IFieldSymbol) with their own graph node (G6/WS-enum). Declaring
+    // them makes an unused member a first-class finding when the enum TYPE is alive; if the whole enum is
+    // dead, the outermost-only rule (§3.7) reports the type and suppresses each member. `Enter` walks the
+    // member's initializer (`= SomeConst | Other`) under the member's context so those edges land.
+    public override void VisitEnumMemberDeclaration(EnumMemberDeclarationSyntax node) => Enter(node, base.VisitEnumMemberDeclaration);
     public override void VisitDelegateDeclaration(DelegateDeclarationSyntax node) => Enter(node, base.VisitDelegateDeclaration);
 
     public override void VisitMethodDeclaration(MethodDeclarationSyntax node) => Enter(node, base.VisitMethodDeclaration);
