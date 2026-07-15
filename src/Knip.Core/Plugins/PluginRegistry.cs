@@ -32,14 +32,15 @@ public sealed class PluginDescriptor
 
 /// <summary>
 /// The static, built-in plugin registry. Order here is the order plugins run in. The default-on set
-/// for v1 is <c>{reflection}</c>; <c>scanningDi</c> will flip on here once its plugin lands.
+/// for v1 is <c>{reflection, scanningDi}</c>. blazorParameter/serialization default OFF.
 /// </summary>
 public static class PluginRegistry
 {
     public static IReadOnlyList<PluginDescriptor> All { get; } =
     [
         new("reflection", defaultEnabled: true, () => new ReflectionPlugin()),
-        // scanningDi — lands in a later task; register default-on then. blazorParameter/serialization default OFF.
+        new("scanningDi", defaultEnabled: true, () => new ScanningDiPlugin()),
+        // blazorParameter/serialization — land in later tasks; register default OFF.
     ];
 
     /// <summary>The ids that run under a default (<c>new KnipConfig()</c>) configuration.</summary>

@@ -31,13 +31,17 @@ public sealed class Registration
     }
 }
 
-// ALIVE (future): registered only via AddConsumers assembly scanning.
+// ALIVE (scanningDi plugin): registered only via AddConsumers assembly scanning. The plugin roots
+// types whose SHAPE matches the IConsumer<> marker interface, keeping the consumer, its message type
+// (OrderPlaced, via the Consume signature edge) and IConsumer alive.
 public sealed class OrderConsumer : IConsumer<OrderPlaced>
 {
     public void Consume(OrderPlaced message) { }
 }
 
-// DEAD SIBLING (honest): not a consumer, never referenced -> flagged.
+// DEAD SIBLING / OVER-ROOTING DECOY (honest): not a consumer (implements no IConsumer<>), never
+// referenced -> flagged today AND with the scanningDi plugin ON. The H12 ALIVE-with-plugin test (and
+// the WS5 over-rooting guard) assert it stays flagged.
 public sealed class UnrelatedService
 {
     public void Consume(OrderPlaced message) { }
