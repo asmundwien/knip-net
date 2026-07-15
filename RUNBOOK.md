@@ -773,6 +773,8 @@ a feature" means. If triage finds a `C` row red, that is a bug report — escala
 | D5 `C` | Derived type used → base type | base alive via BaseType edge |
 | D6 `C` | Override-of-override chain, base member used | whole chain alive |
 | D7 `C` | Unused attribute class (never applied) | flagged; applied attribute alive |
+| D8 `C` | Override of an EXTERNAL virtual (`object.ToString`) on a REACHABLE type | IMPLEMENTED 2026-07-15 (WS1b FIX #5): the override is unreported (§7) but the private helper it calls stays ALIVE via a `containingType→override` edge (external-virtual overrides — `object.ToString/Equals/GetHashCode`, EF `DbContext.OnModelCreating`, `IDisposable.Dispose` via a base — are runtime/framework-dispatched, never referenced in source, but must be reachable when their type is). Decoy `DeadHelper()` (not reached from any live path) stays flagged. Dogfound on Sof: `SofDbContext.OnModelCreating`→`SeedDatabase`/`LeggTil*` |
+| D9 `C` | Override of an EXTERNAL virtual on a DEAD type (false-negative guard) | IMPLEMENTED 2026-07-15 (WS1b FIX #5): the FIX #5 edge is TYPE-REACHABILITY-GATED (an edge, not a root), so a dead type's override — and its callees — stays dead; the whole DEAD type is reported once (outermost-only). Proves FIX #5 introduces no false negative |
 
 ### E. Implicitly-invoked members — core gaps CLOSED in WS1b
 
@@ -814,6 +816,8 @@ deterministic type-based fallback for pattern `Dispose`). E12/E13 were green fro
 | F9 `C` | MSTest `[TestInitialize]` setup method (DEFAULT config) | setup + a helper it calls alive; unattributed sibling flagged |
 | F10 `C` | MSTest static `[ClassInitialize]`/`[AssemblyInitialize]` + `[DataTestMethod]` (DEFAULT config) | all rooted; unattributed static sibling flagged |
 | F11 `C` | NUnit `[OneTimeSetUp]`/`[OneTimeTearDown]` (DEFAULT config) | both rooted; unattributed sibling flagged |
+| F12 `C` | `[Fact]` test class — a field assigned ONLY in the ctor + a helper called ONLY from the ctor | IMPLEMENTED 2026-07-15 (WS1b FIX #4): rooting an INSTANCE entry-point member also roots the type's instance ctors (the framework news the class per test), so ctor-only setup (`_loggerMock`, `SetupCommonMocks()`) stays ALIVE; a never-used field is the dead-sibling. Dogfound on Hego: 10 `*Test._…Mock`/`SetupCommonMocks` FPs eliminated |
+| F13 `C` | Entry type (`*Controller`) — a ctor-injected field used ONLY in the ctor | IMPLEMENTED 2026-07-15 (WS1b FIX #4): an entry type is DI-constructed to invoke its members, so its instance ctors are rooted; a ctor-assigned field + ctor-only helper stay ALIVE; a never-used field is the dead-sibling |
 
 ### G. Language corners
 
@@ -893,6 +897,7 @@ alive. K1 pins that default; the rest assert production mode (`--production` / `
 | K5 `C` | Transitive: A used by B; B used only by tests | IMPLEMENTED 2026-07-15 (WS7): production mode flags BOTH A and B as `OnlyUsedByTests` (A transitively, empty referrers; B directly, with its test referrer) |
 | K6 `C` | Production code genuinely used by production AND by tests | IMPLEMENTED 2026-07-15 (WS7): never flagged in production mode — production wins in the two-color merge, so a production root keeps the whole closure alive (tests don't taint) |
 | K7 `C` | Test-project classification default and zero-test-project warning | IMPLEMENTED 2026-07-15 (WS7): `TestProjectClassifier` — signal order explicit `testProjects` globs → referenced test-framework assemblies (`MSTest.TestFramework`/`xunit.core`/`nunit.framework`) → name globs (`*Tests`/`*.Test`/`*.Tests`); no match → production/`default`. Zero detected in production mode → loud warning (stderr + `reliability.productionModeWarnings`), never fails. `-v` + `reliability.testProjectClassification` show each project's classification + the signal. Pinned by a `TestProjectClassifierTests` unit test per signal (signal-2 via synthesized in-memory `xunit.core` reference) + the `CatK7NoTests` zero-detection fixture |
+| K8 `C` | FIX #4 origin guard: a production method reached ONLY from a test class's EXPLICIT ctor | IMPLEMENTED 2026-07-15 (WS1b FIX #4): the ctor rooted by FIX #4 inherits its TEST origin, so in production mode the method stays `OnlyUsedByTests` (the ctor being rooted must NOT make it production-reachable). Guards that FIX #4 did not regress the two-color K-category recall. `NeverCalled` stays plain-dead; `KeepAlive` (production caller) never flagged |
 
 ### L. Agent contract — the machine output as product API (WS8 feed)
 

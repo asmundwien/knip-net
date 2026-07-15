@@ -87,4 +87,27 @@ public sealed class CatDTests
         // type -> alive (not in the set). The pair is the mutation check (identical minus application).
         AssertExactly(await FindingsIn("CatD.D7"), "CatD.D7.UnusedAttribute");
     }
+
+    [Fact] // D8 (FIX #5): a REACHABLE type overriding an EXTERNAL virtual (object.ToString) keeps the
+           // private helper it calls ALIVE via the type->override edge; the override itself is never
+           // reported (invariant #7); a private helper NOT reached stays flagged (dead-sibling).
+    [Trait("status", "contract")]
+    public async Task D8_external_override_on_reachable_type_keeps_callee_alive()
+    {
+        // Model.ToString() overrides object.ToString() (external virtual). FIX #5 edges Model->ToString
+        // so, Model being reachable, the override's callee Describe() is reachable. DeadHelper() is not
+        // reached from any live path -> flagged, proving the type is not wholesale-rooted.
+        AssertExactly(await FindingsIn("CatD.D8"), "CatD.D8.Model.DeadHelper()");
+    }
+
+    [Fact] // D9 (FIX #5 false-negative guard): a DEAD type overriding an external virtual stays dead —
+           // the type->override edge is type-reachability-gated, so an unreachable type's override (and its
+           // callees) remain unreachable. Outermost-only reports the whole DEAD type once.
+    [Trait("status", "contract")]
+    public async Task D9_external_override_on_dead_type_stays_dead()
+    {
+        // DeadModel is never referenced, so the FIX #5 edge has an unreachable source: the whole type is
+        // reported (outermost-only), NOT kept alive. This proves FIX #5 introduces no false negative.
+        AssertExactly(await FindingsIn("CatD.D9"), "CatD.D9.DeadModel");
+    }
 }

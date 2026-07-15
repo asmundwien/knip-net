@@ -635,6 +635,15 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
             // inherits the SAME origin as the member (a test class kept alive only by its [Fact]s is test).
             for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)
                 if (SymbolId.For(container) is { } containerId) AddRoot(containerId, asTest);
+
+            // (FIX #4) Framework-invoked INSTANCE members require the framework to CONSTRUCT the instance
+            // first (xUnit news the test class per [Fact]; a controller is DI-constructed to invoke an
+            // action). So the containing type's instance constructors are used — root them with the SAME
+            // origin as the member (a [Fact] → test-origin ctor, so production-mode OnlyUsedByTests still
+            // works). Static members carry no instance construction. Fields/helpers used only from the
+            // ctor (test-setup mocks, SetupCommonMocks()) then gain liveness via normal edges from the ctor.
+            if (!symbol.IsStatic)
+                RootInstanceConstructors(symbol.ContainingType, asTest);
         }
 
         if (symbol is INamedTypeSymbol type && IsEntryType(type, ep))
@@ -642,10 +651,27 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
             // Entry types (Controller, IHostedService, …) are production entry points; in a test project
             // they still take the project's test origin.
             AddRoot(id, _testProject);
+            // (FIX #4) The framework constructs the entry type to invoke its members — root its instance
+            // constructors so a ctor-injected field/helper used only from the ctor stays alive.
+            RootInstanceConstructors(type, _testProject);
             foreach (var member in type.GetMembers())
                 if (!member.IsImplicitlyDeclared && IsExternallyVisible(member) && SymbolId.For(member) is { } memberId)
                     AddRoot(memberId, _testProject);
         }
+    }
+
+    /// <summary>
+    /// (FIX #4) Root the INSTANCE constructors of <paramref name="type"/> (never the static ctor) with the
+    /// given origin. Called only when the type has a framework-invoked instance member or is an entry type —
+    /// the framework must construct the instance to invoke it, so its ctor(s) are used. A type with no such
+    /// member is NOT passed here, so a dead type's ctor stays dead (no false negative).
+    /// </summary>
+    private void RootInstanceConstructors(INamedTypeSymbol? type, bool asTest)
+    {
+        if (type is null) return;
+        foreach (var ctor in type.InstanceConstructors)
+            if (!ctor.IsImplicitlyDeclared && SymbolId.For(ctor) is { } ctorId)
+                AddRoot(ctorId, asTest);
     }
 
     /// <summary>

@@ -219,6 +219,33 @@ public sealed class CatKTests
         Assert.Equal("testProjects:CatK.K4.Lib", lib.Signal);
     }
 
+    // ---- K8: Contract — FIX #4 test-ctor rooting preserves the two-color TEST origin ---------
+
+    [Trait("status", "contract")]
+    [Fact] // K8: a production method reached ONLY from a test class's EXPLICIT ctor is still OnlyUsedByTests
+           // in production mode — FIX #4 roots the ctor as a TEST root, which must NOT make the code
+           // production-reachable (guards against a K-category recall regression).
+    public async Task K8_test_class_ctor_root_keeps_referenced_production_code_test_only()
+    {
+        // DEFAULT mode: UsedFromTestCtor is ALIVE (the test-ctor root keeps it), NeverCalled flagged.
+        var defaultFindings = await FindingsIn("CatK.K8");
+        Assert.DoesNotContain("CatK.K8.Service.UsedFromTestCtor()", defaultFindings);
+        Assert.Contains("CatK.K8.Service.NeverCalled()", defaultFindings);
+
+        // PRODUCTION mode: the test-ctor root is a TEST root (FIX #4 inherited the ctor's origin), so
+        // UsedFromTestCtor is reachable ONLY via tests -> OnlyUsedByTests, NOT production-reachable.
+        var findings = await FindingObjectsIn("CatK.K8", Production());
+
+        var testOnly = findings.Single(f => f.Symbol == "CatK.K8.Service.UsedFromTestCtor()");
+        Assert.Equal(FindingKind.OnlyUsedByTests, testOnly.Kind);
+        Assert.Equal(Remediation.DeleteCodeAndTests, testOnly.Remediation);
+
+        // The dead sibling stays plain-dead; KeepAlive (real production caller) is never flagged.
+        var plainDead = findings.Single(f => f.Symbol == "CatK.K8.Service.NeverCalled()");
+        Assert.Equal(FindingKind.UnusedMethod, plainDead.Kind);
+        Assert.DoesNotContain(findings, f => f.Symbol == "CatK.K8.Service.KeepAlive()");
+    }
+
     [Trait("status", "contract")]
     [Fact]
     public async Task K7_zero_test_projects_warns_loudly_and_never_fails()
