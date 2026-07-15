@@ -104,10 +104,20 @@ made. Reject any diff that violates one, even if its tests pass.
    never report constructors/static ctors/finalizers, overrides, or interface implementations;
    overrides/interface impls stay *alive* when their abstraction is used (`AddPolymorphismEdges`).
 
-8. **False positives are the product risk.** The org will *delete code* based on findings
-   ahead of migrations. When in doubt, prefer a false negative (miss dead code) over a false
-   positive (flag live code). Any heuristic change needs a fixture proving it doesn't flag
-   live code.
+8. **Recall over silence — but hazards are sacred.** (REVISED 2026-07-15; supersedes the original
+   "prefer a false negative" rule.) The tool's output is a *suggestion set* consumed through a
+   MANDATORY verify loop (delete → build → full tests → re-run) and downstream CI; a false positive
+   that fails that loop is binned at near-zero cost. Therefore: **never silently suppress a finding
+   class to avoid false positives — emit it, with an honest `confidence` tier and `hazards[]`.**
+   The residual risk that remains UNACCEPTABLE is the finding whose deletion survives build and tests
+   but breaks at RUNTIME — reflection, DI-by-name, serialization, config/markup-bound usage
+   (**category H**). Those hazard classes must ALWAYS demote confidence; plugins killing them stay
+   default-on; and a heuristic change that could create an **unflagged H-class false positive** still
+   requires a fixture proving it doesn't. Noise suppression (§3.7 outermost-only, no
+   ctors/overrides) is unchanged — that is noise policy, not FP-avoidance.
+   (This does NOT license loosening existing FN-preferring CORE rules in bulk — invariant #3 overload
+   candidates, B6-style conservatisms stay; relaxing any is per-rule backlog work with its own fixture
+   + real-solution measurement.)
 
 9. **`Knip.Core` stays CLI-free and locator-free**; all MSBuild *registration* lives in the CLI.
    Keep analysis code (walker, analyzer, graph) free of anything version- or OS-specific —
@@ -212,10 +222,15 @@ the *per-project origin* of edges — the implementer will need to track source-
 
 - New `FindingKind.UnusedProjectReference`; report project + referenced project (no file/line
   or point at the `.csproj` line).
-- Careful: a reference can be load-bearing without symbol edges (transitive restore behavior,
-  runtime-only deps, `InternalsVisibleTo`). Start conservative; put known-hazard cases in
-  fixtures; consider a distinct confidence label in output.
-- Acceptance: fixture with one used and one unused ProjectReference; used one NOT flagged.
+- A reference can be load-bearing without symbol edges (transitive restore behavior, runtime-only
+  deps, `InternalsVisibleTo`). Per the REVISED §3.8 (recall over silence): **always EMIT the
+  finding, marked honestly** — never drop it. Attach the matching hazard (`configBoundType`/
+  runtime-only, `internalsVisibleTo`) and a low/medium `confidence` (via the WS8 model), so the
+  agent triages it through the verify loop rather than the tool hiding it. (WS2 shipped before the
+  confidence/hazard model; folding its output into WS8 v2 = `removeProjectReference` + confidence
+  is part of WS8b.)
+- Acceptance: fixture with one used and one unused ProjectReference; used one NOT flagged; the
+  known-hazard case EMITTED with its hazard + low confidence (asserts the tier, not absence).
 
 ### WS3 — Unused `<PackageReference>` detection
 
@@ -227,8 +242,13 @@ as graph nodes).
 
 - Hazards (fixture each): analyzers/source-generator packages, build-only packages
   (`PrivateAssets="all"`), packages used only via transitive types, implicit `Using`s.
-  These are NOT safely detectable as unused — exclude or mark low-confidence.
-- Acceptance: fixture with one used and one unused package; analyzer-style package NOT flagged.
+  Per the REVISED §3.8: these are **EMITTED, marked honestly** — never excluded/dropped. Attach the
+  matching hazard + low/medium `confidence` so the agent triages via the verify loop. (Flips the old
+  "exclude or mark low-confidence" to "always emit, mark honestly.") Emit into the WS8 vocabulary
+  (`removePackageReference`), not a bespoke shape.
+- Acceptance: fixture with one used and one unused package; used one NOT flagged; the analyzer-style
+  / PrivateAssets / transitive-only cases EMITTED with their hazard + low confidence (assert the
+  tier, not absence).
 
 ### WS4 — .NET Framework 4.8 / legacy project support (the migration-cleanup use case)
 
@@ -339,10 +359,41 @@ merges on `Finding`/`BuildFindings`, which both lanes touch.
   confidence → delete by span → build + tests → re-run knip asserting no new LIVE-code flags
   (deleting dead code legitimately uncovers newly-dead symbols, so don't assert identical output) →
   baseline/ignore the remainder with reasons. Terse, imperative, exit-code table, one full JSON
-  example. README links to it.
-- **Hazards:** §3.7/§3.8 unchanged — WS8 ENRICHES the finding set, never changes it; low confidence
-  is NOT license to emit previously-suppressed findings. `--why` output is prose + file:line, never
-  raw graph keys (invariant #1 stays internal).
+  example. README links to it. **CHECKPOINT: WS8d is NOT done until escalated for human review
+  against a real dogfood run (the Tjenesteportalen findings) — validated, not signed off as prose.**
+- **Hazards:** §3.7 noise policy unchanged. §3.8 is REVISED (recall over silence) — WS8 emits MORE,
+  with honest confidence/hazards, and NEVER silently suppresses to avoid FPs. Low confidence is NOT
+  license to emit findings that §3.7 noise policy (outermost-only, ctors/overrides) suppresses.
+  `--why` output is prose + file:line, never raw graph keys (invariant #1 stays internal).
+- **`rootCause` (added per §3.8 revision):** per-finding OPTIONAL `rootCause` = the finding id of the
+  nearest dead symbol that keeps this one dead (null when directly unreferenced). Lets agents delete
+  outermost-first and shows cascade structure; `--why` reuses it. Battery row **L10**.
+
+**L9 — confidence & hazard model (SIGNED OFF 2026-07-15, with adjustments). This is HOW revised
+§3.8 is implemented.** Hazards are advisory-only (never change the emitted set); confidence starts
+`high`, demoted by FIRST match:
+- **C1 (per-project).** A project-load/restore failure demotes findings IN THE AFFECTED PROJECTS to
+  `low`; only solution-GLOBAL degradation demotes everything. `reliability` attributes failures per
+  project.
+- **C2 (publicApi — config-sensitive).** If `publicApiProjects` OR `treatAllPublicAsUsed` is set,
+  remaining `publicApi` findings → `medium` (user declared their external-API posture); if NEITHER is
+  set, exposure is unknown → `low`. Other C2 hazards (`serializationShaped`, `configBoundType`,
+  `diPluginShaped`) → `low`.
+- **C3** project/package-ref → `medium`. **C4** `deleteCodeAndTests` (test-only, WS7) → `medium`.
+- **C5 DROPPED from v1** — "entry-point near-miss" ships only with an enumerated definition + one
+  fixture each, or not at all; add later ADDITIVELY. No vibe-based demotions.
+- **New hazard `internalsVisibleTo`:** `[InternalsVisibleTo]` naming an assembly NOT in the solution
+  → internal findings in that project → `low` (invisible external consumer; same logic as
+  unconfigured publicApi).
+- **Autonomy line (hard precondition):** `high` → agent may DELETE into the PR; `medium` → PROPOSED
+  in the PR for human review; `low` → SURFACED only, never touched. `high` autonomy is CONDITIONAL
+  on the full verify loop — `reliability.degraded == false` for the finding's project → delete
+  strictly by span → `dotnet build` + full tests green → re-run knip asserting no new LIVE-code
+  flags. Any step fails → the finding drops to `medium` handling. Auto-deletion without the loop is a
+  PROTOCOL VIOLATION, not a judgment call.
+- **Change control:** each demotion rule is pinned by an Appendix-L fixture (both branches of the C2
+  split included). Rule ADDITIONS are additive with their own fixture; rule CHANGES are contract
+  changes → ESCALATE. **L9 blocks WS8b.**
 
 ## 6. Orchestration protocol
 
@@ -367,8 +418,12 @@ changed.
 **Review checklist (orchestrator, per diff). These are mechanical checks — do not
 substitute judgment for them; a diff that fails one is bounced even if it "looks fine":**
 1. Does it violate any §3 invariant? → reject with the invariant number.
-2. Any new heuristic must ADD a fixture with at least one NOT-flagged (live) assertion
-   in the same diff. Absent → bounce; do not accept a promise to add it later.
+2. Any heuristic change that could create an **unflagged H-class false positive** (reflection,
+   DI-by-name, serialization, config/markup-bound — the runtime-only classes of revised §3.8) must
+   ADD a fixture proving it doesn't, in the same diff. Absent → bounce; no promise-to-add-later.
+   (Revised 2026-07-15: was "prove live code is not flagged"; under recall-over-silence, EMITTING a
+   finding is fine — the guard is specifically against the runtime-only H-class that survives build
+   + tests. A new confidence/hazard demotion RULE likewise ships with a fixture asserting the tier.)
 3. Any edit to an existing test assertion or fixture, in any task, escalates to the
    human — do not evaluate whether the weakening "seems reasonable"; that judgment is
    exactly what a bad diff exploits. (Gap-promotion tasks: only `Skip` removal is allowed,
@@ -458,6 +513,15 @@ Keep this section updated as tasks complete — it is the handoff memory between
       **B6 doc-comment-ID collision** (identical signatures in different assemblies merged into
       one graph node → false negative; SymbolId now assembly-qualifies keys via the DEFINING
       assembly, preserving invariant #1 — B1/B3 cross-project tests stay green).
+- **INVARIANT #8 REVISED 2026-07-15** (human decision, §6): "prefer a false negative" → **"recall
+  over silence — but hazards are sacred"** (see §3.1 list item 8). Output is a suggestion set behind
+  a mandatory verify loop; emit findings with honest confidence + hazards instead of silently
+  suppressing. Only the runtime-only H-class (reflection/DI/serialization/config-bound) that survives
+  build+tests stays the unacceptable risk → always demote confidence, keep killer plugins default-on.
+  Consequences applied same commit: WS2/WS3 cards flip to "always emit, mark honestly"; §6
+  review-checklist item 2 reworded; L9 confidence/hazard model pinned (WS8 card) + Appendix L
+  rows L10–L17; `rootCause` field added to WS8 design. Existing FN-preferring CORE rules (inv #3,
+  B6-style) unchanged — no bulk walker loosening.
 - Process rule (learned from B6): **D-rows escalate to the human BEFORE writing any code**, even
   when the fix looks obviously correct. Disposition sign-off ≠ merging the concrete diff. Remaining
   open D-rows: **L9** (confidence rules, blocks WS8b — decided at WS8a sign-off), and the interface-
@@ -731,4 +795,12 @@ the "agents may act autonomously" line and is decided with the human at WS8a sig
 | L6 `G-feat` | `--print-config` with partial knip.json | effective config = file merged over defaults, valid JSON on stdout |
 | L7 `G-feat` | Unknown top-level + unknown nested config key | one warning each, naming the key; analysis proceeds, exit unchanged |
 | L8 `G-feat` | Summary block vs findings array | counts agree exactly |
-| L9 `D` | Confidence rule table (high/medium/low criteria) | decide with the human at WS8a sign-off — the "agents may act autonomously" line |
+| L9 `G-feat` | Confidence rule table (high/medium/low criteria) | DECIDED 2026-07-15 (see §5 WS8 "L9 model"): start high, first-match demotion; hazards advisory-only; autonomy = delete `high` (verify-loop precondition) / propose `medium` / surface `low`. Rows L11–L17 pin the individual rules |
+| L10 `G-feat` | Cascade finding carries the parent's id as `rootCause`; directly-unreferenced finding carries `null` | as stated — enables outermost-first deletion; `--why` reuses it |
+| L11 `G-feat` | Solution-global load/restore failure (reliability.degraded) | ALL findings → `low` (C1 global) |
+| L12 `G-feat` | Load failure in ONE project only | findings in that project → `low`; other projects unaffected (C1 per-project attribution) |
+| L13 `G-feat` | `publicApi`-hazard finding, `publicApiProjects`/`treatAllPublicAsUsed` SET | → `medium` (C2 configured branch) |
+| L14 `G-feat` | `publicApi`-hazard finding, NEITHER key set | → `low` (C2 unconfigured branch) |
+| L15 `G-feat` | `serializationShaped`/`configBoundType`/`diPluginShaped` hazard | → `low` (C2 other hazards) |
+| L16 `G-feat` | project-ref / package-ref (C3) and `deleteCodeAndTests` (C4) findings | → `medium` |
+| L17 `G-feat` | `[InternalsVisibleTo]` names an assembly NOT in the solution | internal findings in that project → `low` (new `internalsVisibleTo` hazard) |

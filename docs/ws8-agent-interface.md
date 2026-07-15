@@ -545,3 +545,30 @@ single finding an agent may delete unattended. That is the L9 line made concrete
 L1 (output schema validates), L2 (stable ids + order), L3 (`degraded` true/false), L4 (span is a complete
 deletion unit), L5 (`--why` flagged/alive), L6 (`--print-config`), L7 (unknown top-level + nested key
 warnings), L8 (summary counts == findings), **L9 (this table — sign-off blocker for WS8b).**
+
+---
+
+## Amendment — 2026-07-15 (post sign-off; supersedes the confidence table above)
+
+L9 SIGNED OFF **with adjustments** (Åsmund). The confidence/hazard model is the implementation of the
+REVISED invariant #8 ("recall over silence — but hazards are sacred", §3.1). Apply together.
+
+- **C1 per-project:** a project-load/restore failure demotes only that project's findings → `low`;
+  solution-global degradation demotes all. `reliability` attributes failures per project.
+- **C2 publicApi is config-sensitive:** `publicApiProjects` OR `treatAllPublicAsUsed` set → `medium`;
+  neither set → `low`. Other C2 hazards (`serializationShaped`, `configBoundType`, `diPluginShaped`) → `low`.
+- **C3** project/package-ref → `medium`. **C4** `deleteCodeAndTests` → `medium`.
+- **C5 DROPPED from v1** (entry-point near-miss): ships only with an enumerated definition + fixtures,
+  or added later additively. No vibe-based demotions.
+- **New hazard `internalsVisibleTo`:** `[InternalsVisibleTo]` naming a non-solution assembly → that
+  project's internal findings → `low`.
+- **Autonomy (option 1) with HARD precondition:** `high` deletes into the PR ONLY via the full verify
+  loop (`reliability.degraded==false` for the project → delete by span → build + full tests green →
+  re-run knip, no new live-code flags); any step fails → `medium` handling. `medium` = propose in PR;
+  `low` = surface only. Auto-delete without the loop is a protocol violation.
+- **`rootCause` field (additive):** per-finding optional `rootCause` = finding id of the nearest dead
+  symbol keeping this one dead (`null` when directly unreferenced). Outermost-first deletion + cascade
+  structure; `--why` reuses it. Battery row L10. Reporting stays TRANSITIVE (full unreachable set;
+  A4/A6) — iteration is a workflow, not a reporting mode.
+- **Change control:** demotion rules pinned by Appendix-L fixtures (L10–L17); rule additions additive
+  w/ fixture, rule changes escalate. **WS8d (AGENTS.md) requires a real dogfood-run review before done.**
