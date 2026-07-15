@@ -113,6 +113,24 @@
     // "namespaces" glob list also roots the data members of types in matching namespaces (a "these are
     // DTOs" escape hatch for serialization the plugin cannot statically see). Enable it if your solution
     // serializes DTOs:
-    "serialization": { "enabled": false, "namespaces": [] }
+    "serialization": { "enabled": false, "namespaces": [] },
+
+    // aspnetcore — OFF by default (opt-in). Keeps alive ASP.NET Core CONVENTION-INVOKED members the
+    // framework dispatches by REFLECTION, so no source names them: app.UseMiddleware<T>() keeps the TYPE
+    // alive but the middleware's Invoke/InvokeAsync(HttpContext) is called reflectively, so the entry
+    // method + ctor + fields (_next/_logger) + private helpers cascade to false positives; likewise an
+    // MVC/Razor filter's interface method is framework-dispatched, so its private helpers cascade dead.
+    // Roots the convention ENTRY members (making them reachable so their fields/ctors/helpers gain
+    // liveness via normal edges), matched by framework-type NAME offline:
+    //   • for each UseMiddleware<T>() / UseMiddleware(typeof(T)) → T's Invoke + InvokeAsync + instance ctors;
+    //   • IMiddleware implementers → InvokeAsync;
+    //   • MVC/Razor filters (IActionFilter/IAsyncActionFilter/IResultFilter/IAsyncResultFilter/
+    //     IExceptionFilter/IAsyncExceptionFilter/IAuthorizationFilter/IAsyncAuthorizationFilter/
+    //     IPageFilter/IAsyncPageFilter) → the type's implementations of those interface methods;
+    //   • IStartupFilter implementers → Configure.
+    // Conservative: roots ONLY the convention entry members, never blanket-roots a middleware/filter's
+    // world — an unrelated dead method the entry point never calls stays flagged. Enable it for ASP.NET
+    // Core web projects:
+    "aspnetcore": { "enabled": false }
   }
 }

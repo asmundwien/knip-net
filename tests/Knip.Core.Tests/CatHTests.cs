@@ -176,4 +176,37 @@ public sealed class CatHTests
         // the non-consumer UnrelatedService is the over-rooting DECOY -> still flagged.
         AssertExactly(await FindingsIn("CatH.H12"), "CatH.H12.UnrelatedService");
     }
+
+    // H13 — PROMOTED (WS5 aspnetcore plugin, opt-in): UseMiddleware<AuditLoggingMiddleware>() keeps the
+    // TYPE alive but the framework calls Invoke reflectively -> Invoke + ctor + _next/_logger + the private
+    // helper cascade dead. The plugin roots the convention entry members -> all ALIVE. Runs WITH plugin ON.
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task H13_middleware_invoke_and_helpers_alive()
+    {
+        // The aspnetcore plugin is OFF by default; enable it explicitly for this contract.
+        var config = new KnipConfig { Plugins = { ["aspnetcore"] = new PluginSettings { Enabled = true } } };
+
+        // Invoke, the ctor, _next/_logger and LeggTilRequestMetadata ALIVE (rooted convention entry +
+        // liveness via edges — Invoke's real edges to _next/_logger/ILogger.Log keep those alive too).
+        // OVER-ROOTING GUARD: the decoy NeverInvokedByPipeline() (Invoke never calls it) STAYS the only flag.
+        AssertExactly(await FixtureRunner.FindingSymbolsInAsync(Category, "CatH.AspNetMiddleware", config),
+            "CatH.AspNetMiddleware.AuditLoggingMiddleware.NeverInvokedByPipeline()");
+    }
+
+    // H14 — PROMOTED (WS5 aspnetcore plugin, opt-in): AuditFilter implements IAsyncActionFilter; the
+    // framework dispatches OnActionExecutingAsync reflectively -> it + the private helper it calls cascade
+    // dead. The plugin roots the filter's interface-method implementations -> ALIVE. Runs WITH plugin ON.
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task H14_filter_method_and_helper_alive()
+    {
+        var config = new KnipConfig { Plugins = { ["aspnetcore"] = new PluginSettings { Enabled = true } } };
+
+        // OnActionExecutingAsync + LeggTilTjenestenavn ALIVE. OVER-ROOTING GUARD: the decoy NeverDispatched()
+        // (the filter never calls it) STAYS flagged; the uncalled interface declaration also stays flagged.
+        AssertExactly(await FixtureRunner.FindingSymbolsInAsync(Category, "CatH.AspNetFilter", config),
+            "CatH.AspNetFilter.AuditFilter.NeverDispatched()",
+            "CatH.AspNetFilter.IAsyncActionFilter.OnActionExecutingAsync(CatH.AspNetFilter.ActionExecutingContext, CatH.AspNetFilter.ActionExecutionDelegate)");
+    }
 }
