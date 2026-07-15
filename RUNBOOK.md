@@ -555,10 +555,10 @@ Keep this section updated as tasks complete — it is the handoff memory between
       108 passing / 18 skipped. No existing finding's confidence shifted (no non-CatL test asserts it). Added
       `[InternalsVisibleTo(Knip.Core.Tests)]` (csproj attribute, both TFMs) so L12 unit-tests the internal
       engine with synthetic `ProjectsFailed`.
-- [ ] **`ignore.symbols` bare-name matching fix** (user-facing knip.json semantics → §6): methods
-      match by BARE name, not FQN, because the display format renders methods without
-      namespace/type. Undermines the I2 contract test's meaning. Needs a real task (fix the match
-      to honor FQN globs for members) + strengthen I2.
+- [x] **`ignore.symbols` FQN matching FIXED** — members now match against the finding `DisplayFormat`
+      (namespace + containing type + params), so a reported name copies verbatim into `ignore.symbols`;
+      bare member-name globs no longer match members. I2 strengthened (pins FQN match AND
+      bare-name-no-longer-matches). `FqFormat` untouched (its other consumers unaffected).
 - [ ] **Load-diagnostics: distinguish real project-load failures from restore-audit noise.**
       MSBuildWorkspace surfaced harmless NU1900/NU1903 audit advisories as "Msbuild failed when
       processing" while the load actually completed. Real load failures must stay LOUD (invariant
@@ -573,8 +573,11 @@ Keep this section updated as tasks complete — it is the handoff memory between
       used-assembly sets tracked in `AddEdge`. Conservative: runtime-only/transitive refs (zero
       symbol edges) are a documented FP surface (README "triage before removing"); a future
       opt-out `knip.json` key would need sign-off (not added).
-- [ ] WS3 unused PackageReferences — **BLOCKED on WS8a**: emit its finding kind into the WS8 v2
-      vocabulary, don't invent a bespoke shape.
+- [ ] WS3 unused PackageReferences — UNBLOCKED (WS8a signed off): emit `RemovePackageReference`
+      remediation into the v2 vocabulary. Per revised §3.8: analyzer/PrivateAssets/transitive-only/
+      implicit-Using hazards are EMITTED with hazard + low/medium confidence, never dropped. NOTE
+      (offline): reading `obj/project.assets.json` needs a restored fixture — the test must restore
+      its fixture (nuget.org-cached package) or the task solves assembly→package mapping another way.
 - [x] WS4 net472 multi-target + legacy csproj — both TFMs build `-warnaserror` (Roslyn 4.14 for
       net472, 5.6 for net10); ZERO `#if` in any source (all divergence at csproj level; BCL gaps
       via PolySharp + a shim file); legacy-format fixture authored. **Windows-only e2e of the
@@ -596,11 +599,17 @@ Keep this section updated as tasks complete — it is the handoff memory between
       (global tool `Hdir.Knip`, marketplace/feed publish) still TODO and human-approved.
 - [ ] WS7 production-mode analysis / test-only reachability (Appendix A category K). Real-world
       signal: Tjenesteportalen has ~151 production findings kept alive only by test roots in default
-      mode — high-value. K7 classification DECIDED (see WS7 card). **BLOCKED on WS8a**: emit
-      `OnlyUsedByTests` into the WS8 v2 vocabulary.
-- [ ] WS8 — Agent-first interface (JSON = product API). **WS8a design proposal is the current
-      queue-jumper** (→ sign-off, §6); WS8b–d in the reporting/CLI lane. Battery = Appendix L. See
-      the §5 WS8 card.
+      mode — high-value. K7 classification DECIDED (see WS7 card). UNBLOCKED (WS8a done): emit
+      `OnlyUsedByTests` / `DeleteCodeAndTests` remediation into the v2 vocabulary. Promotes category K
+      + the C4 confidence rule (deleteCodeAndTests → medium).
+- [~] WS8 — Agent-first interface (JSON = product API). **WS8a signed off** + **WS8b DONE** (JSON v2
+      shape + reliability + schemas + L9 confidence/hazard engine; L1–L4/L8/L10–L14/L16/L17 promoted).
+      Remaining: **WS8c** (`--why`/`--print-config`/all-config-key warnings → L5/L6/L7); **WS8d**
+      AGENTS.md — DRAFT merged, **NOT done until dogfood-validated against a real run** (needs feed
+      auth). Deferred detectors: L15 (serialization/config/DI hazards → the serialization plugin +
+      later). Backlog: reconcile design-doc vs shipped-schema (`reliability.projectsFailed` is an
+      ARRAY per schema; drop/rename `productionModeWarnings`/`testProjectClassification`/`run.target`
+      or add them to the schema when WS7 lands).
 
 ---
 
