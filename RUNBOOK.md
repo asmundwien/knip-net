@@ -148,14 +148,25 @@ made. Reject any diff that violates one, even if its tests pass.
     the fix: `degraded:true` → ALL 618 `low`). Kinds incl. packageRef 51, enumMember 89, projectRef 10.
   - **blaresept-regeleditor** (5 proj) — `degraded:false`, 203 findings `{medium:168, high:25, low:10}`,
     enumMember 90. No crash.
-  - FP CLASSES found by dogfooding: (1) **load-diag** NuGet audit/pruning noise → false `degraded` →
-    all-low [FIXED]; (2) **WS3 metapackages / extension-method-used packages** (Swashbuckle flagged +
-    mis-tagged buildOnly — its own compile set is empty, used assemblies are transitive) [backlog];
-    (3) **ASP.NET convention-invoked members** — middleware `Invoke`/`InvokeAsync` (reflection via
-    `UseMiddleware<T>`), MVC filter methods, and **authorization handlers** (`AuthorizationHandler<T>.
-    HandleRequirementAsync`) flagged HIGH (deletable) — §3.8-sacred [aspnetcore plugin in progress;
-    EXTEND it to auth handlers + Blazor]; (4) **WS2 test→SUT project refs** (WebApplicationFactory)
-    likely FP [documented runtime-only surface]. The tool's own `--why` correctly diagnosed FP #3.
+  - **Portfolio sweep** (6 more real solutions: hego, 4× hint, sof) — all load & run, ZERO crashes,
+    valid JSON. innsynslogg correctly `degraded` on a real SOLUTION bug (duplicate project path
+    case-mismatch), handled gracefully (all-low). All-plugins mode sharply cuts high-confidence FPs.
+  - **FP CLASSES found by dogfooding — ALL FIXED:**
+    (1) load-diag NuGet audit/pruning noise → false `degraded` → all-low [FIXED: WorkspaceDiagnosticClassifier].
+    (2) WS3 metapackages / framework-wrapper packages flagged unused [FIXED: dependency-closure mapping; blaresept pkgRef 51→22].
+    (3) ASP.NET convention-invoked members — middleware `Invoke`, MVC filters, auth handlers/**policy
+    providers**, Blazor lifecycle, **App-Insights telemetry processors/initializers**, **health checks**
+    [FIXED: `aspnetcore` plugin, off by default].
+    (4) xUnit **test-class ctor not rooted** (setup fields/helpers cascade HIGH) [FIXED core: root
+    framework-invoked instance ctors, WS7-origin-aware].
+    (5) overrides of **external virtuals** (EF `OnModelCreating`, `object.ToString/Dispose`) don't
+    propagate liveness to callees [FIXED core: type-reachability-gated edge].
+    (Also: WS2 test→SUT project refs — documented runtime-only surface, emitted low.) The tool's own
+    `--why` diagnosed #3.
+  - **Precision payoff (all fixes + all plugins):** person HIGH 65→5, sof HIGH 19→0, hego HIGH 58→34
+    (hego's 34 are GENUINE dead code — the tool's sweet spot). High-confidence set is now
+    true-dead-dominated, not convention-FP-dominated. Strongest argument for making the plugins
+    **default-on** for this ASP.NET-heavy org (open DECISION).
 - WS4 (legacy projects) ultimately needs **Windows + Visual Studio Build Tools** to run
   end-to-end. Cross-platform agents can still do the multi-targeting/compile work; flag the
   Windows-only verification for the human or a Windows runner.
