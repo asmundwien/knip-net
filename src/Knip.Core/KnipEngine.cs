@@ -41,9 +41,15 @@ public static class KnipEngine
         foreach (var (_, message) in loadDiagnostics)
         {
             result.LoadDiagnostics.Add(message);
-            // Workspace failures are genuine load failures — restore/SDK/project problems (invariant #6:
-            // stay LOUD). Attributed into the reliability block as restore failures; degraded => true.
-            result.Reliability.RestoreFailures.Add(message);
+
+            // WS8: MSBuildWorkspace surfaces benign NuGet restore-audit / pruning advisories (NU1510,
+            // the NU19xx vulnerability family) as "Msbuild failed …" workspace FAILURES even though the
+            // projects loaded fine. Those must stay VISIBLE (invariant #8) but must NOT be treated as
+            // restore failures — otherwise harmless audit noise flips `degraded` and nukes confidence on
+            // a good solution. Everything else is still a genuine load failure (invariant #6: stay LOUD)
+            // and is attributed as a restore failure → degraded => true.
+            if (!WorkspaceDiagnosticClassifier.IsBenignNuGetAdvisory(message))
+                result.Reliability.RestoreFailures.Add(message);
         }
 
         BuildStructuredDiagnostics(result);
@@ -69,6 +75,9 @@ public static class KnipEngine
             var severity = isRestoreFailure ? LoadSeverity.Error : LoadSeverity.Warning;
             var code = isRestoreFailure ? "loadFailure"
                 : message.Contains("unresolved types") ? "unresolvedTypes"
+                // WS8: a benign NuGet restore-audit / pruning advisory that was NOT recorded as a restore
+                // failure — surfaced as a warning so a human/agent still sees it, but it does not degrade.
+                : Analysis.WorkspaceDiagnosticClassifier.IsBenignNuGetAdvisory(message) ? "nugetAdvisory"
                 : "loadWarning";
             result.Reliability.LoadDiagnostics.Add(new LoadDiagnostic(severity, code, message));
         }
