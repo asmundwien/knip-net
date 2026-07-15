@@ -168,6 +168,13 @@ made. Reject any diff that violates one, even if its tests pass.
     true-dead-dominated, not convention-FP-dominated. **DECIDED 2026-07-15: `aspnetcore` is now
     DEFAULT-ON** (default set = `{reflection, scanningDi, aspnetcore}`); `blazorParameter`/`serialization`
     stay opt-in.
+  - **Shipped-default scorecard** (aspnetcore on, the actual default): sof HIGH 0, person 5,
+    blaresept-api 14, hego 34 (hego's are genuine dead). Trustworthy high-confidence sets across 8
+    real solutions; no crashes.
+  - **Config-discovery bug [FIXED]:** `knip.json` was discovered from CWD, not the analyzed solution's
+    directory — so `dotnet-knip /other.sln` picked up the caller's config (this polluted my own early
+    measurements). Now discovers from the target solution's directory (falls back to cwd when no
+    explicit solution); `--config` still overrides. I5 contract updated (I5c).
 - WS4 (legacy projects) ultimately needs **Windows + Visual Studio Build Tools** to run
   end-to-end. Cross-platform agents can still do the multi-targeting/compile work; flag the
   Windows-only verification for the human or a Windows runner.
