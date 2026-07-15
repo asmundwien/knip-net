@@ -43,6 +43,17 @@ namespace Knip.Core.Plugins.BuiltIn;
 ///     <c>Dispose</c>/<c>DisposeAsync</c>). The Blazor renderer invokes these by convention — never named in
 ///     source — so the helpers they call cascade dead without rooting. (<c>[Parameter]</c> props are the separate
 ///     <c>blazorParameter</c> plugin's job — this handles the lifecycle METHODS only.)
+///   • Application Insights telemetry — types implementing <c>ITelemetryProcessor</c> → root <c>Process</c>;
+///     types implementing <c>ITelemetryInitializer</c> → root <c>Initialize</c>; plus instance ctors in both
+///     cases. The telemetry pipeline is DI-registered by generic arg (so the TYPE is alive), but the interface
+///     entry method is invoked by the pipeline — never named in source — so the ctor-assigned <c>_next</c> and
+///     the private helpers the entry calls cascade dead without rooting.
+///   • Health checks — types implementing <c>IHealthCheck</c> → root <c>CheckHealthAsync</c> + instance ctors.
+///     The health-check middleware dispatches <c>CheckHealthAsync</c>, so the helpers it calls cascade dead.
+///   • Authorization policy providers — types implementing <c>IAuthorizationPolicyProvider</c> OR deriving from
+///     a base named <c>DefaultAuthorizationPolicyProvider</c> → root <c>GetPolicyAsync</c>/<c>GetDefaultPolicyAsync</c>/
+///     <c>GetFallbackPolicyAsync</c> + instance ctors. The authorization middleware dispatches these, so the
+///     provider's ctor + policy-building helpers cascade dead without rooting.
 ///
 /// OFF by default (opt-in via <c>plugins.aspnetcore.enabled: true</c>): a project not using ASP.NET Core
 /// should not pay for these name matches, and the recognized names are common enough that rooting them is a
@@ -97,6 +108,32 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         "BuildRenderTree",
         "Dispose",
         "DisposeAsync",
+    };
+
+    // Application Insights telemetry-pipeline entry methods — the DI-registered processor/initializer has this
+    // dispatched by the pipeline, never named in source.
+    private static readonly HashSet<string> TelemetryProcessorEntryMethodNames = new(StringComparer.Ordinal)
+    {
+        "Process",
+    };
+
+    private static readonly HashSet<string> TelemetryInitializerEntryMethodNames = new(StringComparer.Ordinal)
+    {
+        "Initialize",
+    };
+
+    // Health-check entry method — the health-check middleware dispatches this, never named in source.
+    private static readonly HashSet<string> HealthCheckEntryMethodNames = new(StringComparer.Ordinal)
+    {
+        "CheckHealthAsync",
+    };
+
+    // Authorization policy-provider entry methods — the authorization middleware dispatches these.
+    private static readonly HashSet<string> PolicyProviderEntryMethodNames = new(StringComparer.Ordinal)
+    {
+        "GetPolicyAsync",
+        "GetDefaultPolicyAsync",
+        "GetFallbackPolicyAsync",
     };
 
     public void Contribute(PluginContext ctx, CancellationToken ct)
@@ -192,6 +229,10 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         // AuthorizationHandler<T> base), and its HandleAsync may be provided by the base too — so root the
         // handler's entry methods by NAME on the type itself rather than only via interface-member impls.
         var isAuthorizationHandler = false;
+        var isTelemetryProcessor = false;
+        var isTelemetryInitializer = false;
+        var isHealthCheck = false;
+        var isPolicyProvider = false;
 
         foreach (var iface in type.AllInterfaces)
         {
@@ -211,6 +252,22 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
             {
                 isAuthorizationHandler = true;
             }
+            else if (name == "ITelemetryProcessor")
+            {
+                isTelemetryProcessor = true;
+            }
+            else if (name == "ITelemetryInitializer")
+            {
+                isTelemetryInitializer = true;
+            }
+            else if (name == "IHealthCheck")
+            {
+                isHealthCheck = true;
+            }
+            else if (name == "IAuthorizationPolicyProvider")
+            {
+                isPolicyProvider = true;
+            }
             else if (FilterInterfaceNames.Contains(name))
             {
                 // The MVC / Razor Pages filter pipeline invokes the filter interface methods reflectively.
@@ -218,14 +275,17 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
             }
         }
 
-        // Base-class-shaped conventions: authorization handlers (AuthorizationHandler<T>) and Blazor
-        // components (ComponentBase). Matched by simple base NAME up the chain (offline, version-agnostic).
+        // Base-class-shaped conventions: authorization handlers (AuthorizationHandler<T>), Blazor components
+        // (ComponentBase), and authorization policy providers (DefaultAuthorizationPolicyProvider). Matched by
+        // simple base NAME up the chain (offline, version-agnostic).
         for (var b = type.BaseType; b is not null; b = b.BaseType)
         {
             if (b.Name == "AuthorizationHandler")
                 isAuthorizationHandler = true;
             else if (b.Name == "ComponentBase")
                 RootMethodsByName(type, BlazorLifecycleMethodNames, sink, includeConstructors: false);
+            else if (b.Name == "DefaultAuthorizationPolicyProvider")
+                isPolicyProvider = true;
         }
 
         if (isAuthorizationHandler)
@@ -234,6 +294,33 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
             // reflectively; root those entry methods + instance ctors so fields (_logger,
             // _authenticationStateProvider) and helpers gain liveness via the walker's edges.
             RootMethodsByName(type, AuthorizationHandlerEntryMethodNames, sink, includeConstructors: true);
+        }
+
+        if (isTelemetryProcessor)
+        {
+            // The telemetry pipeline dispatches Process(ITelemetry); root it + instance ctors so the
+            // ctor-assigned _next and the private helpers Process calls gain liveness via the walker's edges.
+            RootMethodsByName(type, TelemetryProcessorEntryMethodNames, sink, includeConstructors: true);
+        }
+
+        if (isTelemetryInitializer)
+        {
+            // The telemetry pipeline dispatches Initialize(ITelemetry); root it + instance ctors.
+            RootMethodsByName(type, TelemetryInitializerEntryMethodNames, sink, includeConstructors: true);
+        }
+
+        if (isHealthCheck)
+        {
+            // The health-check middleware dispatches CheckHealthAsync; root it + instance ctors so the
+            // helpers it calls gain liveness via the walker's edges.
+            RootMethodsByName(type, HealthCheckEntryMethodNames, sink, includeConstructors: true);
+        }
+
+        if (isPolicyProvider)
+        {
+            // The authorization middleware dispatches GetPolicyAsync/GetDefaultPolicyAsync/GetFallbackPolicyAsync;
+            // root them + instance ctors so the provider's policy-building helpers gain liveness.
+            RootMethodsByName(type, PolicyProviderEntryMethodNames, sink, includeConstructors: true);
         }
     }
 

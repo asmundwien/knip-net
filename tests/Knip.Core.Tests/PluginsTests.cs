@@ -295,6 +295,82 @@ public sealed class PluginsTests
         Assert.Contains(ns + ".MyPage.NeverRendered()", on);
     }
 
+    // ── aspnetcore differential + over-rooting guard: App-Insights telemetry (H17) ──────────────────
+    [Fact]
+    public async Task AspNetCore_telemetry_processor_and_initializer_kept_alive_H17()
+    {
+        const string ns = "CatH.AspNetTelemetry";
+        const string procHelper = ns + ".SensitivDataTelemetryProcessor.FjernSensitivData(CatH.AspNetTelemetry.ITelemetry)";
+        const string initHelper = ns + ".BrukerTelemetryInitializer.SettBrukerkontekst(CatH.AspNetTelemetry.ITelemetry)";
+
+        // Plugin OFF (also the DEFAULT — it is opt-in): the telemetry pipeline dispatches Process/Initialize
+        // reflectively, so the processor's ctor gains no incoming edge — the ctor-assigned _next and the
+        // private helpers Process/Initialize call all CASCADE to false positives. (The Process/Initialize
+        // overrides themselves are interface impls; the visible cascade is the field + helpers — exactly the
+        // FP class this plugin kills, dogfound across Hdir.Hint.Logging.ApplicationInsights.)
+        var off = await FindingsIn(ns, WithAspNetCore(false));
+        Assert.Contains(procHelper, off);
+        Assert.Contains(ns + ".SensitivDataTelemetryProcessor._next", off);
+        Assert.Contains(initHelper, off);
+
+        // Plugin ON: the plugin roots the entry methods (Process/Initialize) + instance ctors → the _next
+        // field and the private helpers they call gain liveness → NOT reported…
+        var on = await FindingsIn(ns, WithAspNetCore(true));
+        Assert.DoesNotContain(procHelper, on);
+        Assert.DoesNotContain(ns + ".SensitivDataTelemetryProcessor._next", on);
+        Assert.DoesNotContain(initHelper, on);
+        // …but the unrelated dead method STAYS FLAGGED (over-rooting guard: only the convention entry members
+        // are rooted, never a method the processor doesn't call).
+        Assert.Contains(ns + ".SensitivDataTelemetryProcessor.NeverProcessed()", on);
+    }
+
+    // ── aspnetcore differential + over-rooting guard: health check (H18) ─────────────────────────────
+    [Fact]
+    public async Task AspNetCore_health_check_entry_and_cascade_kept_alive_H18()
+    {
+        const string ns = "CatH.AspNetHealthCheck";
+        const string helper = ns + ".ConfigurationHealthCheck.LesTerskel()";
+
+        // Plugin OFF (also the DEFAULT — it is opt-in): the health-check middleware dispatches CheckHealthAsync
+        // reflectively, so the check's ctor gains no incoming edge — the ctor-assigned _configuration and the
+        // private helper CheckHealthAsync calls CASCADE to false positives.
+        var off = await FindingsIn(ns, WithAspNetCore(false));
+        Assert.Contains(helper, off);
+        Assert.Contains(ns + ".ConfigurationHealthCheck._configuration", off);
+
+        // Plugin ON: the plugin roots CheckHealthAsync + instance ctors → the field and the private helper it
+        // calls gain liveness → NOT reported…
+        var on = await FindingsIn(ns, WithAspNetCore(true));
+        Assert.DoesNotContain(helper, on);
+        Assert.DoesNotContain(ns + ".ConfigurationHealthCheck._configuration", on);
+        // …but the unrelated dead method STAYS FLAGGED (over-rooting guard).
+        Assert.Contains(ns + ".ConfigurationHealthCheck.NeverProbed()", on);
+    }
+
+    // ── aspnetcore differential + over-rooting guard: authorization policy provider (H19) ────────────
+    [Fact]
+    public async Task AspNetCore_policy_provider_entry_and_cascade_kept_alive_H19()
+    {
+        const string ns = "CatH.AspNetPolicyProvider";
+        const string helper = ns + ".HintAuthorizationPolicyProvider.LagEntraIdPolicy()";
+
+        // Plugin OFF (also the DEFAULT — it is opt-in): the authorization middleware dispatches the
+        // Get*PolicyAsync entry methods reflectively, so the provider's ctor gains no incoming edge — the
+        // ctor-assigned _options and the private helper GetPolicyAsync calls CASCADE to false positives.
+        var off = await FindingsIn(ns, WithAspNetCore(false));
+        Assert.Contains(helper, off);
+        Assert.Contains(ns + ".HintAuthorizationPolicyProvider._options", off);
+
+        // Plugin ON: the plugin roots the Get*PolicyAsync entry methods + instance ctors (matched by base NAME
+        // DefaultAuthorizationPolicyProvider / IAuthorizationPolicyProvider) → the field and the private helper
+        // gain liveness → NOT reported…
+        var on = await FindingsIn(ns, WithAspNetCore(true));
+        Assert.DoesNotContain(helper, on);
+        Assert.DoesNotContain(ns + ".HintAuthorizationPolicyProvider._options", on);
+        // …but the unrelated dead method STAYS FLAGGED (over-rooting guard).
+        Assert.Contains(ns + ".HintAuthorizationPolicyProvider.NeverConsulted()", on);
+    }
+
     // aspnetcore is OFF by default (opt-in): a default config leaves the middleware Invoke flagged.
     [Fact]
     public async Task AspNetCore_is_off_by_default()

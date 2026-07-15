@@ -144,7 +144,11 @@ completion + validation). The JSON output (`--format json`, `formatVersion: 2`) 
   `IAuthorizationHandler`); and a Blazor component's lifecycle methods (derive from `ComponentBase`:
   `OnInitialized`/`OnInitializedAsync`, `OnParametersSet`/`OnParametersSetAsync`, `OnAfterRender`/
   `OnAfterRenderAsync`, `SetParametersAsync`, `BuildRenderTree`, `Dispose`/`DisposeAsync` — `[Parameter]`
-  props are the separate `blazorParameter` plugin) — matched by framework-type NAME
+  props are the separate `blazorParameter` plugin); an Application Insights telemetry processor's `Process`
+  (`ITelemetryProcessor`) / initializer's `Initialize` (`ITelemetryInitializer`) + constructors; a health
+  check's `CheckHealthAsync` (`IHealthCheck`) + constructors; and an authorization policy provider's
+  `GetPolicyAsync`/`GetDefaultPolicyAsync`/`GetFallbackPolicyAsync` + constructors (implement
+  `IAuthorizationPolicyProvider` or derive from `DefaultAuthorizationPolicyProvider`) — matched by framework-type NAME
   (offline, no NuGet needed), so their fields and helpers gain liveness via normal edges. It roots only the
   convention entry members — never blanket-roots a middleware/filter's world — so an unrelated dead method
   the entry point never calls stays flagged. Unknown plugin ids

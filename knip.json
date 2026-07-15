@@ -134,6 +134,13 @@
     //   • Blazor components (derive from ComponentBase) → the lifecycle methods (OnInitialized/…Async,
     //     OnParametersSet/…Async, OnAfterRender/…Async, SetParametersAsync, BuildRenderTree, Dispose/…Async)
     //     the renderer invokes by convention. ([Parameter] props are the separate blazorParameter plugin.)
+    //   • Application Insights telemetry (implement ITelemetryProcessor → Process; ITelemetryInitializer →
+    //     Initialize) + instance ctors — the pipeline dispatches these, so the ctor-assigned _next + helpers
+    //     would cascade dead;
+    //   • Health checks (implement IHealthCheck) → CheckHealthAsync + instance ctors;
+    //   • Authorization policy providers (implement IAuthorizationPolicyProvider or derive from
+    //     DefaultAuthorizationPolicyProvider) → GetPolicyAsync/GetDefaultPolicyAsync/GetFallbackPolicyAsync +
+    //     instance ctors.
     // Conservative: roots ONLY the convention entry members, never blanket-roots a middleware/filter's
     // world — an unrelated dead method the entry point never calls stays flagged. Enable it for ASP.NET
     // Core web projects:
