@@ -40,7 +40,9 @@ public static class PluginRegistry
     [
         new("reflection", defaultEnabled: true, () => new ReflectionPlugin()),
         new("scanningDi", defaultEnabled: true, () => new ScanningDiPlugin()),
-        // blazorParameter/serialization — land in later tasks; register default OFF.
+        // blazorParameter — opt-in (default OFF): roots Blazor [Parameter]/[CascadingParameter]/[Inject]
+        // members set from .razor markup / DI. serialization — lands in a later task.
+        new("blazorParameter", defaultEnabled: false, () => new BlazorParameterPlugin()),
     ];
 
     /// <summary>The ids that run under a default (<c>new KnipConfig()</c>) configuration.</summary>

@@ -32,6 +32,11 @@ public sealed class PluginsTests
         Plugins = { ["scanningDi"] = new PluginSettings { Enabled = enabled } },
     };
 
+    private static KnipConfig WithBlazorParameter(bool enabled) => new()
+    {
+        Plugins = { ["blazorParameter"] = new PluginSettings { Enabled = enabled } },
+    };
+
     private static Task<IReadOnlySet<string>> FindingsIn(string ns, KnipConfig config) =>
         FixtureRunner.FindingSymbolsInAsync(Category, ns, config);
 
@@ -95,6 +100,51 @@ public sealed class PluginsTests
         Assert.DoesNotContain("CatH.H12.OrderConsumer", on);
         // …but the non-consumer STAYS FLAGGED (over-rooting guard: implements no scanned marker).
         Assert.Contains("CatH.H12.UnrelatedService", on);
+    }
+
+    // ── blazorParameter differential + over-rooting guard: H6 ([Parameter]/[CascadingParameter]/[Inject]) ──
+    [Fact]
+    public async Task BlazorParameter_attribute_members_kept_alive_H6()
+    {
+        // Plugin OFF (also the DEFAULT — it is opt-in): the markup-/DI-set members are false positives → flagged.
+        var off = await FindingsIn("CatH.H6", WithBlazorParameter(false));
+        Assert.Contains("CatH.H6.MyComponent.Title", off);   // [Parameter]
+        Assert.Contains("CatH.H6.MyComponent.Theme", off);   // [CascadingParameter]
+        Assert.Contains("CatH.H6.MyComponent.Clock", off);   // [Inject]
+
+        // Plugin ON: the plugin roots the attribute-bearing members → alive → NOT reported…
+        var on = await FindingsIn("CatH.H6", WithBlazorParameter(true));
+        Assert.DoesNotContain("CatH.H6.MyComponent.Title", on);
+        Assert.DoesNotContain("CatH.H6.MyComponent.Theme", on);
+        Assert.DoesNotContain("CatH.H6.MyComponent.Clock", on);
+        // …but the attribute-less sibling and the unrelated type STAY FLAGGED (over-rooting guard: the
+        // plugin roots ONLY attribute-bearing members, never the whole component or its neighbours).
+        Assert.Contains("CatH.H6.MyComponent.Unbound", on);
+        Assert.Contains("CatH.H6.UnrelatedType", on);
+    }
+
+    // blazorParameter is OFF by default (opt-in): a default config leaves the [Parameter] member flagged.
+    [Fact]
+    public async Task BlazorParameter_is_off_by_default()
+    {
+        Assert.DoesNotContain("blazorParameter", PluginRegistry.DefaultEnabledIds);
+        Assert.False(new KnipConfig().IsPluginEnabled(Descriptor("blazorParameter")),
+            "blazorParameter must default OFF (opt-in)");
+
+        var byDefault = await FindingsIn("CatH.H6", new KnipConfig());
+        Assert.Contains("CatH.H6.MyComponent.Title", byDefault);
+    }
+
+    // A typo in the blazorParameter block surfaces a visible unknown-key warning (never silently no-ops).
+    [Fact]
+    public async Task UnknownBlazorParameterKey_emits_visible_warning()
+    {
+        var settings = new PluginSettings { Enabled = true };
+        settings.Extra["enabldd"] = System.Text.Json.JsonSerializer.SerializeToElement(true);
+        var config = new KnipConfig { Plugins = { ["blazorParameter"] = settings } };
+
+        var result = await FixtureRunner.RunAsync(Category, config);
+        Assert.Contains(result.LoadDiagnostics, d => d.Contains("plugins.blazorParameter.enabldd"));
     }
 
     // ── default-enabled set (F8-style): pin which plugins run under a default config ──────────
