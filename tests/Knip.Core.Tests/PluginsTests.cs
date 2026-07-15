@@ -246,6 +246,55 @@ public sealed class PluginsTests
         Assert.Contains(ns + ".AuditFilter.NeverDispatched()", on);
     }
 
+    // ── aspnetcore differential + over-rooting guard: authorization handler entry method (H15) ──────
+    [Fact]
+    public async Task AspNetCore_authorization_handler_entry_and_cascade_kept_alive_H15()
+    {
+        const string ns = "CatH.AspNetAuthHandler";
+        const string helper = ns + ".ADGroupsHandler.SjekkTilgang(CatH.AspNetAuthHandler.AuthorizationHandlerContext)";
+
+        // Plugin OFF (also the DEFAULT — it is opt-in): policy evaluation dispatches HandleRequirementAsync
+        // reflectively, so the handler's ctor gains no incoming edge — its fields (_logger,
+        // _authenticationStateProvider) and the private helper it calls all CASCADE to false positives.
+        // (The override itself is suppressed by the override-implementation rule; the visible cascade is the
+        // fields + helper — exactly the FP class this plugin kills, dogfound as ADGroupsHandler on Blåresept.)
+        var off = await FindingsIn(ns, WithAspNetCore(false));
+        Assert.Contains(helper, off);
+        Assert.Contains(ns + ".ADGroupsHandler._logger", off);
+        Assert.Contains(ns + ".ADGroupsHandler._authenticationStateProvider", off);
+
+        // Plugin ON: the plugin roots the handler's entry method (HandleRequirementAsync) + ctors → its
+        // fields and the private helper it calls gain liveness → NOT reported…
+        var on = await FindingsIn(ns, WithAspNetCore(true));
+        Assert.DoesNotContain(helper, on);
+        Assert.DoesNotContain(ns + ".ADGroupsHandler._logger", on);
+        Assert.DoesNotContain(ns + ".ADGroupsHandler._authenticationStateProvider", on);
+        // …but the unrelated dead method STAYS FLAGGED (over-rooting guard: only the convention entry members
+        // are rooted, never a method the handler doesn't call).
+        Assert.Contains(ns + ".ADGroupsHandler.NeverEvaluated()", on);
+    }
+
+    // ── aspnetcore differential + over-rooting guard: Blazor component lifecycle method (H16) ────────
+    [Fact]
+    public async Task AspNetCore_blazor_lifecycle_method_and_helper_kept_alive_H16()
+    {
+        const string ns = "CatH.BlazorLifecycle";
+        const string helper = ns + ".MyPage.LastInnData()";
+
+        // Plugin OFF (also the DEFAULT): the Blazor renderer invokes OnInitialized by convention, so the
+        // private helper it calls CASCADES to a false positive → flagged.
+        var off = await FindingsIn(ns, WithAspNetCore(false));
+        Assert.Contains(helper, off);
+
+        // Plugin ON: the plugin roots the ComponentBase lifecycle methods → the helper OnInitialized calls
+        // gains liveness → NOT reported…
+        var on = await FindingsIn(ns, WithAspNetCore(true));
+        Assert.DoesNotContain(helper, on);
+        // …but the unrelated dead method STAYS FLAGGED (over-rooting guard: only the lifecycle methods are
+        // rooted, not the whole component).
+        Assert.Contains(ns + ".MyPage.NeverRendered()", on);
+    }
+
     // aspnetcore is OFF by default (opt-in): a default config leaves the middleware Invoke flagged.
     [Fact]
     public async Task AspNetCore_is_off_by_default()
