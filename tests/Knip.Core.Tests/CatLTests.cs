@@ -333,6 +333,56 @@ public sealed class CatLTests
             configuredResult.Findings.Select(f => f.Symbol).OrderBy(s => s, StringComparer.Ordinal));
     }
 
+    // ── WS8 NuGet-advisory reclassification. Real MSBuild restore-audit noise can't be fixtured offline,
+    //    so this pins the CLASSIFICATION logic on synthetic diagnostic strings + a synthetic Reliability:
+    //      (1) NU1510 / NU1903 "Msbuild failed … with message: …"  -> benign advisory (warning, NOT
+    //          degrading), even though it is worded as a workspace failure;
+    //      (2) a genuine load failure (project in ProjectsFailed / a non-advisory "Msbuild failed …")
+    //          -> STILL degrades. Only the audit/pruning noise is reclassified. ────────────────────────
+    [Theory]
+    [InlineData(
+        "Msbuild failed when processing the file 'Foo.csproj' with message: warning NU1510: " +
+        "PackageReference System.Text.Json will not be pruned. Consider removing this package reference.")]
+    [InlineData(
+        "Msbuild failed when processing the file 'Bar.csproj' with message: warning NU1903: " +
+        "Package 'X' 1.0.0 has a known high severity vulnerability, https://github.com/advisories/…")]
+    [InlineData(
+        "Msbuild failed when processing the file 'Baz.csproj' with message: PackageReference will not be pruned")]
+    public void WS8_nuget_audit_noise_is_benign_warning_not_a_load_failure(string message)
+    {
+        Assert.True(
+            WorkspaceDiagnosticClassifier.IsBenignNuGetAdvisory(message),
+            "NuGet restore-audit / pruning advisory must be classified benign (warning, not degrading).");
+    }
+
+    [Theory]
+    // A genuine MSBuild load failure that is NOT a NuGet advisory (no NU code, no advisory phrase).
+    [InlineData("Msbuild failed when processing the file 'Broken.csproj' with message: " +
+        "The imported project '/sdks/Missing.targets' was not found.")]
+    [InlineData("Project 'Legacy.csproj' targets an SDK that is not installed.")]
+    public void WS8_real_load_failures_are_not_reclassified_as_benign(string message)
+    {
+        Assert.False(
+            WorkspaceDiagnosticClassifier.IsBenignNuGetAdvisory(message),
+            "A non-advisory MSBuild load failure must NOT be reclassified benign (invariant #6: stay LOUD).");
+    }
+
+    [Fact]
+    public void WS8_benign_nuget_advisory_does_not_degrade_but_a_project_failure_does()
+    {
+        // Benign advisory alone: NOT in RestoreFailures, only a warning-severity load diagnostic → NOT degraded.
+        var benign = new AnalysisResult();
+        benign.Reliability.LoadDiagnostics.Add(new LoadDiagnostic(
+            LoadSeverity.Warning, "nugetAdvisory",
+            "Msbuild failed when processing the file 'Foo.csproj' with message: warning NU1510: will not be pruned"));
+        Assert.False(benign.Reliability.Degraded, "A benign NuGet advisory must NOT set degraded.");
+
+        // A genuine per-project load failure STILL degrades — real failure detection is preserved.
+        var failed = new AnalysisResult();
+        failed.Reliability.ProjectsFailed.Add(new ProjectLoadFailure("Broken", "The imported project was not found."));
+        Assert.True(failed.Reliability.Degraded, "A genuine project-load failure must STILL degrade (invariant #6).");
+    }
+
     // ── L15 left G-feat: serializationShaped/configBoundType/diPluginShaped hazard DETECTION needs
     //    heuristics/plugins (WS5). The enum values + the low-tier demotion off them already exist in the
     //    engine, but with no detector to attach them there is nothing to pin end-to-end yet. ───────────
