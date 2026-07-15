@@ -631,8 +631,18 @@ Keep this section updated as tasks complete — it is the handoff memory between
       magic); add an F8-style battery row pinning the default-enabled set; every plugin fixture ships
       a DECOY (unrelated dead symbol asserted STILL flagged with the plugin ON — over-rooting guard);
       `-v` emits per-plugin contribution counts (roots/edges) + wall-time per project.
-- [~] WS6 — repo CI (build + test GitHub Action) DONE (`.github/workflows/ci.yml`). Packaging
-      (global tool `Hdir.Knip`, marketplace/feed publish) still TODO and human-approved.
+- [~] WS6 — repo CI (build + test GitHub Action) DONE (`.github/workflows/ci.yml`).
+      **Packaging DONE 2026-07-15:** `Knip.Cli.csproj` is a packable .NET global tool
+      (`PackageId=Hdir.Knip`, `ToolCommandName=dotnet-knip`, `Version=0.1.0`,
+      `Authors=Helsedirektoratet`, description + tags). Multi-target interaction handled: `PackAsTool`
+      is ON in the outer/net10.0 evaluation (so the `DotnetTool` package type reaches the nuspec —
+      without it `dotnet tool install` rejects the nupkg) but OFF for the net472 inner build (avoids
+      NETSDK1054) with `IncludeBuildOutput=false` so net472 never lands in the package; `NU5128`
+      (net472 dep group w/o lib) suppressed as it is intentional. Verified: both TFMs build
+      `-warnaserror`, `dotnet pack` → `Hdir.Knip.0.1.0.nupkg` with a clean `tools/net10.0/any/…`
+      layout (no `lib/net472`), and global install → `dotnet-knip --help` → uninstall round-trips.
+      `RepositoryUrl` omitted (no git remote to discover). **Feed/marketplace publish still TODO and
+      human-approved** — this task did packaging + local install verification ONLY, no push.
 - [x] **WS7 production-mode analysis / test-only reachability — DONE 2026-07-15.** `--production` CLI flag
       OR `knip.json` `"production": true` (OFF by default; K1/B1 default semantics UNCHANGED). New
       `TestProjectClassifier` (signal order: `testProjects` globs → referenced test-framework assembly →
