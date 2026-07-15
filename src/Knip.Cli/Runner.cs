@@ -32,6 +32,19 @@ internal static class Runner
             return 0;
         }
 
+        // WS9 agent-bootstrap surfaces run BEFORE any config discovery or solution load — both must work
+        // in an empty directory with no solution and no knip.json.
+        if (options.AgentInstructions)
+        {
+            // Write (not WriteLine): the provider text already ends in a newline, so stdout stays
+            // byte-for-byte identical to what `init --agent` writes to .knip/AGENTS.md.
+            Console.Out.Write(AgentInstructionsProvider.Text);
+            return 0;
+        }
+
+        if (options.Command == CliCommand.Init)
+            return InitCommand.Run(options, Directory.GetCurrentDirectory(), Console.Out, Console.Error);
+
         // Config discovery is relative to the ANALYZED solution, not the caller's cwd. When an explicit
         // target is given (-s/--solution or the positional arg), start the walk-up from THAT solution
         // file's directory so a knip.json next to it always wins — running the tool on an external

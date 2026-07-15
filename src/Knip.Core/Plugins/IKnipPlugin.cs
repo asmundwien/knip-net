@@ -6,7 +6,7 @@ namespace Knip.Core.Plugins;
 /// <summary>
 /// A plugin contributes EXTRA roots and EXTRA edges for usages the core walker cannot see
 /// (reflection, scanning DI, serialization, markup binding, …). It may only ADD reachability;
-/// it can never remove a node, edge, or root. See docs/ws5-plugin-seam.md.
+/// it can never remove a node, edge, or root (invariant #8, RUNBOOK.md).
 /// </summary>
 public interface IKnipPlugin
 {

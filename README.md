@@ -8,9 +8,9 @@ The paid tools (ReSharper/Rider, NDepend) own this space; the free Roslyn analyz
 Runs locally and in CI, and is **configured entirely in code** (`knip.json`).
 
 **AI agents are first-class users** — the JSON v2 output is the product API. If you are (or are driving)
-an agent that consumes Knip.NET, read [`AGENTS.md`](./AGENTS.md) for the canonical run → triage → delete
-→ verify → PR recipe, the confidence/hazard autonomy rules, and a full JSON v2 example. *(Draft — pending
-dogfood validation.)*
+an agent that consumes Knip.NET, run `dotnet-knip --agent-instructions` for the canonical protocol, or
+read [`AGENTS.md`](./AGENTS.md) for the same run → triage → delete → verify → PR recipe with the
+confidence/hazard autonomy rules and a full JSON v2 example.
 
 > Status: **working prototype.** Flagship feature (dead code) is implemented and validated on real
 > solutions. Unused `<ProjectReference>` and unused `<PackageReference>` (NuGet) detection are both
@@ -49,6 +49,26 @@ dotnet-knip Your.sln            # also invokable as `dotnet knip`
 Options: `-s/--solution`, `-c/--config`, `-f/--format console|json|sarif`, `-v/--verbose`,
 `--no-fail`, `--production`, `--why <sym-or-id>`, `--print-config`. **Exit codes:** `0` clean · `1` unused
 code found (CI gate) · `2` error.
+
+### Agent bootstrap (`init --agent`, `--agent-instructions`)
+
+Knip.NET is self-describing for consuming agents. To let an agent clean up dead code in a repo:
+
+```bash
+dotnet-knip init --agent        # writes .knip/AGENTS.md + knip.json into the current directory
+dotnet-knip --agent-instructions # prints the same agent-consumer protocol to stdout (no solution needed)
+```
+
+`init --agent` bootstraps the current directory only (it never infers a parent repo): it writes the
+canonical protocol to `.knip/AGENTS.md` and creates `knip.json` when missing. It never overwrites an
+existing `knip.json`, and never overwrites a hand-edited `.knip/AGENTS.md` without `--force`. No
+analysis runs. Both surfaces emit the **same** protocol from one embedded source of truth.
+
+The short autonomy contract that protocol encodes: run with `--format json`, assert
+`formatVersion == 2`, stop if `reliability.degraded == true`, then triage by `confidence` —
+**`high` may be deleted** (only through the delete → build → test → re-run verify loop),
+**`medium` is proposed** for human review, **`low` is surfaced** and never touched. Delete by `span`,
+outermost-first (`rootCause == null`). See [`AGENTS.md`](./AGENTS.md) for the full recipe.
 
 ### Explain a finding (`--why`) and inspect config (`--print-config`)
 
@@ -205,8 +225,11 @@ against both Roslyn 4.x and 5.x; only build/loading glue differs per framework.
    with a `buildOnlyPackage` hazard at **low** confidence, never dropped; a normal unused package-ref lands at
    **medium** (transitive-only / implicit-`Using` usage can still make a genuinely-needed package look unused,
    so triage through the verify loop before removing).
-4. Framework plugins (ASP.NET Core minimal APIs, EF Core, MassTransit, source generators),
-   incremental/cached index, `--baseline` for gating only new findings.
+4. ✅ **Framework plugins** — a config-gated plugin seam with built-in plugins for reflection,
+   assembly-scanning DI (MediatR/MassTransit/AutoMapper), ASP.NET Core convention-invoked members,
+   serialization, and Blazor parameters (see Configuration above).
+5. Remaining: incremental/cached index for very large solutions, `--baseline` for gating only new
+   findings, and further framework plugins (e.g. EF Core, source generators).
 
 ## Project layout
 

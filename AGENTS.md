@@ -1,14 +1,13 @@
-> **STATUS: draft — pending dogfood validation against a real solution before adoption.**
-> This recipe is written against the JSON v2 schema and the L9 sign-off (2026-07-15). It has
-> NOT yet been validated end-to-end on a real dogfood run (the Tjenesteportalen findings).
-> Do not treat it as the final contract until that validation lands.
-
 # AGENTS.md — consuming Knip.NET
 
 Knip.NET is a Roslyn dead-code finder. Its **JSON v2 output IS the product API.** You are a
 first-class user: the whole point is that you run knip, triage, delete, verify, and open a PR
 with everything you need in the machine output — no stderr scraping, no source-diving for symbol
 boundaries, no guessing whether the run was trustworthy.
+
+> This file is the human-browsable protocol. The **canonical runtime copy** an agent reads is
+> `dotnet-knip --agent-instructions` (also written to `.knip/AGENTS.md` by `dotnet-knip init
+> --agent`). This file and the command must not diverge; the command is the source of truth.
 
 Run knip with `--format json`. Assert `formatVersion == 2` before reading anything else; if it
 isn't 2, stop — you were built against a different contract.
@@ -304,17 +303,11 @@ Knip in CI is a **converging gate**, not a linter that replaces build/test:
 
 ---
 
-## Notes / open items for the human reviewer
+## 8. Production mode (`--production`)
 
-- `reliability.projectsFailed` follows the **output schema** (`schemas/knip.output.schema.json`): an
-  ARRAY of `{ project, message }`. The WS8a design doc §1.1 prose shows it as an integer — the schema
-  is the actual shape and this recipe matches the schema. Flag if the doc should be reconciled.
-- WS7 (production mode) LANDED: `reliability.productionModeWarnings` (string[]) and
-  `reliability.testProjectClassification` (`[{ project, kind, signal }]`) are now in both the output
-  schema and the JSON output. They appear only meaningfully under `--production`; they do NOT set
-  `degraded` (they change the MEANING of `onlyUsedByTests` findings, not graph trust). A `run.target`
-  field is still NOT emitted (not in the schema) — flag if the design doc should drop it.
-- The `onlyUsedByTests` kind (remediation `deleteCodeAndTests`) SHIPS under `--production`: a production
-  symbol reachable only via test roots, landing at `medium` confidence (propose in a PR, do NOT
-  auto-delete). Its `details.testReferrers[]` lists the referring test symbols (`{ symbol, file, line }`)
-  — the deletion unit is the code AND its tests. Delete both, then build + run tests.
+`--production` reports production code reachable only through tests as `onlyUsedByTests`
+(remediation `deleteCodeAndTests`) — a symbol whose only referrers are test roots. It lands at
+`medium` confidence: **propose in a PR, do not auto-delete.** `details.testReferrers[]` lists the
+referring test symbols (`{ symbol, file, line }`); the deletion unit is the code AND its tests, so
+delete both, then build + run tests. Zero test projects detected in production mode adds a
+`reliability.productionModeWarnings` entry (it does not set `degraded`).

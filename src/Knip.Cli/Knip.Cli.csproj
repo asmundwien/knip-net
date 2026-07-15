@@ -73,6 +73,13 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
+  <!-- WS9: the agent-consumer protocol ships as an embedded resource so the installed global tool
+       reads it at runtime without depending on a source-checkout path. LogicalName is pinned so the
+       provider's GetManifestResourceStream key is stable regardless of RootNamespace changes. -->
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\AgentInstructions.md" LogicalName="Knip.Cli.Resources.AgentInstructions.md" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\Knip.Core\Knip.Core.csproj" />
   </ItemGroup>

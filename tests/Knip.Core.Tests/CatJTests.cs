@@ -160,7 +160,110 @@ public sealed class CatJTests
         Assert.False(string.IsNullOrWhiteSpace(r.StdErr), "-v produced no progress on stderr.");
     }
 
+    // ── J7: --agent-instructions → exit 0, protocol on stdout, no solution/config needed ─────
+    [Fact]
+    public void J7_agent_instructions_prints_protocol_without_solution()
+    {
+        // Run from an EMPTY temp dir: proves the command needs no solution and no knip.json.
+        using var tmp = new TempDir();
+        var r = RunCliIn(tmp.Path, "--agent-instructions");
+
+        Assert.Equal(0, r.ExitCode);
+        Assert.False(string.IsNullOrWhiteSpace(r.StdOut));
+        Assert.Equal(string.Empty, r.StdErr.Trim());
+
+        // The protocol must name the machine-contract fields an agent gates on.
+        foreach (var token in new[] { "formatVersion == 2", "reliability.degraded", "confidence", "span", "rootCause" })
+            Assert.Contains(token, r.StdOut);
+    }
+
+    // ── J8: init --agent bootstraps a repo (both files, AGENTS.md == --agent-instructions) ────
+    [Fact]
+    public void J8_init_agent_writes_both_files_and_matches_instructions()
+    {
+        using var tmp = new TempDir();
+        var r = RunCliIn(tmp.Path, "init", "--agent");
+
+        Assert.Equal(0, r.ExitCode);
+
+        var configPath = Path.Combine(tmp.Path, "knip.json");
+        var agentsPath = Path.Combine(tmp.Path, ".knip", "AGENTS.md");
+        Assert.True(File.Exists(configPath), "init --agent did not create knip.json");
+        Assert.True(File.Exists(agentsPath), "init --agent did not create .knip/AGENTS.md");
+
+        // .knip/AGENTS.md is byte-for-byte the --agent-instructions output (single source of truth).
+        var instructions = RunCliIn(tmp.Path, "--agent-instructions").StdOut;
+        Assert.Equal(Normalize(instructions), Normalize(File.ReadAllText(agentsPath)));
+
+        // stdout names both created files; no analysis JSON leaked in.
+        Assert.Contains("knip.json", r.StdOut);
+        Assert.Contains(".knip/AGENTS.md", r.StdOut);
+        Assert.DoesNotContain("formatVersion", r.StdOut);
+    }
+
+    // ── J9: idempotency — second run succeeds; existing knip.json survives byte-for-byte ──────
+    [Fact]
+    public void J9_init_agent_is_idempotent_and_keeps_config()
+    {
+        using var tmp = new TempDir();
+        Assert.Equal(0, RunCliIn(tmp.Path, "init", "--agent").ExitCode);
+
+        var configPath = Path.Combine(tmp.Path, "knip.json");
+        var configBefore = File.ReadAllBytes(configPath);
+
+        var second = RunCliIn(tmp.Path, "init", "--agent");
+        Assert.Equal(0, second.ExitCode);
+        Assert.Equal(configBefore, File.ReadAllBytes(configPath)); // untouched
+    }
+
+    // ── J10: conflict protection — differing AGENTS.md not overwritten without --force ────────
+    [Fact]
+    public void J10_init_agent_protects_custom_agents_md()
+    {
+        using var tmp = new TempDir();
+        var knipDir = Path.Combine(tmp.Path, ".knip");
+        Directory.CreateDirectory(knipDir);
+        var agentsPath = Path.Combine(knipDir, "AGENTS.md");
+        File.WriteAllText(agentsPath, "my hand-written notes\n");
+
+        var blocked = RunCliIn(tmp.Path, "init", "--agent");
+        Assert.Equal(2, blocked.ExitCode);
+        Assert.Equal("my hand-written notes\n", File.ReadAllText(agentsPath)); // not overwritten
+
+        var forced = RunCliIn(tmp.Path, "init", "--agent", "--force");
+        Assert.Equal(0, forced.ExitCode);
+        var instructions = RunCliIn(tmp.Path, "--agent-instructions").StdOut;
+        Assert.Equal(Normalize(instructions), Normalize(File.ReadAllText(agentsPath)));
+    }
+
+    // ── J11: usage — unknown init option exits 2 with usage on stderr ─────────────────────────
+    [Fact]
+    public void J11_init_unknown_option_exits_two_with_usage()
+    {
+        using var tmp = new TempDir();
+        var r = RunCliIn(tmp.Path, "init", "--unknown");
+        Assert.Equal(2, r.ExitCode);
+        Assert.Contains("Usage:", r.StdErr);
+        Assert.Equal(string.Empty, r.StdOut.Trim());
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────────────────────
+
+    private static string Normalize(string s) => s.Replace("\r\n", "\n").TrimEnd('\n');
+
+    /// <summary>A self-deleting temp directory for out-of-process init tests.</summary>
+    private sealed class TempDir : IDisposable
+    {
+        public string Path { get; } =
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "knip-init-" + Guid.NewGuid().ToString("N"));
+
+        public TempDir() => Directory.CreateDirectory(Path);
+
+        public void Dispose()
+        {
+            try { Directory.Delete(Path, recursive: true); } catch { /* best-effort cleanup */ }
+        }
+    }
 
     private readonly record struct FindingKey(string Project, string File, int Line);
 
@@ -177,7 +280,14 @@ public sealed class CatJTests
 
     private readonly record struct CliResult(int ExitCode, string StdOut, string StdErr);
 
-    private static CliResult RunCli(params string[] args)
+    private static CliResult RunCli(params string[] args) => RunCliIn(RepoRoot(), args);
+
+    /// <summary>
+    /// Like <see cref="RunCli"/> but runs the CLI with an explicit working directory — required for
+    /// the <c>init --agent</c> tests, which bootstrap the CURRENT directory and must land their files
+    /// in an isolated temp dir, not the repo root.
+    /// </summary>
+    private static CliResult RunCliIn(string workingDirectory, params string[] args)
     {
         var cliProject = Path.Combine(RepoRoot(), "src", "Knip.Cli", "Knip.Cli.csproj");
 
@@ -186,7 +296,7 @@ public sealed class CatJTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
-            WorkingDirectory = RepoRoot(),
+            WorkingDirectory = workingDirectory,
         };
         psi.ArgumentList.Add("run");
         psi.ArgumentList.Add("--project");

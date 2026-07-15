@@ -1,7 +1,27 @@
 namespace Knip.Cli;
 
+/// <summary>(WS9) Top-level verb. The default <see cref="Run"/> is the analysis path; <see cref="Init"/>
+/// is the <c>init --agent</c> bootstrap, selected by a leading <c>init</c> positional.</summary>
+internal enum CliCommand
+{
+    Run,
+    Init,
+}
+
 internal sealed class CliOptions
 {
+    /// <summary>(WS9) Selected top-level verb; <see cref="CliCommand.Init"/> when the first positional is <c>init</c>.</summary>
+    public CliCommand Command { get; private set; } = CliCommand.Run;
+
+    /// <summary>(WS9) Print the canonical agent-consumer protocol to stdout and exit 0, without loading a solution or config.</summary>
+    public bool AgentInstructions { get; private set; }
+
+    /// <summary>(WS9) `init --agent`: bootstrap the repo for agent consumption (.knip/AGENTS.md + knip.json).</summary>
+    public bool InitAgent { get; private set; }
+
+    /// <summary>(WS9) `--force`: overwrite an existing, differing `.knip/AGENTS.md` during `init` (never overwrites knip.json).</summary>
+    public bool Force { get; private set; }
+
     public string? Solution { get; private set; }
     public string? ConfigPath { get; private set; }
     public string? Format { get; private set; }
@@ -54,11 +74,24 @@ internal sealed class CliOptions
                 case "--print-config":
                     options.PrintConfig = true;
                     break;
+                case "--agent-instructions":
+                    options.AgentInstructions = true;
+                    break;
+                case "--agent":
+                    options.InitAgent = true;
+                    break;
+                case "--force":
+                    options.Force = true;
+                    break;
                 default:
                     if (arg.StartsWith("-", StringComparison.Ordinal))
                         throw new ArgumentException($"unknown option: {arg}");
-                    // First bare argument is treated as the target solution/project.
-                    options.Solution ??= arg;
+                    // A leading bare `init` selects the bootstrap verb; any other first bare argument is
+                    // the target solution/project.
+                    if (options.Command == CliCommand.Run && options.Solution is null && arg == "init")
+                        options.Command = CliCommand.Init;
+                    else
+                        options.Solution ??= arg;
                     break;
             }
         }
@@ -84,9 +117,16 @@ internal sealed class CliOptions
 
             Usage:
               dotnet-knip [target] [options]
+              dotnet-knip init --agent [--force]
+              dotnet-knip --agent-instructions
 
             Arguments:
               target                 Path to a .sln/.slnx/.csproj (default: discovered in cwd or knip.json)
+
+            Agent bootstrap:
+                  --agent-instructions  Print the agent-consumer protocol to stdout and exit 0 (no solution/config)
+              init --agent           Write .knip/AGENTS.md and knip.json into the current directory (no analysis)
+                  --force            With `init`, overwrite an existing, differing .knip/AGENTS.md (never knip.json)
 
             Options:
               -s, --solution <path>  Solution or project to analyze
