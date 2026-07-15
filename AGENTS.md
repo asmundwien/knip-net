@@ -135,6 +135,18 @@ auto-delete on the strength of "build + tests green" alone.
 `--no-fail` forces exit `0` even when findings exist (report-only mode) — use it when you want the JSON
 for triage without failing the pipeline. Exit `2` always wins; `--no-fail` does not mask errors.
 
+`--why <symbol-or-id>` and `--print-config` are **queries**: both exit `0` and never gate CI.
+
+- `--why` takes a finding `id` (`k1_…`, copy it straight from the JSON output) or a display name, and
+  prints why that symbol is dead or alive: a **flagged** symbol's dead referrers (or "no incoming
+  references") + its `rootCause`; an **alive** symbol's shortest root→symbol path with `file:line` hops.
+  Use it to understand a finding before deleting, or to confirm a symbol you expected dead is actually
+  reachable. Output is prose (display names + `file:line`) — never an internal graph key.
+- `--print-config` prints the effective merged config (your `knip.json` over defaults) as JSON; no
+  analysis runs. Use it to confirm which entry-point/root/ignore rules are actually in effect.
+- An unknown key anywhere in `knip.json` (top-level or nested) warns by name and then proceeds — a typo
+  never silently no-ops, but never changes the exit code either.
+
 ---
 
 ## 6. A full JSON v2 example

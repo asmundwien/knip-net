@@ -43,6 +43,14 @@ public sealed class KnipConfig
     /// </summary>
     public Dictionary<string, PluginSettings> Plugins { get; set; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// The knip.json path this config was loaded from (or null for a zero-config/default run). Set by
+    /// <see cref="Load"/>; consumed by <see cref="ValidateKeys(string?)"/> so the analyzer can emit
+    /// unknown-key warnings (WS8c / L7) without threading the path separately. Not serialized.
+    /// </summary>
+    [JsonIgnore]
+    public string? SourcePath { get; set; }
+
     /// <summary>Resolve whether a built-in plugin runs: explicit config wins, else its registry default.</summary>
     public bool IsPluginEnabled(PluginDescriptor descriptor) =>
         Plugins.TryGetValue(descriptor.Id, out var settings) && settings.Enabled is { } enabled
@@ -93,13 +101,115 @@ public sealed class KnipConfig
         WriteIndented = true,
     };
 
+    /// <summary>
+    /// The known key TREE of knip.json (camelCase), generalizing the <see cref="ValidatePlugins"/>
+    /// unknown-key pattern to EVERY object in the file (WS8c / L7). A leaf value of <c>null</c> means
+    /// "known key, do not descend" (scalars, arrays, and the dynamic <c>plugins.&lt;id&gt;</c> map whose
+    /// keys <see cref="ValidatePlugins"/> validates separately). Used ONLY for unknown-key warnings;
+    /// value-shape validation stays with System.Text.Json / the published JSON Schema.
+    /// </summary>
+    private static readonly IReadOnlyDictionary<string, object?> KnownKeys =
+        new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["$schema"] = null,
+            ["solution"] = null,
+            ["production"] = null,
+            ["testProjects"] = null,
+            ["entryPoints"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["symbolNames"] = null, ["attributes"] = null, ["baseTypes"] = null,
+                ["implementedInterfaces"] = null, ["namePatterns"] = null,
+            },
+            ["roots"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["treatAllPublicAsUsed"] = null, ["publicApiProjects"] = null,
+            },
+            ["ignore"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["files"] = null, ["symbols"] = null, ["namespaces"] = null, ["projects"] = null,
+            },
+            ["output"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["format"] = null,
+            },
+            // plugins.<id> keys are dynamic (plugin ids) — validated by ValidatePlugins, not descended here.
+            ["plugins"] = null,
+        };
+
     public static KnipConfig Load(string? path)
     {
         if (string.IsNullOrEmpty(path) || !File.Exists(path))
             return new KnipConfig();
 
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<KnipConfig>(json, JsonOptions) ?? new KnipConfig();
+        var config = JsonSerializer.Deserialize<KnipConfig>(json, JsonOptions) ?? new KnipConfig();
+        config.SourcePath = path;
+        return config;
+    }
+
+    /// <summary>(WS8c / L7) Unknown-key warnings for the file this config was loaded from.</summary>
+    public IReadOnlyList<string> ValidateKeys() => ValidateKeys(SourcePath);
+
+    /// <summary>
+    /// (WS8c / L7) Warn on ANY unknown key in knip.json — top-level AND nested — naming the key path
+    /// (e.g. <c>roots.treatAllPubic</c>). Generalizes <see cref="ValidatePlugins"/> to the whole file:
+    /// one warning per unknown key, then analysis proceeds (exit unchanged). Routed through the same
+    /// LoadDiagnostics channel. Returns empty for a missing/empty/unparseable file (STJ Load surfaces
+    /// real parse errors separately). Value-SHAPE mismatches are not this method's job.
+    /// </summary>
+    public static IReadOnlyList<string> ValidateKeys(string? path)
+    {
+        if (string.IsNullOrEmpty(path) || !File.Exists(path))
+            return [];
+
+        JsonDocument doc;
+        try
+        {
+            doc = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions
+            {
+                CommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true,
+            });
+        }
+        catch (JsonException)
+        {
+            return []; // malformed JSON is reported by Load; nothing structural to diff.
+        }
+
+        using (doc)
+        {
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return [];
+            var warnings = new List<string>();
+            WalkKeys(doc.RootElement, KnownKeys, prefix: "", warnings);
+            return warnings;
+        }
+    }
+
+    private static void WalkKeys(
+        JsonElement element,
+        IReadOnlyDictionary<string, object?>? known,
+        string prefix,
+        List<string> warnings)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            var path = prefix.Length == 0 ? property.Name : $"{prefix}.{property.Name}";
+
+            if (known is null || !known.TryGetValue(property.Name, out var child))
+            {
+                var siblings = known is null
+                    ? ""
+                    : $" Known keys{(prefix.Length == 0 ? "" : $" under '{prefix}'")}: " +
+                      $"{string.Join(", ", known.Keys.OrderBy(k => k, StringComparer.Ordinal))}.";
+                warnings.Add($"unknown key '{path}' in knip.json — it will be ignored.{siblings}");
+                continue;
+            }
+
+            // Known key with a child schema and an object value → recurse to catch nested unknown keys.
+            if (child is IReadOnlyDictionary<string, object?> childKnown
+                && property.Value.ValueKind == JsonValueKind.Object)
+                WalkKeys(property.Value, childKnown, path, warnings);
+        }
     }
 
     /// <summary>Locate a knip.json next to the solution or in the current directory.</summary>

@@ -1,6 +1,10 @@
 {
   // Knip.NET configuration (config-as-code). All keys are optional; defaults are tuned for
   // ASP.NET Core + xUnit/NUnit. Only what you set here overrides the defaults.
+  //
+  // Any UNKNOWN key here (top-level or nested) is warned by name and then ignored — a typo never
+  // silently no-ops (nor changes the exit code). Inspect the effective merged config (this file over
+  // the defaults) with `dotnet-knip --print-config`. Trace one symbol with `dotnet-knip --why <id-or-name>`.
   "$schema": "./schemas/knip.config.schema.json",
 
   // "solution": "path/to/Your.sln",   // or pass on the CLI: dotnet-knip Your.sln

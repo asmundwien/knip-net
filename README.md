@@ -47,7 +47,19 @@ dotnet-knip Your.sln            # also invokable as `dotnet knip`
 ```
 
 Options: `-s/--solution`, `-c/--config`, `-f/--format console|json|sarif`, `-v/--verbose`,
-`--no-fail`, `--production`. **Exit codes:** `0` clean · `1` unused code found (CI gate) · `2` error.
+`--no-fail`, `--production`, `--why <sym-or-id>`, `--print-config`. **Exit codes:** `0` clean · `1` unused
+code found (CI gate) · `2` error.
+
+### Explain a finding (`--why`) and inspect config (`--print-config`)
+
+- `dotnet-knip --why <symbol-or-id>` traces one symbol and exits `0` (a query, never a gate). Pass a
+  finding `id` (`k1_…`) or a display name (`MyApp.Foo.Bar()`, or an unambiguous suffix). A **flagged**
+  symbol prints its dead referrers (or "no incoming references") plus its root cause; an **alive** symbol
+  prints the shortest root→symbol path with `file:line` hops. Output is prose — never a raw graph key.
+- `dotnet-knip --print-config` prints the **effective** merged config (your `knip.json` over the built-in
+  defaults) as JSON to stdout and exits `0` without running analysis.
+- Any **unknown key** in `knip.json` — top-level or nested — produces a warning naming the key path
+  (e.g. `unknown key 'roots.treatAllPubic'`), then analysis proceeds (exit code unchanged).
 
 ### Production mode (`--production`) — find tested-but-dead code
 

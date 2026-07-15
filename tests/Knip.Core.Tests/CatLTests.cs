@@ -22,8 +22,9 @@ namespace Knip.Core.Tests;
 /// and the WS8b-2 demotion rows L11 (global → all low), L12 (per-project attribution), L13/L14
 /// (publicApi + config split), L16 (unusedProjectReference → medium), L17 (IVT → low), and L18
 /// (the C2-before-C4 collision: public test-only unconfigured→low/configured→medium, internal→medium).
-/// Still Skip "G-feat": L5/L6/L7 (--why / --print-config / all-config-key warnings, WS8c) and
-/// L15 (serialization/config/DI hazard DETECTION, WS5).
+/// WS8c promoted L5 (--why flagged/alive, out-of-process CLI), L6 (--print-config = file over defaults),
+/// L7 (all-config-key unknown-key warnings). Still Skip "G-feat": only L15 (serialization/config/DI
+/// hazard DETECTION, WS5).
 /// </summary>
 [Collection(MsBuildCollection.Name)]
 public sealed class CatLTests
@@ -338,15 +339,138 @@ public sealed class CatLTests
     [Fact(Skip = "G-feat: serialization/config/DI hazard DETECTION is WS5 (enum + low demotion exist; no detector yet)")]
     public void L15_serialization_config_di_hazards() { }
 
-    // ── Skipped rows (deferred work streams) ──────────────────────────────────────────────────
-    [Fact(Skip = "G-feat: --why provenance is WS8c")]
-    public void L5_why_flagged_and_alive() { }
+    // ══ L5 / L6 / L7 (WS8c) — the agent-facing CLI additions, exercised OUT-OF-PROCESS through the real
+    //    process boundary (like CatJ/CatI): --why provenance, --print-config, all-config-key warnings. ══
 
-    [Fact(Skip = "G-feat: --print-config is WS8c")]
-    public void L6_print_config() { }
+    // ── L5: --why on a FLAGGED symbol → "no incoming references"-style report; on an ALIVE symbol →
+    //    the shortest root→symbol path. Both exit 0 (a query never gates). Never leaks a graph key. ─────
+    [Fact]
+    public void L5_why_flagged_reports_no_incoming_alive_reports_root_path()
+    {
+        var solution = FixtureSolution("Main");
 
-    [Fact(Skip = "G-feat: generalized unknown-key warnings are WS8c")]
-    public void L7_all_config_key_warnings() { }
+        // FLAGGED: DeadDocumented is a dead type with no incoming references at all.
+        var flagged = RunCli("-s", solution, "--why", "CatL.Main.DeadDocumented");
+        Assert.Equal(0, flagged.ExitCode);
+        Assert.Contains("FLAGGED", flagged.StdOut);
+        Assert.Contains("no incoming references", flagged.StdOut);
+        Assert.DoesNotContain("::", flagged.StdOut); // invariant #1: no raw graph key (Assembly::docId)
+
+        // FLAGGED with a dead referrer: DeadCallee is kept dead only by DeadCaller's field.
+        var cascade = RunCli("-s", solution, "--why", "CatL.Main.DeadCallee");
+        Assert.Equal(0, cascade.ExitCode);
+        Assert.Contains("FLAGGED", cascade.StdOut);
+        Assert.Contains("referenced only by", cascade.StdOut);
+        Assert.Contains("DeadCaller", cascade.StdOut);
+        Assert.DoesNotContain("::", cascade.StdOut);
+
+        // ALIVE: Program.Used() is reached from the Main root → a root→symbol path with file:line hops.
+        var alive = RunCli("-s", solution, "--why", "CatL.Main.Program.Used()");
+        Assert.Equal(0, alive.ExitCode);
+        Assert.Contains("ALIVE", alive.StdOut);
+        Assert.Contains("Used()", alive.StdOut);
+        Assert.Contains("→", alive.StdOut);        // a path with at least one hop
+        Assert.Contains("Program.cs:", alive.StdOut); // file:line hop, never a graph key
+        Assert.DoesNotContain("::", alive.StdOut);
+    }
+
+    // ── L6: --print-config with a PARTIAL knip.json → effective config = file merged over defaults,
+    //    valid JSON on stdout, exit 0, no analysis. ────────────────────────────────────────────────────
+    [Fact]
+    public void L6_print_config_is_file_merged_over_defaults()
+    {
+        var solution = FixtureSolution("ConfigProbe");
+        var partial = Path.Combine(Path.GetDirectoryName(solution)!, "knip.partial.json");
+
+        var r = RunCli("-s", solution, "-c", partial, "--print-config");
+        Assert.Equal(0, r.ExitCode);
+
+        using var doc = JsonDocument.Parse(r.StdOut); // valid JSON on stdout
+        var root = doc.RootElement;
+
+        // File wins where set: roots.treatAllPublicAsUsed and output.format come from the partial file.
+        Assert.True(root.GetProperty("roots").GetProperty("treatAllPublicAsUsed").GetBoolean());
+        Assert.Equal("json", root.GetProperty("output").GetProperty("format").GetString());
+
+        // Defaults fill the rest: entryPoints.symbolNames keeps its built-in defaults (e.g. "Main").
+        var symbolNames = root.GetProperty("entryPoints").GetProperty("symbolNames")
+            .EnumerateArray().Select(e => e.GetString()).ToList();
+        Assert.Contains("Main", symbolNames);
+
+        // No analysis ran (exit 0 despite the fixture having a dead sibling, and no findings JSON shape).
+        Assert.False(root.TryGetProperty("findings", out _));
+    }
+
+    // ── L7: an unknown TOP-LEVEL key AND an unknown NESTED key → one warning each, naming the key;
+    //    analysis proceeds, exit code unchanged (findings still found → exit 1). ─────────────────────────
+    [Fact]
+    public void L7_unknown_top_level_and_nested_keys_each_warn_once()
+    {
+        var solution = FixtureSolution("ConfigProbe");
+        var unknown = Path.Combine(Path.GetDirectoryName(solution)!, "knip.unknown.json");
+
+        var r = RunCli("-s", solution, "-c", unknown);
+
+        // Analysis proceeded: the fixture's dead sibling is still found → exit unchanged (1).
+        Assert.Equal(1, r.ExitCode);
+
+        // Unknown-key warnings route through the LoadDiagnostics channel (analyzer → console reporter),
+        // so on a normal run they render on stdout with the other load warnings.
+        // One warning names the unknown TOP-LEVEL key, one names the unknown NESTED key (by path).
+        Assert.Contains("notAKnownKey", r.StdOut);
+        Assert.Contains("roots.treatAllPubic", r.StdOut);
+
+        // Each unknown key warns exactly once (no duplicate spam).
+        Assert.Equal(1, CountOccurrences(r.StdOut, "'notAKnownKey'"));
+        Assert.Equal(1, CountOccurrences(r.StdOut, "'roots.treatAllPubic'"));
+    }
+
+    private static int CountOccurrences(string haystack, string needle)
+    {
+        var count = 0;
+        for (var i = haystack.IndexOf(needle, StringComparison.Ordinal); i >= 0;
+             i = haystack.IndexOf(needle, i + needle.Length, StringComparison.Ordinal))
+            count++;
+        return count;
+    }
+
+    // ── out-of-process CLI runner (copied from CatJ — FixtureRunner is NOT modified). Runs the BUILT
+    //    dotnet-knip as a separate process so --why/--print-config/warnings cross the real boundary. ─────
+    private readonly record struct CliResult(int ExitCode, string StdOut, string StdErr);
+
+    private static CliResult RunCli(params string[] args)
+    {
+        var cliProject = Path.Combine(RepoRoot(), "src", "Knip.Cli", "Knip.Cli.csproj");
+
+        var psi = new System.Diagnostics.ProcessStartInfo("dotnet")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            WorkingDirectory = RepoRoot(),
+        };
+        psi.ArgumentList.Add("run");
+        psi.ArgumentList.Add("--project");
+        psi.ArgumentList.Add(cliProject);
+        psi.ArgumentList.Add("--framework");
+        psi.ArgumentList.Add("net10.0");
+        psi.ArgumentList.Add("--no-build"); // build happens once in the verification gate
+        psi.ArgumentList.Add("--");
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        psi.Environment["NO_COLOR"] = "1";
+
+        using var process = new System.Diagnostics.Process { StartInfo = psi };
+        process.Start();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(120_000))
+        {
+            process.Kill(entireProcessTree: true);
+            throw new TimeoutException($"CLI did not exit within 120s for args: {string.Join(' ', args)}");
+        }
+        Task.WaitAll(stdout, stderr);
+        return new CliResult(process.ExitCode, stdout.Result, stderr.Result);
+    }
 
     // ── helper: a High-confidence, no-hazard symbol finding for the synthetic L12 unit test. ──────────
     private static Finding HighFinding(string symbol, string project) => new(

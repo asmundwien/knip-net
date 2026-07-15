@@ -34,10 +34,11 @@ public sealed class DeadCodeAnalyzer
             .ToList();
     }
 
-    public async Task<AnalysisResult> AnalyzeAsync(Solution solution, IProgress<string>? progress, CancellationToken ct)
+    public async Task<AnalysisResult> AnalyzeAsync(
+        Solution solution, IProgress<string>? progress, CancellationToken ct, bool captureProvenance = false)
     {
         var stopwatch = Stopwatch.StartNew();
-        var state = new GraphState();
+        var state = new GraphState { CaptureProvenance = captureProvenance };
         var result = new AnalysisResult();
 
         var projects = solution.Projects
@@ -50,8 +51,11 @@ public sealed class DeadCodeAnalyzer
             .Select(p => p.AssemblyName)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Config typos (unknown plugin id / unknown per-plugin key) surface as VISIBLE warnings rather
-        // than silently no-opping. Prepended so they lead the diagnostics list.
+        // Config typos surface as VISIBLE warnings rather than silently no-opping. Two channels, same
+        // list: (1) unknown TOP-LEVEL and NESTED keys anywhere in knip.json (WS8c / L7); (2) unknown
+        // plugin ids / per-plugin setting keys (the plugin-value validation ValidateKeys does not descend).
+        foreach (var warning in _config.ValidateKeys())
+            result.LoadDiagnostics.Add(warning);
         foreach (var warning in _config.ValidatePlugins())
             result.LoadDiagnostics.Add(warning);
 
@@ -182,6 +186,11 @@ public sealed class DeadCodeAnalyzer
         // the workspace boundary are attributed by KnipEngine after this returns.
         result.Reliability.ProjectsLoaded = result.ProjectsAnalyzed;
         result.Reliability.UnresolvedTypeReferences = state.UnresolvedTypeReferences;
+
+        // (WS8c) Retain the reachability graph for --why ONLY when provenance was requested; a default run
+        // drops it (memory unchanged). WhyService renders keys → display names + file:line (invariant #1).
+        if (captureProvenance)
+            result.WhyContext = new WhyContext(state, reachable);
 
         result.Elapsed = stopwatch.Elapsed;
         return result;

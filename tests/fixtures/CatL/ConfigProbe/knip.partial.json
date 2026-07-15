@@ -1,0 +1,8 @@
+{
+  "roots": {
+    "treatAllPublicAsUsed": true
+  },
+  "output": {
+    "format": "json"
+  }
+}
