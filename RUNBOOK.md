@@ -142,6 +142,20 @@ made. Reject any diff that violates one, even if its tests pass.
   were all correct. Surfaced the MSTest/NUnit entry-point defaults gap (see §5 / ledger) and a
   strong WS7 signal (test roots keep production code alive in default mode — 151 production
   findings are a floor).
+- Dogfood log (2026-07-15, authenticated, macOS/net10):
+  - **blaresept-api** (`Hdir.Selvbetjening.Blaresept.sln`, 11 proj) — 18.7s, 534 MB, 618 findings.
+    After the load-diag fix: `degraded:false`, byConfidence `{medium:554, high:42, low:22}` (before
+    the fix: `degraded:true` → ALL 618 `low`). Kinds incl. packageRef 51, enumMember 89, projectRef 10.
+  - **blaresept-regeleditor** (5 proj) — `degraded:false`, 203 findings `{medium:168, high:25, low:10}`,
+    enumMember 90. No crash.
+  - FP CLASSES found by dogfooding: (1) **load-diag** NuGet audit/pruning noise → false `degraded` →
+    all-low [FIXED]; (2) **WS3 metapackages / extension-method-used packages** (Swashbuckle flagged +
+    mis-tagged buildOnly — its own compile set is empty, used assemblies are transitive) [backlog];
+    (3) **ASP.NET convention-invoked members** — middleware `Invoke`/`InvokeAsync` (reflection via
+    `UseMiddleware<T>`), MVC filter methods, and **authorization handlers** (`AuthorizationHandler<T>.
+    HandleRequirementAsync`) flagged HIGH (deletable) — §3.8-sacred [aspnetcore plugin in progress;
+    EXTEND it to auth handlers + Blazor]; (4) **WS2 test→SUT project refs** (WebApplicationFactory)
+    likely FP [documented runtime-only surface]. The tool's own `--why` correctly diagnosed FP #3.
 - WS4 (legacy projects) ultimately needs **Windows + Visual Studio Build Tools** to run
   end-to-end. Cross-platform agents can still do the multi-targeting/compile work; flag the
   Windows-only verification for the human or a Windows runner.
