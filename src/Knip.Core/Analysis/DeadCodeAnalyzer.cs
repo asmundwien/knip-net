@@ -141,7 +141,7 @@ public sealed class DeadCodeAnalyzer
             }
         }
 
-        AddPolymorphismEdges(state);
+        AddPolymorphismEdges(state, solutionAssemblies);
 
         result.SymbolsAnalyzed = state.Declared.Count;
         result.RootCount = state.Roots.Count;
@@ -200,7 +200,7 @@ public sealed class DeadCodeAnalyzer
     /// Keep overrides and interface implementations alive when the abstraction they satisfy is used,
     /// so virtual/interface dispatch doesn't produce false positives.
     /// </summary>
-    private static void AddPolymorphismEdges(GraphState state)
+    private static void AddPolymorphismEdges(GraphState state, ISet<string> solutionAssemblies)
     {
         foreach (var symbol in state.Declared.Values)
         {
@@ -210,6 +210,17 @@ public sealed class DeadCodeAnalyzer
                 case IPropertySymbol { OverriddenProperty: { } p }: Link(state, p, symbol); break;
                 case IEventSymbol { OverriddenEvent: { } e }: Link(state, e, symbol); break;
             }
+
+            // (FIX #5) An override whose ROOT-declared virtual lives in an EXTERNAL (non-solution) type —
+            // object.ToString/Equals/GetHashCode, EF DbContext.OnModelCreating, IDisposable.Dispose via a
+            // base — is invoked polymorphically by the runtime/framework and is NEVER referenced in source.
+            // Invariant #7 already keeps it UNREPORTED, but it stays UNREACHABLE, so its private callees
+            // (OnModelCreating→SeedDatabase→seed helpers; a ToString() that uses a field) cascade to dead.
+            // Add a TYPE→override edge so the override (and its callees) is reachable WHEN ITS CONTAINING
+            // TYPE IS — a dead type's override stays dead (no false negative). Solution-virtual overrides
+            // are already handled by the base→override links above (don't double-handle / regress D).
+            if (IsOverrideOfExternalVirtual(symbol, solutionAssemblies) && symbol.ContainingType is { } containerType)
+                Link(state, containerType, symbol);
 
             if (symbol is INamedTypeSymbol type && type.TypeKind is not TypeKind.Interface)
             {
@@ -228,6 +239,47 @@ public sealed class DeadCodeAnalyzer
     {
         if (SymbolId.For(from) is { } fromId && SymbolId.For(to) is { } toId)
             state.AddEdge(fromId, toId);
+    }
+
+    /// <summary>
+    /// (FIX #5) True when <paramref name="symbol"/> is an <c>override</c> whose ORIGINAL virtual/abstract
+    /// definition is declared in an EXTERNAL (non-solution) assembly — e.g. <c>object.ToString()</c>,
+    /// <c>DbContext.OnModelCreating</c>. Such overrides are runtime/framework-dispatched and never
+    /// referenced in source. Walk <c>OverriddenX</c> to the ROOT declaration (past intermediate solution
+    /// overrides) and test the assembly of that root's original definition: only when the root virtual is
+    /// external do we need the type→override reachability edge. Overrides of SOLUTION virtuals are already
+    /// covered by the base→override links (do not double-handle).
+    /// </summary>
+    private static bool IsOverrideOfExternalVirtual(ISymbol symbol, ISet<string> solutionAssemblies)
+    {
+        ISymbol? root = symbol switch
+        {
+            IMethodSymbol { IsOverride: true } m => WalkToRoot(m),
+            IPropertySymbol { IsOverride: true } p => WalkToRoot(p),
+            IEventSymbol { IsOverride: true } e => WalkToRoot(e),
+            _ => null,
+        };
+        if (root is null) return false;
+        var assembly = root.OriginalDefinition.ContainingAssembly?.Name;
+        return assembly is not null && !solutionAssemblies.Contains(assembly);
+    }
+
+    private static IMethodSymbol WalkToRoot(IMethodSymbol m)
+    {
+        while (m.OverriddenMethod is { } next) m = next;
+        return m;
+    }
+
+    private static IPropertySymbol WalkToRoot(IPropertySymbol p)
+    {
+        while (p.OverriddenProperty is { } next) p = next;
+        return p;
+    }
+
+    private static IEventSymbol WalkToRoot(IEventSymbol e)
+    {
+        while (e.OverriddenEvent is { } next) e = next;
+        return e;
     }
 
     /// <summary>(WS7) Seed a root from the analyzer, recording its production/test origin.</summary>

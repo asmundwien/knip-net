@@ -179,4 +179,25 @@ public sealed class CatFTests
             new HashSet<string> { "CatF.F11.Fixture.NotAHook()" },
             findings);
     }
+
+    [Fact] // F12 (FIX #4a): a [Fact] test class's instance ctor is rooted (the framework news the class
+           // per test), so a field assigned only in the ctor and a helper called only from the ctor stay
+           // ALIVE; a never-assigned/read field is the dead-sibling.
+    public async Task F12_fact_class_ctor_keeps_ctor_only_field_and_helper_alive()
+    {
+        var findings = await FindingsIn("CatF.F12"); // default config
+        Assert.Equal(
+            new HashSet<string> { "CatF.F12.SampleTests._neverUsed" },
+            findings);
+    }
+
+    [Fact] // F13 (FIX #4b): an entry type (*Controller) is DI-constructed, so its instance ctor is rooted;
+           // a ctor-assigned field and a ctor-only helper stay ALIVE; a never-used field is the dead-sibling.
+    public async Task F13_entry_type_ctor_keeps_ctor_only_field_and_helper_alive()
+    {
+        var findings = await FindingsIn("CatF.F13"); // default config
+        Assert.Equal(
+            new HashSet<string> { "CatF.F13.WidgetController._unusedField" },
+            findings);
+    }
 }
