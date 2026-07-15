@@ -37,7 +37,10 @@
   "ignore": {
     // Generated code and build output are ignored by default; add project-specific patterns here.
     "files": ["**/*.g.cs", "**/obj/**", "**/bin/**", "**/Migrations/**"],
-    // Reflection/serialization targets that look dead but aren't. Fully-qualified name globs.
+    // Reflection/serialization targets that look dead but aren't. Globs match a symbol by its
+    // FULLY-QUALIFIED name — the same shape shown in findings: namespace + containing type + member,
+    // with parameters for methods (e.g. "MyApp.Dtos.OrderDto", "MyApp.Foo.Bar()"). Bare member-name
+    // globs do NOT match members; qualify them (e.g. "*.Dtos.*", "MyApp.Foo.Handle*").
     "symbols": ["*.Dtos.*", "MyApp.Generated.*"],
     "namespaces": [],
     "projects": []

@@ -38,19 +38,26 @@ public sealed class CatITests
         Assert.Contains("CatI.I1.KeptDead.KeptDeadMethod()", both);
     }
 
-    // ── I2: ignore.symbols FQN glob — matching symbol not reported (still in the graph) ───────
+    // ── I2: ignore.symbols FQN glob — matching MEMBER not reported (still in the graph) ───────
     [Fact] // Sibling: ReportedDead (no glob match) IS flagged.
     public async Task I2_ignore_symbols_fqn_glob_suppresses_report()
     {
-        // SURFACED BEHAVIOUR: ignore.symbols matches a METHOD by its BARE display name
-        // (FullyQualifiedFormat renders a method as just "IgnoredDeadMethod" — no namespace/type/
-        // parens), and a TYPE by its FQN ("CatI.I2.Sample"). See the report's "surprises". The glob
-        // therefore targets the bare member name; the contract (matching symbol suppressed) holds.
-        var config = new KnipConfig { Ignore = { Symbols = ["IgnoredDead*"] } };
+        // CONTRACT: ignore.symbols matches a MEMBER by its FULLY-QUALIFIED name — the same shape shown
+        // in findings (namespace + containing type + member, with parens for methods). A doc-style FQN
+        // glob "CatI.I2.Sample.Ignored*" therefore suppresses IgnoredDeadMethod() (an FQN match), while
+        // the sibling ReportedDead() (no match) is still flagged (anti-vacuous-green). It remains in the
+        // graph — ignore is report-only suppression, not removal (invariant #8).
+        var config = new KnipConfig { Ignore = { Symbols = ["CatI.I2.Sample.Ignored*"] } };
         var findings = await MainFindingsIn("CatI.I2", config);
         Assert.Equal(new HashSet<string> { "CatI.I2.Sample.ReportedDead()" }, findings);
 
-        // RED-FLIP: without the glob, the ignored symbol IS reported (proves it was there all along).
+        // A BARE-name glob no longer matches the member (FQN semantics): both dead members reported.
+        var bareName = new KnipConfig { Ignore = { Symbols = ["IgnoredDead*"] } };
+        var bare = await MainFindingsIn("CatI.I2", bareName);
+        Assert.Contains("CatI.I2.Sample.IgnoredDeadMethod()", bare);
+        Assert.Contains("CatI.I2.Sample.ReportedDead()", bare);
+
+        // RED-FLIP: without any glob, the ignored symbol IS reported (proves it was there all along).
         var noIgnore = new KnipConfig();
         var both = await MainFindingsIn("CatI.I2", noIgnore);
         Assert.Contains("CatI.I2.Sample.IgnoredDeadMethod()", both);

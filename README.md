@@ -72,7 +72,10 @@ completion + validation). The JSON output (`--format json`, `formatVersion: 2`) 
   public surface as used so you only see internally-dead code. `roots.publicApiProjects` scopes this
   to specific projects.
 - `ignore.files` / `ignore.symbols` / `ignore.namespaces` / `ignore.projects` — globs
-  (`**`, `*`, `?`) for generated code, reflection/serialization targets, etc.
+  (`**`, `*`, `?`) for generated code, reflection/serialization targets, etc. `ignore.symbols`
+  matches a symbol by its **fully-qualified name** — the same shape shown in findings (namespace +
+  containing type + member, with parameters for methods, e.g. `MyApp.Foo.Bar()`); a bare member name
+  does not match a member, so qualify the glob (`*.Dtos.*`, `MyApp.Foo.Handle*`).
 - `plugins` — built-in, config-gated analysis plugins that keep alive usages the core walker cannot
   see. Keyed by camelCase plugin id; `plugins.<id>.enabled` turns one on/off, with optional
   per-plugin settings under the same object. Plugins are **add-only** — a plugin can prevent a false
