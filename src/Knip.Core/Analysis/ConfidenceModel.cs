@@ -1,0 +1,98 @@
+using Knip.Core.Configuration;
+using Knip.Core.Model;
+
+namespace Knip.Core.Analysis;
+
+/// <summary>
+/// The L9 confidence &amp; hazard demotion engine (WS8 §4, SIGNED OFF 2026-07-15). Implements the REVISED
+/// invariant #8 ("recall over silence — but hazards are sacred"): findings are NEVER suppressed, only
+/// graded. Hazards are ADVISORY — they never change the emitted set, and a finding's presence/absence is
+/// unaffected. Confidence starts <see cref="Confidence.High"/> and is demoted by the FIRST matching rule:
+/// <list type="number">
+///   <item>C1 (per-project reliability): a project that failed to load/restore, OR solution-GLOBAL
+///     degradation, demotes to <see cref="Confidence.Low"/>. Per-project attribution — a healthy
+///     project's findings are NOT demoted by another project's failure.</item>
+///   <item>C2 (publicApi, config-sensitive): a <see cref="Hazard.PublicApi"/> finding →
+///     <see cref="Confidence.Medium"/> when the user declared their API posture
+///     (<c>publicApiProjects</c> OR <c>treatAllPublicAsUsed</c>), else <see cref="Confidence.Low"/>.
+///     Other C2 hazards (serialization/config/DI) → <see cref="Confidence.Low"/>.</item>
+///   <item>InternalsVisibleTo: a <see cref="Hazard.InternalsVisibleTo"/> finding →
+///     <see cref="Confidence.Low"/> (invisible external consumer).</item>
+///   <item>C3: project/package-reference findings → <see cref="Confidence.Medium"/>.</item>
+/// </list>
+/// A finding with no hazard in a healthy project stays <see cref="Confidence.High"/>.
+/// C4 (deleteCodeAndTests, WS7), C5 (entry-point near-miss, DROPPED from v1), and the
+/// serialization/config/DI hazard DETECTION (WS5) are DEFERRED — not applied here.
+/// </summary>
+internal static class ConfidenceModel
+{
+    /// <summary>
+    /// Grade every finding's confidence in place, using the FINAL reliability picture (so C1 sees
+    /// project-load/restore failures attributed by the engine) plus the hazards already attached by the
+    /// analyzer. Idempotent given the same inputs.
+    /// </summary>
+    public static void Apply(AnalysisResult result, KnipConfig config)
+    {
+        var apiPostureDeclared =
+            config.Roots.TreatAllPublicAsUsed || config.Roots.PublicApiProjects.Count > 0;
+
+        // Solution-GLOBAL degradation demotes EVERYTHING. Per-project failures demote only their own
+        // project's findings (C1 attribution). Global signals are the ones not tied to a single project:
+        // unresolved-type references (a solution-wide restore signal) and workspace/restore failures that
+        // carry no project attribution.
+        var globalDegradation = IsGloballyDegraded(result.Reliability);
+        var failedProjects = result.Reliability.ProjectsFailed
+            .Select(p => p.Project)
+            .ToHashSet(StringComparer.Ordinal);
+
+        for (var i = 0; i < result.Findings.Count; i++)
+        {
+            var finding = result.Findings[i];
+            var confidence = Compute(finding, apiPostureDeclared, globalDegradation, failedProjects);
+            if (confidence != finding.Confidence)
+                result.Findings[i] = finding with { Confidence = confidence };
+        }
+    }
+
+    /// <summary>First-match demotion: C1 → (PublicApi/C2) → InternalsVisibleTo → C3; else High.</summary>
+    private static Confidence Compute(
+        Finding finding, bool apiPostureDeclared, bool globalDegradation, HashSet<string> failedProjects)
+    {
+        // C1 — per-project reliability. Global degradation demotes all; otherwise only the affected project.
+        if (globalDegradation || failedProjects.Contains(finding.Project))
+            return Confidence.Low;
+
+        // C2 — publicApi (config-sensitive): declared posture → medium, unknown exposure → low.
+        if (finding.Hazards.Contains(Hazard.PublicApi))
+            return apiPostureDeclared ? Confidence.Medium : Confidence.Low;
+
+        // Other C2 hazards (serialization/config/DI) → low. Detection is deferred (WS5), but honour any
+        // that a plugin lane may attach later.
+        if (finding.Hazards.Contains(Hazard.SerializationShaped)
+            || finding.Hazards.Contains(Hazard.ConfigBoundType)
+            || finding.Hazards.Contains(Hazard.DiPluginShaped))
+            return Confidence.Low;
+
+        // InternalsVisibleTo — an invisible external consumer may bind this internal symbol → low.
+        if (finding.Hazards.Contains(Hazard.InternalsVisibleTo))
+            return Confidence.Low;
+
+        // C3 — project/package-reference findings are conservative by construction → medium.
+        if (finding.Remediation is Remediation.RemoveProjectReference or Remediation.RemovePackageReference)
+            return Confidence.Medium;
+
+        // C4 (deleteCodeAndTests, WS7) and C5 (entry-point near-miss, DROPPED) are not applied here.
+        return Confidence.High;
+    }
+
+    /// <summary>
+    /// Solution-GLOBAL degradation: signals that taint the whole graph rather than one project.
+    /// Unresolved-type references and un-attributed restore/load failures are treated as global (they are
+    /// not tied to a single project). Per-project failures live in <see cref="Reliability.ProjectsFailed"/>
+    /// and are handled by C1 attribution, NOT here.
+    /// </summary>
+    private static bool IsGloballyDegraded(Reliability reliability) =>
+        reliability.UnresolvedTypeReferences > 0
+        || reliability.RestoreFailures.Count > 0
+        || reliability.LoadDiagnostics.Any(d => d.Severity == LoadSeverity.Error);
+}

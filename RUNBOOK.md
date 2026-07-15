@@ -543,6 +543,18 @@ Keep this section updated as tasks complete — it is the handoff memory between
       + reliability + schema), WS8c (`--why`/`--print-config`), WS8d (AGENTS.md) run in the
       reporting/CLI lane, parallel to the analyzer lane — coordinate `Finding`/`BuildFindings`
       merges. Battery = Appendix category L (L9 is a D-row blocking WS8b). See the §5 WS8 card.
+- [~] **WS8b-2 L9 confidence/hazard demotion engine — IMPLEMENTED 2026-07-15.** `ConfidenceModel.Apply`
+      (Core) grades confidence in a FINAL pass in `KnipEngine.RunAsync`, AFTER the reliability block is
+      complete (C1 per-project attribution needs workspace restore/load failures, attributed post-analyzer).
+      Hazards attached earlier in `ToFinding` via `FindingEnrichment.ComputeHazards` (publicApi from
+      accessibility; internalsVisibleTo from a per-project `[InternalsVisibleTo]`→non-solution scan). Hazards
+      ADVISORY (invariant #8) — emitted set byte-identical; only confidence graded. First-match order
+      C1 → publicApi/C2 → internalsVisibleTo → C3. Promoted L11–L14, L16 (C3 half), L17 to `C`; L9 + L15 kept
+      `G-feat` (serialization/config/DI hazard DETECTION deferred to WS5 — enum + low-tier demotion exist, no
+      detector). C4 (`deleteCodeAndTests`) deferred to WS7; C5 dropped. Both TFMs build `-warnaserror`; suite
+      108 passing / 18 skipped. No existing finding's confidence shifted (no non-CatL test asserts it). Added
+      `[InternalsVisibleTo(Knip.Core.Tests)]` (csproj attribute, both TFMs) so L12 unit-tests the internal
+      engine with synthetic `ProjectsFailed`.
 - [ ] **`ignore.symbols` bare-name matching fix** (user-facing knip.json semantics → §6): methods
       match by BARE name, not FQN, because the display format renders methods without
       namespace/type. Undermines the I2 contract test's meaning. Needs a real task (fix the match
@@ -795,12 +807,12 @@ the "agents may act autonomously" line and is decided with the human at WS8a sig
 | L6 `G-feat` | `--print-config` with partial knip.json | effective config = file merged over defaults, valid JSON on stdout |
 | L7 `G-feat` | Unknown top-level + unknown nested config key | one warning each, naming the key; analysis proceeds, exit unchanged |
 | L8 `G-feat` | Summary block vs findings array | counts agree exactly |
-| L9 `G-feat` | Confidence rule table (high/medium/low criteria) | DECIDED 2026-07-15 (see §5 WS8 "L9 model"): start high, first-match demotion; hazards advisory-only; autonomy = delete `high` (verify-loop precondition) / propose `medium` / surface `low`. Rows L11–L17 pin the individual rules |
+| L9 `G-feat` | Confidence rule table (high/medium/low criteria) | DECIDED 2026-07-15 (see §5 WS8 "L9 model"): start high, first-match demotion; hazards advisory-only; autonomy = delete `high` (verify-loop precondition) / propose `medium` / surface `low`. Rows L11–L17 pin the individual rules. IMPLEMENTED 2026-07-15 (WS8b-2); left `G-feat` because L15 (serialization/config/DI hazard DETECTION) is still deferred (WS5) — the table is not fully pinned until its detectors land, though the low-tier demotion off those hazards already exists |
 | L10 `G-feat` | Cascade finding carries the parent's id as `rootCause`; directly-unreferenced finding carries `null` | as stated — enables outermost-first deletion; `--why` reuses it |
-| L11 `G-feat` | Solution-global load/restore failure (reliability.degraded) | ALL findings → `low` (C1 global) |
-| L12 `G-feat` | Load failure in ONE project only | findings in that project → `low`; other projects unaffected (C1 per-project attribution) |
-| L13 `G-feat` | `publicApi`-hazard finding, `publicApiProjects`/`treatAllPublicAsUsed` SET | → `medium` (C2 configured branch) |
-| L14 `G-feat` | `publicApi`-hazard finding, NEITHER key set | → `low` (C2 unconfigured branch) |
-| L15 `G-feat` | `serializationShaped`/`configBoundType`/`diPluginShaped` hazard | → `low` (C2 other hazards) |
-| L16 `G-feat` | project-ref / package-ref (C3) and `deleteCodeAndTests` (C4) findings | → `medium` |
-| L17 `G-feat` | `[InternalsVisibleTo]` names an assembly NOT in the solution | internal findings in that project → `low` (new `internalsVisibleTo` hazard) |
+| L11 `C` | Solution-global load/restore failure (reliability.degraded) | IMPLEMENTED 2026-07-15 (WS8b-2): ALL findings → `low` (C1 global). Pinned by CatL Degraded fixture (unresolved-type ref drives degraded end-to-end) |
+| L12 `C` | Load failure in ONE project only | IMPLEMENTED 2026-07-15 (WS8b-2): findings in that project → `low`; other projects unaffected (C1 per-project attribution). Pinned by a direct ConfidenceModel test with synthetic `ProjectsFailed` (offline fixtures cannot make MSBuild fail one project) |
+| L13 `C` | `publicApi`-hazard finding, `publicApiProjects`/`treatAllPublicAsUsed` SET | IMPLEMENTED 2026-07-15 (WS8b-2): → `medium` (C2 configured branch). CatL PublicApi fixture, glob set to a non-matching project so the public symbol survives to a finding |
+| L14 `C` | `publicApi`-hazard finding, NEITHER key set | IMPLEMENTED 2026-07-15 (WS8b-2): → `low` (C2 unconfigured branch). CatL PublicApi fixture, default config |
+| L15 `G-feat` | `serializationShaped`/`configBoundType`/`diPluginShaped` hazard | → `low` (C2 other hazards). DETECTION deferred (WS5 heuristics/plugins): the enum values + the low-tier demotion off them exist in ConfidenceModel, but nothing attaches these hazards yet, so nothing to pin end-to-end |
+| L16 `C` | project-ref / package-ref (C3) and `deleteCodeAndTests` (C4) findings | IMPLEMENTED 2026-07-15 (WS8b-2): project/package-ref → `medium` (C3). Pinned by the WS2 UnusedProjectReference finding. `deleteCodeAndTests` (C4) DEFERRED to WS7 — no `OnlyUsedByTests` kind exists yet |
+| L17 `C` | `[InternalsVisibleTo]` names an assembly NOT in the solution | IMPLEMENTED 2026-07-15 (WS8b-2): internal findings in that project → `low` (new `internalsVisibleTo` hazard). CatL InternalsVisibleTo fixture; private sibling stays `high` (anti-vacuous) |

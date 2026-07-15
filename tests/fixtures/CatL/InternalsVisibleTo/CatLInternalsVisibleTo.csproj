@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <NoWarn>CS0067;CS0169;CS0649;IDE0051;IDE0052</NoWarn>
+    <!-- L17: this project declares [InternalsVisibleTo] a NON-solution assembly, so an invisible external
+         friend may bind its internals. INTERNAL dead findings here get the internalsVisibleTo hazard and
+         demote to low. Not part of Knip.slnx; compiled at runtime by MSBuildWorkspace. -->
+  </PropertyGroup>
+
+</Project>
