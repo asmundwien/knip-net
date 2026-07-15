@@ -62,9 +62,18 @@
     //   Type.GetType("Ns.Foo"), Activator.CreateInstance(typeof(Foo)/"Ns.Foo"),
     //   typeof(T).GetMethod("X") / x.GetType().GetMethod("X") (also GetProperty/GetField/GetEvent).
     // Conservative: only contributes when it can resolve the target symbol from the string/typeof.
-    "reflection": { "enabled": true }
+    "reflection": { "enabled": true },
 
-    // scanningDi (later task) — assembly-scanning / non-generic DI (Scrutor, MediatR, MassTransit).
+    // scanningDi — ON by default. Keeps alive types registered by ASSEMBLY-SCANNING DI, which name the
+    // concrete type nowhere in source (the scan finds it reflectively). Roots types by SHAPE:
+    //   • MediatR handlers    — implement IRequestHandler / INotificationHandler / IStreamRequestHandler
+    //   • MassTransit         — implement IConsumer / IConsumer<T>
+    //   • AutoMapper profiles — derive from a base named Profile
+    // Framework types are matched by NAME (offline, no NuGet needed). Conservative: it roots ONLY types
+    // wearing one of these framework markers (and the marker interface they satisfy) — it does NOT
+    // blanket-root every interface implementer, so unrelated dead types stay flagged.
+    "scanningDi": { "enabled": true }
+
     // blazorParameter / serialization — OFF by default; enable if your solution uses them.
   }
 }

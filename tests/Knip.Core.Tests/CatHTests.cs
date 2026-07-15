@@ -60,14 +60,13 @@ public sealed class CatHTests
             "CatH.H3.UnreferencedFoo");
     }
 
-    // H4 — CONFIRMED RED TODAY: [IRequestHandler, MyHandler, UnrelatedType] (MyHandler flagged;
-    // assembly scanning is invisible).
-    [Fact(Skip = "H4 — WS5: scanning-DI plugin (Scrutor/MediatR/AutoMapper); mitigation today: entryPoints.implementedInterfaces [\"CatH.H4.IRequestHandler\"] / baseTypes")]
-    [Trait("status", "moat")]
+    // H4 — PROMOTED (WS5 scanningDi plugin): MyHandler implements IRequestHandler → scan-rooted → alive.
+    [Fact]
+    [Trait("status", "contract")]
     public async Task H4_assembly_scanned_handler_alive()
     {
-        // FUTURE: MyHandler ALIVE (root via implemented interface -> IRequestHandler alive too);
-        // UnrelatedType (not a handler) still flagged.
+        // MyHandler ALIVE (root via implemented IRequestHandler shape -> IRequestHandler alive too);
+        // UnrelatedType (not a handler) is the over-rooting DECOY -> still flagged.
         AssertExactly(await FindingsIn("CatH.H4"), "CatH.H4.UnrelatedType");
     }
 
@@ -153,14 +152,13 @@ public sealed class CatHTests
             "CatH.H11.Handler.NeverReferenced()");
     }
 
-    // H12 — CONFIRMED RED TODAY: [IConsumer<TMessage>, OrderConsumer, OrderPlaced, UnrelatedService]
-    // (OrderConsumer flagged; AddConsumers assembly scanning is invisible).
-    [Fact(Skip = "H12 — WS5: MassTransit plugin (AddConsumer/scanning); mitigation today: entryPoints.implementedInterfaces [\"CatH.H12.IConsumer<T>\"] / name pattern")]
-    [Trait("status", "moat")]
+    // H12 — PROMOTED (WS5 scanningDi plugin): OrderConsumer implements IConsumer<> → scan-rooted → alive.
+    [Fact]
+    [Trait("status", "contract")]
     public async Task H12_masstransit_consumer_alive()
     {
-        // FUTURE: OrderConsumer ALIVE (root via consumer interface -> OrderPlaced & IConsumer alive);
-        // only the non-consumer UnrelatedService is flagged.
+        // OrderConsumer ALIVE (root via IConsumer<> shape -> OrderPlaced & IConsumer alive);
+        // the non-consumer UnrelatedService is the over-rooting DECOY -> still flagged.
         AssertExactly(await FindingsIn("CatH.H12"), "CatH.H12.UnrelatedService");
     }
 }

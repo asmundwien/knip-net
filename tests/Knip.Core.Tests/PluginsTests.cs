@@ -5,12 +5,14 @@ using Xunit;
 namespace Knip.Core.Tests;
 
 /// <summary>
-/// WS5 — the plugin seam and the first built-in plugin (<c>reflection</c>). All rows are Contract.
+/// WS5 — the plugin seam and the built-in plugins (<c>reflection</c>, <c>scanningDi</c>). All rows are
+/// Contract.
 ///
 /// Covers three sign-off conditions:
-///   • The reflection differential (flagged WITHOUT the plugin, alive WITH it) — the same fixtures the
-///     CatH battery promotes (H1/H2) — PLUS an over-rooting guard: an unrelated dead symbol that must
-///     STAY FLAGGED with the plugin ON (the plugin-OFF run alone is not sufficient).
+///   • The per-plugin differential (flagged WITHOUT the plugin, alive WITH it) — the same fixtures the
+///     CatH battery promotes (reflection→H1/H2, scanningDi→H4/H12) — PLUS an over-rooting guard: an
+///     unrelated dead symbol that must STAY FLAGGED with the plugin ON (the plugin-OFF run alone is not
+///     sufficient).
 ///   • The default-enabled set (F8-style): pins which plugins run under a default KnipConfig.
 ///   • Config warnings: an unknown plugin id and an unknown per-plugin key each surface a VISIBLE
 ///     diagnostic — they never silently no-op.
@@ -23,6 +25,11 @@ public sealed class PluginsTests
     private static KnipConfig WithReflection(bool enabled) => new()
     {
         Plugins = { ["reflection"] = new PluginSettings { Enabled = enabled } },
+    };
+
+    private static KnipConfig WithScanningDi(bool enabled) => new()
+    {
+        Plugins = { ["scanningDi"] = new PluginSettings { Enabled = enabled } },
     };
 
     private static Task<IReadOnlySet<string>> FindingsIn(string ns, KnipConfig config) =>
@@ -59,16 +66,48 @@ public sealed class PluginsTests
         Assert.Contains("CatH.H2.UnusedPlugin", on);
     }
 
+    // ── scanningDi differential + over-rooting guard: H4 (MediatR IRequestHandler shape) ──────
+    [Fact]
+    public async Task ScanningDi_mediatr_handler_shape_keeps_type_alive_H4()
+    {
+        // Plugin OFF: MyHandler is registered only by assembly scanning → invisible → flagged.
+        var off = await FindingsIn("CatH.H4", WithScanningDi(false));
+        Assert.Contains("CatH.H4.MyHandler", off);
+
+        // Plugin ON: the plugin roots types implementing IRequestHandler → MyHandler alive → NOT reported…
+        var on = await FindingsIn("CatH.H4", WithScanningDi(true));
+        Assert.DoesNotContain("CatH.H4.MyHandler", on);
+        // …but the unrelated dead type STAYS FLAGGED (over-rooting guard: UnrelatedType implements no
+        // scanned marker interface, so the shape test does not root it).
+        Assert.Contains("CatH.H4.UnrelatedType", on);
+    }
+
+    // ── scanningDi differential + over-rooting guard: H12 (MassTransit IConsumer<> shape) ──────
+    [Fact]
+    public async Task ScanningDi_masstransit_consumer_shape_keeps_type_alive_H12()
+    {
+        // Plugin OFF: OrderConsumer is registered only by AddConsumers scanning → invisible → flagged.
+        var off = await FindingsIn("CatH.H12", WithScanningDi(false));
+        Assert.Contains("CatH.H12.OrderConsumer", off);
+
+        // Plugin ON: the plugin roots types implementing IConsumer<> → OrderConsumer alive → NOT reported…
+        var on = await FindingsIn("CatH.H12", WithScanningDi(true));
+        Assert.DoesNotContain("CatH.H12.OrderConsumer", on);
+        // …but the non-consumer STAYS FLAGGED (over-rooting guard: implements no scanned marker).
+        Assert.Contains("CatH.H12.UnrelatedService", on);
+    }
+
     // ── default-enabled set (F8-style): pin which plugins run under a default config ──────────
     [Fact]
-    public void DefaultEnabledSet_is_reflection_only_for_v1()
+    public void DefaultEnabledSet_is_reflection_and_scanningDi_for_v1()
     {
-        // The shipped default-on set. Adding scanningDi later just flips its DefaultEnabled → it appears
-        // here. This pins the seam's default so a regression (accidentally enabling/disabling) is caught.
-        Assert.Equal(new[] { "reflection" }, PluginRegistry.DefaultEnabledIds);
+        // The shipped default-on set: reflection + scanningDi (approved). This pins the seam's default so
+        // a regression (accidentally enabling/disabling a plugin) is caught.
+        Assert.Equal(new[] { "reflection", "scanningDi" }, PluginRegistry.DefaultEnabledIds);
 
         var config = new KnipConfig();
         Assert.True(config.IsPluginEnabled(Descriptor("reflection")), "reflection must default ON");
+        Assert.True(config.IsPluginEnabled(Descriptor("scanningDi")), "scanningDi must default ON");
     }
 
     [Fact]
@@ -106,6 +145,18 @@ public sealed class PluginsTests
 
         var result = await FixtureRunner.RunAsync(Category, config);
         Assert.Contains(result.LoadDiagnostics, d => d.Contains("plugins.reflection.enabldd"));
+    }
+
+    // ── config warnings: unknown per-plugin key on scanningDi ──────────────────────────────────
+    [Fact]
+    public async Task UnknownScanningDiKey_emits_visible_warning()
+    {
+        var settings = new PluginSettings { Enabled = true };
+        settings.Extra["enabldd"] = System.Text.Json.JsonSerializer.SerializeToElement(true);
+        var config = new KnipConfig { Plugins = { ["scanningDi"] = settings } };
+
+        var result = await FixtureRunner.RunAsync(Category, config);
+        Assert.Contains(result.LoadDiagnostics, d => d.Contains("plugins.scanningDi.enabldd"));
     }
 
     // A clean, fully-specified config produces NO plugin warnings (anti-vacuous-green for the above).

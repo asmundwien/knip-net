@@ -81,7 +81,12 @@ completion + validation). The JSON output (`--format json`, `formatVersion: 2`) 
   per-plugin settings under the same object. Plugins are **add-only** — a plugin can prevent a false
   positive (keep code alive) but can never mark live code dead. **`reflection` ships ON**
   (`Type.GetType("Ns.Foo")`, `Activator.CreateInstance`, `typeof(T).GetMethod("X")`/
-  `x.GetType().GetMethod("X")` and friends → keep the named type/member alive). Unknown plugin ids
+  `x.GetType().GetMethod("X")` and friends → keep the named type/member alive). **`scanningDi` ships
+  ON** — keeps alive types registered by assembly-scanning DI that name the concrete type nowhere in
+  source: MediatR handlers (`IRequestHandler`/`INotificationHandler`), MassTransit consumers
+  (`IConsumer<T>`), and AutoMapper `Profile` subclasses, matched by framework-type NAME (offline, no
+  NuGet needed). It roots only types wearing one of those markers — it does not blanket-root every
+  interface implementer, so unrelated dead types stay flagged. Unknown plugin ids
   and unknown per-plugin keys print a **visible warning** rather than silently no-opping, so a typo
   is caught. Run with `-v` to see each plugin's contribution counts and per-project wall-time.
 
