@@ -379,7 +379,10 @@ merges on `Finding`/`BuildFindings`, which both lanes touch.
   remaining `publicApi` findings → `medium` (user declared their external-API posture); if NEITHER is
   set, exposure is unknown → `low`. Other C2 hazards (`serializationShaped`, `configBoundType`,
   `diPluginShaped`) → `low`.
-- **C3** project/package-ref → `medium`. **C4** `deleteCodeAndTests` (test-only, WS7) → `medium`.
+- **C3** project/package-ref → `medium`. **C4** `deleteCodeAndTests` (test-only, WS7) → `medium`,
+  applied **LAST** — after C2 (DECISION 2026-07-15, C2 precedes C4). So C4 grades only test-only findings
+  with NO `publicApi` hazard (internal/private); a PUBLIC test-only symbol is graded by C2 above
+  (unconfigured → `low`, configured → `medium`). See the §8 D-row + Appendix-L L18.
 - **C5 DROPPED from v1** — "entry-point near-miss" ships only with an enumerated definition + one
   fixture each, or not at all; add later ADDITIVELY. No vibe-based demotions.
 - **New hazard `internalsVisibleTo`:** `[InternalsVisibleTo]` naming an assembly NOT in the solution
@@ -549,12 +552,29 @@ Keep this section updated as tasks complete — it is the handoff memory between
       Hazards attached earlier in `ToFinding` via `FindingEnrichment.ComputeHazards` (publicApi from
       accessibility; internalsVisibleTo from a per-project `[InternalsVisibleTo]`→non-solution scan). Hazards
       ADVISORY (invariant #8) — emitted set byte-identical; only confidence graded. First-match order
-      C1 → publicApi/C2 → internalsVisibleTo → C3. Promoted L11–L14, L16 (C3 half), L17 to `C`; L9 + L15 kept
-      `G-feat` (serialization/config/DI hazard DETECTION deferred to WS5 — enum + low-tier demotion exist, no
-      detector). C4 (`deleteCodeAndTests`) deferred to WS7; C5 dropped. Both TFMs build `-warnaserror`; suite
+      C1 → publicApi/C2 → internalsVisibleTo → C3 → C4 (deleteCodeAndTests, LAST — REORDERED by the
+      2026-07-15 D-row above; originally C4 sat right after C1). Promoted L11–L14, L16 (C3 half), L17 to `C`;
+      L9 + L15 kept `G-feat` (serialization/config/DI hazard DETECTION deferred to WS5 — enum + low-tier
+      demotion exist, no detector). C4 (`deleteCodeAndTests`) landed with WS7; C5 dropped. Both TFMs build `-warnaserror`; suite
       108 passing / 18 skipped. No existing finding's confidence shifted (no non-CatL test asserts it). Added
       `[InternalsVisibleTo(Knip.Core.Tests)]` (csproj attribute, both TFMs) so L12 unit-tests the internal
       engine with synthetic `ProjectsFailed`.
+- [x] **D-row DECISION 2026-07-15 (human, §6) — C2 (publicApi) PRECEDES C4 (deleteCodeAndTests).**
+      `ConfidenceModel` reordered so the first-match chain is C1 → **C2 (publicApi, config-sensitive)** →
+      InternalsVisibleTo → C3 → **C4 (deleteCodeAndTests → medium, LAST)**. Consequence (the point): an
+      unconfigured-public test-only finding (no `publicApiProjects`/`treatAllPublicAsUsed`) now lands
+      **low** (was medium); a configured-but-not-listed public test-only lands **medium**; an
+      internal/private test-only falls through to C4 → **medium**. Rationale: the verify loop
+      (delete → build → tests → re-run) is what licenses medium/high autonomy, and it is STRUCTURALLY BLIND
+      here — deleting a public test-only symbol *with its tests* goes green by construction (the only
+      witnesses to its use are deleted with it); an external consumer (unknown, no publicApi config) breaks
+      at THEIR build, outside every gate we control — the same "survives our gates, breaks elsewhere" shape
+      as category H (§3.8-sacred). `low` is a TIER, not suppression (invariant #8): the finding still emits
+      with its `deleteCodeAndTests` remediation + hazards. Pinned by new CatL row **L18** (all three
+      branches on one production-mode fixture, `tests/fixtures/CatL/TestOnlyPublicApi`) and **CatKTests.K2**
+      (public test-only → low). Design doc §4.1.1 records the rationale. Both TFMs build `-warnaserror`;
+      suite 144 passing / 8 skipped (was 143; L18 adds one). No finding SET change — only the public
+      test-only tier moved medium → low.
 - [x] **`ignore.symbols` FQN matching FIXED** — members now match against the finding `DisplayFormat`
       (namespace + containing type + params), so a reported name copies verbatim into `ignore.symbols`;
       bare member-name globs no longer match members. I2 strengthened (pins FQN match AND
@@ -822,7 +842,7 @@ alive. K1 pins that default; the rest assert production mode (`--production` / `
 | ID | Scenario | Expected |
 |---|---|---|
 | K1 `C` | Default mode: production method referenced only from a `[Fact]` test | alive — pins default semantics AND documents the known false negative |
-| K2 `C` | Production mode: production method + type reachable only via test roots | IMPLEMENTED 2026-07-15 (WS7): flagged as `OnlyUsedByTests` (distinct kind, remediation `deleteCodeAndTests`, C4 → `medium`). Fixture keeps the TYPE alive (production caller) so the finding lands at member granularity; whole-test-only types report the type (outermost-only) |
+| K2 `C` | Production mode: production method + type reachable only via test roots | IMPLEMENTED 2026-07-15 (WS7): flagged as `OnlyUsedByTests` (distinct kind, remediation `deleteCodeAndTests`). Fixture keeps the TYPE alive (production caller) so the finding lands at member granularity; whole-test-only types report the type (outermost-only). **Confidence (2026-07-15 D-row, C2 precedes C4):** `Service.ProductionMethod` is PUBLIC → `publicApi` hazard → C2; the K fixture declares no publicApi posture, so it grades `low` (test asserts `Confidence.Low`). An internal test-only symbol would fall through to C4 → `medium` |
 | K3 `C` | Production mode: the K2 finding lists the referencing test symbols | IMPLEMENTED 2026-07-15 (WS7): `Finding.TestReferrers` / `details.testReferrers[]` enumerates the referring `[Fact]` symbols (display name + file:line, never a graph key), deterministically ordered |
 | K4 `C` | Workaround: `ignore.projects` excluding the test project | test-only production method flagged (verify — expected green) |
 | K5 `C` | Transitive: A used by B; B used only by tests | IMPLEMENTED 2026-07-15 (WS7): production mode flags BOTH A and B as `OnlyUsedByTests` (A transitively, empty referrers; B directly, with its test referrer) |
@@ -852,5 +872,6 @@ the "agents may act autonomously" line and is decided with the human at WS8a sig
 | L13 `C` | `publicApi`-hazard finding, `publicApiProjects`/`treatAllPublicAsUsed` SET | IMPLEMENTED 2026-07-15 (WS8b-2): → `medium` (C2 configured branch). CatL PublicApi fixture, glob set to a non-matching project so the public symbol survives to a finding |
 | L14 `C` | `publicApi`-hazard finding, NEITHER key set | IMPLEMENTED 2026-07-15 (WS8b-2): → `low` (C2 unconfigured branch). CatL PublicApi fixture, default config |
 | L15 `G-feat` | `serializationShaped`/`configBoundType`/`diPluginShaped` hazard | → `low` (C2 other hazards). DETECTION deferred (WS5 heuristics/plugins): the enum values + the low-tier demotion off them exist in ConfidenceModel, but nothing attaches these hazards yet, so nothing to pin end-to-end |
-| L16 `C` | project-ref / package-ref (C3) and `deleteCodeAndTests` (C4) findings | IMPLEMENTED 2026-07-15 (WS8b-2): project/package-ref → `medium` (C3). Pinned by the WS2 UnusedProjectReference finding. C4 (`deleteCodeAndTests` → `medium`) LANDED with WS7 — pinned by `CatKTests.K2` (asserts `Confidence.Medium` on an `OnlyUsedByTests` finding) |
+| L16 `C` | project-ref / package-ref (C3) and `deleteCodeAndTests` (C4) findings | IMPLEMENTED 2026-07-15 (WS8b-2): project/package-ref → `medium` (C3). Pinned by the WS2 UnusedProjectReference finding. **C4 SPLIT by the 2026-07-15 D-row (C2 precedes C4):** a `deleteCodeAndTests` finding on a PUBLIC symbol carries the `publicApi` hazard and is graded by C2 — **unconfigured-public → `low`**, configured-public → `medium`; an INTERNAL/private test-only symbol (no `publicApi` hazard) falls through to **C4 → `medium`**. Pinned by `CatKTests.K2` (public test-only → `low`) and the three-branch collision row **L18** (`CatLTests.L18` on `tests/fixtures/CatL/TestOnlyPublicApi`: unconfigured-public → low, configured-public → medium, internal → medium) |
 | L17 `C` | `[InternalsVisibleTo]` names an assembly NOT in the solution | IMPLEMENTED 2026-07-15 (WS8b-2): internal findings in that project → `low` (new `internalsVisibleTo` hazard). CatL InternalsVisibleTo fixture; private sibling stays `high` (anti-vacuous) |
+| L18 `C` | Production-mode test-only finding — the C2-before-C4 collision row | IMPLEMENTED 2026-07-15 (D-row: C2 precedes C4). One fixture (`tests/fixtures/CatL/TestOnlyPublicApi`), two `OnlyUsedByTests` findings differing only in accessibility, pins all three branches: (a) unconfigured-public test-only → `low` (C2 unconfigured, precedes C4); (b) `publicApiProjects` set-but-not-listed public test-only → `medium` (C2 configured); (c) internal test-only → `medium` (no `publicApi` hazard, falls through to C4). The FINDING SET is identical across (a)/(b) — only the public finding's tier moves; `low` is a tier, not suppression |

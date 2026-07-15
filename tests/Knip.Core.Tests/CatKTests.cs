@@ -114,7 +114,11 @@ public sealed class CatKTests
         var testOnly = findings.Single(f => f.Symbol == "CatK.K2.Service.ProductionMethod()");
         Assert.Equal(FindingKind.OnlyUsedByTests, testOnly.Kind);
         Assert.Equal(Remediation.DeleteCodeAndTests, testOnly.Remediation);
-        Assert.Equal(Confidence.Medium, testOnly.Confidence); // C4
+        // ProductionMethod is PUBLIC → carries the publicApi hazard. HUMAN DECISION 2026-07-15 (§6): C2
+        // (publicApi) now PRECEDES C4, and no publicApi posture is declared here, so this unconfigured-
+        // public test-only finding lands LOW (was medium under the old C4-before-C2 order). The verify
+        // loop is structurally blind to an unknown external consumer of a public test-only symbol.
+        Assert.Equal(Confidence.Low, testOnly.Confidence); // C2 (publicApi, unconfigured) — precedes C4
 
         // The dead sibling stays an ordinary UnusedMethod — OnlyUsedByTests is a DISTINCT kind.
         var plainDead = findings.Single(f => f.Symbol == "CatK.K2.Service.NeverCalled()");

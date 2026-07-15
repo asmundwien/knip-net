@@ -14,13 +14,14 @@ namespace Knip.Core.Tests;
 /// <summary>
 /// Category L — the WS8 agent-first interface (JSON v2 output = product API). WS8b-1 ships the FIELD
 /// SHAPE; WS8b-2 ships the L9 confidence/hazard DEMOTION engine (hazards advisory-only, first-match
-/// demotion C1 → publicApi/C2 → internalsVisibleTo → C3).
+/// demotion C1 → publicApi/C2 → internalsVisibleTo → C3 → C4; C2 precedes C4 per DECISION 2026-07-15).
 ///
 /// Promoted rows: L1 (output validates against the schema), L2 (stable ids + order across runs),
 /// L3 (degraded true vs false), L4 (delete every finding strictly by span → compiles green),
 /// L8 (summary == findings), L10 (cascade carries parent id as rootCause; direct == null),
 /// and the WS8b-2 demotion rows L11 (global → all low), L12 (per-project attribution), L13/L14
-/// (publicApi + config split), L16 (unusedProjectReference → medium; C4 deferred), L17 (IVT → low).
+/// (publicApi + config split), L16 (unusedProjectReference → medium), L17 (IVT → low), and L18
+/// (the C2-before-C4 collision: public test-only unconfigured→low/configured→medium, internal→medium).
 /// Still Skip "G-feat": L5/L6/L7 (--why / --print-config / all-config-key warnings, WS8c) and
 /// L15 (serialization/config/DI hazard DETECTION, WS5).
 /// </summary>
@@ -274,6 +275,61 @@ public sealed class CatLTests
         var priv = result.Findings.Single(f => f.Symbol.EndsWith("DeadPrivate()", StringComparison.Ordinal));
         Assert.Empty(priv.Hazards);
         Assert.Equal(Confidence.High, priv.Confidence);
+    }
+
+    // ── L18: the COLLISION row (HUMAN DECISION 2026-07-15, §6). The reordered confidence chain puts C2
+    //    (publicApi) BEFORE C4 (deleteCodeAndTests). This pins ALL THREE branches on ONE production-mode
+    //    fixture whose two OnlyUsedByTests findings differ only in accessibility:
+    //      (a) unconfigured-public test-only  -> LOW    (C2 unconfigured; verify loop structurally blind
+    //                                                    to an unknown external consumer)
+    //      (b) configured-but-not-listed public test-only -> MEDIUM (C2 configured; posture declared)
+    //      (c) internal test-only             -> MEDIUM (no publicApi hazard; falls through to C4)
+    //    The FINDING SET is identical across (a)/(b)/(c) — only the TIER of the public finding moves. ─────
+    [Fact]
+    public async Task L18_test_only_confidence_splits_public_by_config_internal_stays_medium()
+    {
+        // Precondition guard: both members are OnlyUsedByTests in production mode, one public, one internal.
+        static void AssertShape(Finding pub, Finding @internal)
+        {
+            Assert.Equal(FindingKind.OnlyUsedByTests, pub.Kind);
+            Assert.Equal(Remediation.DeleteCodeAndTests, pub.Remediation);
+            Assert.Contains(Hazard.PublicApi, pub.Hazards); // public -> publicApi hazard (graded by C2)
+
+            Assert.Equal(FindingKind.OnlyUsedByTests, @internal.Kind);
+            Assert.Equal(Remediation.DeleteCodeAndTests, @internal.Remediation);
+            Assert.DoesNotContain(Hazard.PublicApi, @internal.Hazards); // internal -> no publicApi hazard
+        }
+
+        const string Pub = "CatL.TestOnlyPublicApi.Service.PublicTestOnly()";
+        const string Int = "CatL.TestOnlyPublicApi.Service.InternalTestOnly()";
+
+        // ── (a) + (c): NO publicApi posture declared. Public test-only -> LOW (C2 unconfigured, precedes
+        //    C4); internal test-only -> MEDIUM (no publicApi hazard, falls through to C4). ───────────────
+        var unconfigured = await FixtureRunner_Run("TestOnlyPublicApi", new KnipConfig { Production = true });
+        var pubUnconfigured = Single(unconfigured, Pub);
+        var internalUnconfigured = Single(unconfigured, Int);
+        AssertShape(pubUnconfigured, internalUnconfigured);
+
+        Assert.Equal(Confidence.Low, pubUnconfigured.Confidence);      // (a) unconfigured-public  -> low
+        Assert.Equal(Confidence.Medium, internalUnconfigured.Confidence); // (c) internal          -> medium
+
+        // ── (b): publicApiProjects SET but matching a DIFFERENT project name (posture declared, this
+        //    project not listed) -> public test-only lands MEDIUM (C2 configured). Internal unchanged. ───
+        var configured = new KnipConfig { Production = true };
+        configured.Roots.PublicApiProjects.Add("SomeOther*");
+        var configuredResult = await FixtureRunner_Run("TestOnlyPublicApi", configured);
+        var pubConfigured = Single(configuredResult, Pub);
+        var internalConfigured = Single(configuredResult, Int);
+        AssertShape(pubConfigured, internalConfigured);
+
+        Assert.Equal(Confidence.Medium, pubConfigured.Confidence);       // (b) configured-public  -> medium
+        Assert.Equal(Confidence.Medium, internalConfigured.Confidence);  //     internal unchanged -> medium
+
+        // The FINDING SET is invariant across configs — ONLY the public finding's tier moves (a) low ↔ (b)
+        // medium. Recall over silence: `low` is a TIER, never suppression; both findings emit in both runs.
+        Assert.Equal(
+            unconfigured.Findings.Select(f => f.Symbol).OrderBy(s => s, StringComparer.Ordinal),
+            configuredResult.Findings.Select(f => f.Symbol).OrderBy(s => s, StringComparer.Ordinal));
     }
 
     // ── L15 left G-feat: serializationShaped/configBoundType/diPluginShaped hazard DETECTION needs
