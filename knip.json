@@ -72,8 +72,16 @@
     // Framework types are matched by NAME (offline, no NuGet needed). Conservative: it roots ONLY types
     // wearing one of these framework markers (and the marker interface they satisfy) — it does NOT
     // blanket-root every interface implementer, so unrelated dead types stay flagged.
-    "scanningDi": { "enabled": true }
+    "scanningDi": { "enabled": true },
 
-    // blazorParameter / serialization — OFF by default; enable if your solution uses them.
+    // blazorParameter — OFF by default (opt-in). Keeps alive Blazor component members set from .razor
+    // markup or the DI container, which the walker never sees assigned in C#. Roots properties carrying
+    // [Parameter] / [CascadingParameter] / [SupplyParameterFromQuery] / [EditorRequired] / [Inject]
+    // (matched by attribute NAME, offline). Conservative: roots ONLY the attribute-bearing member and
+    // its accessors — never blanket-roots a component's members, so plain siblings stay flagged. Enable
+    // it if your solution has Blazor components:
+    "blazorParameter": { "enabled": false }
+
+    // serialization — OFF by default; enable if your solution uses it.
   }
 }

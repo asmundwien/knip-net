@@ -1,3 +1,4 @@
+using Knip.Core.Configuration;
 using Xunit;
 
 namespace Knip.Core.Tests;
@@ -80,15 +81,21 @@ public sealed class CatHTests
         AssertExactly(await FindingsIn("CatH.H5"), "CatH.H5.PersonDto.InternalScratch");
     }
 
-    // H6 — CONFIRMED RED TODAY: [MyComponent.Title, MyComponent.Unbound, ParameterAttribute]
-    // (Title flagged; markup binding is invisible).
-    [Fact(Skip = "H6 — WS5: Blazor plugin ([Parameter] set from markup); mitigation today: entryPoints.attributes [\"Parameter\"]")]
-    [Trait("status", "moat")]
+    // H6 — PROMOTED (WS5 blazorParameter plugin, opt-in): [Parameter]/[CascadingParameter]/[Inject] members
+    // are set from .razor markup / DI -> the plugin roots them -> ALIVE. Runs WITH the plugin enabled.
+    [Fact]
+    [Trait("status", "contract")]
     public async Task H6_blazor_parameter_property_alive()
     {
-        // FUTURE: Title ALIVE (root via [Parameter] attribute -> ParameterAttribute alive via its
-        // signature edge); only the ordinary Unbound property is flagged.
-        AssertExactly(await FindingsIn("CatH.H6"), "CatH.H6.MyComponent.Unbound");
+        // The blazorParameter plugin is OFF by default; enable it explicitly for this contract.
+        var config = new KnipConfig { Plugins = { ["blazorParameter"] = new PluginSettings { Enabled = true } } };
+
+        // Title/Theme/Clock ALIVE (root via [Parameter]/[CascadingParameter]/[Inject]; each marker attribute
+        // alive via its signature edge). OVER-ROOTING GUARD: only the attribute-less Unbound property and the
+        // unrelated UnrelatedType stay flagged — the plugin roots ONLY attribute-bearing members.
+        AssertExactly(await FixtureRunner.FindingSymbolsInAsync(Category, "CatH.H6", config),
+            "CatH.H6.MyComponent.Unbound",
+            "CatH.H6.UnrelatedType");
     }
 
     // H7 — CONFIRMED RED TODAY: [MainViewModel.Greeting, MainViewModel.Save(), MainViewModel.Unbound]

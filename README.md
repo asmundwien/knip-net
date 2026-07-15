@@ -86,7 +86,12 @@ completion + validation). The JSON output (`--format json`, `formatVersion: 2`) 
   source: MediatR handlers (`IRequestHandler`/`INotificationHandler`), MassTransit consumers
   (`IConsumer<T>`), and AutoMapper `Profile` subclasses, matched by framework-type NAME (offline, no
   NuGet needed). It roots only types wearing one of those markers — it does not blanket-root every
-  interface implementer, so unrelated dead types stay flagged. Unknown plugin ids
+  interface implementer, so unrelated dead types stay flagged. **`blazorParameter` ships OFF**
+  (opt-in via `plugins.blazorParameter.enabled: true`) — keeps alive Blazor component members set from
+  `.razor` markup or the DI container: properties carrying `[Parameter]`, `[CascadingParameter]`,
+  `[SupplyParameterFromQuery]`, `[EditorRequired]`, or `[Inject]`, matched by attribute NAME (offline).
+  It roots only the attribute-bearing member and its accessors — never blanket-roots a component's
+  members, so plain sibling properties stay flagged. Unknown plugin ids
   and unknown per-plugin keys print a **visible warning** rather than silently no-opping, so a typo
   is caught. Run with `-v` to see each plugin's contribution counts and per-project wall-time.
 
