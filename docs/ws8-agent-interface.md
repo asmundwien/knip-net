@@ -162,7 +162,7 @@ label). The mapping:
 
 | `remediation`           | `FindingKind`(s)                                            | Owner  | Deletion unit (`span`) |
 |-------------------------|------------------------------------------------------------|--------|------------------------|
-| `deleteSymbol`          | `unusedType` `unusedMethod` `unusedProperty` `unusedField` `unusedEvent` | core   | member/type decl incl. attributes + XML-doc |
+| `deleteSymbol`          | `unusedType` `unusedMethod` `unusedProperty` `unusedField` `unusedEvent` `unusedEnumMember` | core   | member/type decl incl. attributes + XML-doc |
 | `removeFromInterface`   | (reserved) `unusedInterfaceMember`                         | WS-enum| the interface member decl; agent must also touch impls — flagged, see §7 Q5 |
 | `removeProjectReference`| `unusedProjectReference`  **(WS2 folds in here)**          | WS2    | the `<ProjectReference/>` element in the `.csproj` |
 | `removePackageReference`| (reserved) `unusedPackageReference`                       | WS3    | the `<PackageReference/>` element |

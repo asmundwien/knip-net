@@ -7,8 +7,8 @@ namespace Knip.Core.Tests;
 /// unsafe pointers, consts, expression-bodied members, local functions and compiler-generated symbols.
 /// Every row asserts the EXACT finding set for its scenario namespace (what IS flagged and, by
 /// exclusion, what is NOT). Every ALIVE assertion ships with a DEAD SIBLING in the same fixture, so a
-/// green assertion cannot be vacuous. All rows are Contract (must be GREEN) EXCEPT G6, which is a
-/// PRODUCT DECISION (enum members) captured as an observed-behavior test and skip-tagged.
+/// green assertion cannot be vacuous. All rows are Contract (must be GREEN) — G6 (enum members) was
+/// promoted 2026-07-15 by WS-enum from a skip-tagged decision to a member-level dead-code contract.
 /// </summary>
 [Collection(MsBuildCollection.Name)]
 public sealed class CatGTests
@@ -67,15 +67,22 @@ public sealed class CatGTests
         AssertExactly(await FindingsIn("CatG.G5"), "CatG.G5.Outer.UnusedNested");
     }
 
-    [Fact(Skip = "G6 — decision pending: enum member support")]
-    [Trait("status", "decision")]
-    public async Task G6_enum_members_decision()
+    [Fact] // G6: member-level enum dead-code (WS-enum). Unused members flagged; used members alive; whole-dead enum reports the TYPE only.
+    [Trait("status", "contract")]
+    public async Task G6_enum_members_reported()
     {
-        // OBSERVED BEHAVIOR (2026-07): the tool does NOT report dead enum members member-by-member.
-        // The enum type Color is kept alive (referenced), and its unused member Green is NEVER reported
-        // — the finding set for this scenario is EMPTY. Whether member-by-member enum reporting should
-        // exist is reserved for the human; this assertion pins today's behavior, not a "correct" answer.
-        AssertExactly(await FindingsIn("CatG.G6") /* empty: no enum members reported */);
+        // Promoted 2026-07-15 (WS-enum) from the observed-behavior decision (which pinned an EMPTY set).
+        // New CORRECT behavior — enum members are first-class graph nodes:
+        //   - Color.Green: unused sibling in a LIVE enum -> flagged (UnusedEnumMember). Color.Red is used
+        //     (Color.Red) -> ALIVE-by-omission (anti-vacuous live half of the same enum).
+        //   - Access.Execute: unused member of a live [Flags] enum -> flagged. Access.Read/Write are OR'd
+        //     into a live composite (their identifiers appear) -> ALIVE-by-omission (bitwise-use judgment).
+        //   - enum Unused: WHOLE enum is dead -> the TYPE is reported (outermost-only §3.7); its members
+        //     A/B are NOT reported (ALIVE-by-omission relative to the member-level rule).
+        AssertExactly(await FindingsIn("CatG.G6"),
+            "CatG.G6.Color.Green",
+            "CatG.G6.Access.Execute",
+            "CatG.G6.Unused");
     }
 
     [Fact] // G7: constructors / static ctors / finalizers NEVER reported (invariant #7).

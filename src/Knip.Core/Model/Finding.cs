@@ -8,6 +8,9 @@ public enum FindingKind
     UnusedField,
     UnusedEvent,
 
+    /// <summary>An individual enum member (named constant) never referenced, in an otherwise-live enum.</summary>
+    UnusedEnumMember,
+
     /// <summary>A &lt;ProjectReference&gt; whose referencing project touches no symbol in the referenced assembly.</summary>
     UnusedProjectReference,
 }
