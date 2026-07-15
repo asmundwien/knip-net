@@ -519,15 +519,22 @@ public sealed class DeadCodeAnalyzer
     /// dropping them, invariant #5).
     /// </summary>
     /// <remarks>
-    /// Per REVISED §3.8 (recall over silence): known-hazard packages are EMITTED, not dropped:
+    /// A declared package is graded against its full DEPENDENCY CLOSURE (the package plus every package it
+    /// transitively pulls, per the assets <c>dependencies</c> graph), NOT its own assemblies alone. This is
+    /// what keeps a used METAPACKAGE off the list: a package like <c>Swashbuckle.AspNetCore</c> declares an
+    /// empty own <c>compile</c> set but its DEPENDENCY packages deliver the used assemblies
+    /// (<c>…SwaggerGen.dll</c> etc.) — the closure sees those, so the reference is USED and neither flagged
+    /// nor mis-tagged build-only.
+    /// <para>Per REVISED §3.8 (recall over silence): known-hazard packages are EMITTED, not dropped:</para>
     /// <list type="bullet">
     ///   <item>analyzer / source-generator / build-only packages deliver NO referenceable compile
-    ///     assembly, so their effect (codegen, targets, roslyn analysis) is invisible to symbol edges —
-    ///     tagged <see cref="Hazard.BuildOnlyPackage"/> and demoted to low confidence;</item>
+    ///     assembly ANYWHERE in their closure, so their effect (codegen, targets, roslyn analysis) is
+    ///     invisible to symbol edges — tagged <see cref="Hazard.BuildOnlyPackage"/> and demoted to low
+    ///     confidence. A metapackage that IS used is NOT build-only: a used assembly lives in its closure;</item>
     ///   <item><c>PrivateAssets="all"</c> references are build/dev-only by intent — same tag/tier;</item>
     ///   <item>a package used only via a TRANSITIVE type, or an implicit <c>Using</c>, still shows up as
-    ///     unused when the project's own code touches none of its assemblies — emitted at C3 medium
-    ///     (package-ref) so the agent triages it through the verify loop.</item>
+    ///     unused when nothing in its closure is touched — emitted at C3 medium (package-ref) so the agent
+    ///     triages it through the verify loop.</item>
     /// </list>
     /// Requires restore data: <c>obj/project.assets.json</c> (preferred) or resolved metadata-reference
     /// paths. When neither yields a package map, the project's package references are left alone (no
@@ -552,15 +559,21 @@ public sealed class DeadCodeAnalyzer
                 // No mapping for this id (e.g. an analyzer package absent from the metadata-ref fallback,
                 // or a framework/meta package): we have no delivered-assembly evidence, so we cannot make
                 // an honest verdict — leave it alone (conservative, invariant #8 safe direction).
-                if (!packageAssemblies.TryGetValue(package.Id, out var delivered)) continue;
+                var closure = PackageAssemblyMap.Closure(packageAssemblies, package.Id);
+                if (closure is null) continue;
 
-                // Build-only / analyzer / PrivateAssets: no referenceable compile assembly OR explicitly
-                // dev-only. Its effect is invisible to symbol edges → EMIT with the BuildOnlyPackage
-                // hazard + (via ConfidenceModel) low confidence. Never dropped (REVISED §3.8).
-                var buildOnly = !delivered.DeliversCompileAssembly || package.PrivateAssetsAll;
+                // Grade against the DEPENDENCY CLOSURE (package + transitive deps), so a METAPACKAGE whose
+                // own compile set is empty but whose dependency packages deliver the used assemblies is
+                // seen as USED — not flagged, not mis-tagged build-only. A package is exercised iff any
+                // assembly in its closure is touched.
+                var usedInClosure = closure.Assemblies.Any(a => used.Contains(a));
+                if (usedInClosure) continue;
 
-                // A non-build-only package is exercised iff any of its delivered assemblies is touched.
-                if (!buildOnly && delivered.Assemblies.Any(a => used.Contains(a))) continue;
+                // Build-only / analyzer / PrivateAssets: NO referenceable compile assembly ANYWHERE in the
+                // closure OR explicitly dev-only. Its effect is invisible to symbol edges → EMIT with the
+                // BuildOnlyPackage hazard + (via ConfidenceModel) low confidence. A used metapackage never
+                // lands here (it was already continued above). Never dropped (REVISED §3.8).
+                var buildOnly = !closure.DeliversCompileAssembly || package.PrivateAssetsAll;
 
                 var csproj = project.FilePath ?? project.Name;
                 result.Findings.Add(new Finding(

@@ -9,10 +9,23 @@
     <!-- Not part of Knip.slnx; only ever restored + compiled at runtime by the WS3 test / MSBuildWorkspace. -->
   </PropertyGroup>
 
+  <!-- Swashbuckle's SwaggerGen/Swagger/SwaggerUI assemblies (delivered via the metapackage's
+       dependencies below) reference ASP.NET Core types, so the shared framework must be referenceable. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- USED: Program.Main serializes via Newtonsoft.Json.JsonConvert -> the delivered assembly
          (Newtonsoft.Json) appears in the project's external-assembly use set -> NOT flagged. -->
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+
+    <!-- METAPACKAGE (used): Swashbuckle.AspNetCore's OWN compile set is EMPTY — the functionality is
+         delivered by its DEPENDENCY packages (Swashbuckle.AspNetCore.SwaggerGen/Swagger/SwaggerUI).
+         Program.Main touches SwaggerGenOptions (from the SwaggerGen dependency assembly), so the
+         DEPENDENCY-CLOSURE assembly set is exercised -> NOT flagged (regression guard: a used
+         metapackage must not be reported unused nor mis-tagged buildOnlyPackage). -->
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
 
     <!-- UNUSED: declared but no symbol in this project ever touches the Humanizer assembly it delivers
          -> FLAGGED as UnusedPackageReference (remediation removePackageReference), medium confidence. -->

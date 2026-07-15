@@ -11,13 +11,20 @@ namespace Knip.Core.Tests;
 /// confidence, never dropped — so this fixture asserts the TIER, not absence.
 ///
 /// Fixture (tests/fixtures/WS3, one project, never in Knip.slnx):
-///   Newtonsoft.Json : Program.Main serializes via JsonConvert (touches the assembly)  -> NOT flagged
-///   Humanizer.Core  : declared, no symbol ever touches the Humanizer assembly          -> FLAGGED (medium)
-///   PolySharp       : analyzer / source-gen, PrivateAssets="all", no compile assembly  -> FLAGGED (low, hazard)
+///   Newtonsoft.Json       : Program.Main serializes via JsonConvert (touches the assembly)    -> NOT flagged
+///   Swashbuckle.AspNetCore: METAPACKAGE — empty own compile; its SwaggerGen DEPENDENCY delivers
+///                           the SwaggerGenOptions assembly Program.Main touches (closure used)  -> NOT flagged
+///   Humanizer.Core        : declared, no symbol ever touches the Humanizer assembly            -> FLAGGED (medium)
+///   PolySharp             : analyzer / source-gen, PrivateAssets="all", no compile assembly    -> FLAGGED (low, hazard)
+///
+/// The Swashbuckle case is the metapackage regression guard: WS3 grades a declared package against its
+/// DEPENDENCY CLOSURE (itself + transitive deps), so a metapackage whose own compile set is empty but
+/// whose dependency packages deliver a used assembly is NOT reported unused nor mis-tagged build-only.
 ///
 /// OFFLINE: WS3 reads obj/project.assets.json for the assembly→package map, so the fixture must be
 /// restored. <see cref="EnsureRestored"/> runs `dotnet restore` once (nuget.org-cached packages only —
-/// Newtonsoft.Json 13.0.3, Humanizer.Core 2.14.1, PolySharp 1.14.1, all offline-friendly).
+/// Newtonsoft.Json 13.0.3, Humanizer.Core 2.14.1, PolySharp 1.14.1, Swashbuckle.AspNetCore 7.2.0 + its
+/// SwaggerGen/Swagger/SwaggerUI deps, all offline-friendly).
 /// </summary>
 [Collection(MsBuildCollection.Name)]
 public sealed class WS3Tests
@@ -60,6 +67,16 @@ public sealed class WS3Tests
         var findings = await PackageReferenceFindingsAsync();
 
         Assert.DoesNotContain(findings, f => f.Symbol == "Newtonsoft.Json");
+    }
+
+    [Fact] // METAPACKAGE regression guard: a package with an EMPTY own compile set whose DEPENDENCY delivers
+    // the used assembly (Swashbuckle.AspNetCore -> ...SwaggerGen) is NOT flagged unused and NOT mis-tagged
+    // build-only. Graded against the dependency closure (assets `dependencies` graph).
+    public async Task Used_metapackage_is_not_reported()
+    {
+        var findings = await PackageReferenceFindingsAsync();
+
+        Assert.DoesNotContain(findings, f => f.Symbol == "Swashbuckle.AspNetCore");
     }
 
     [Fact] // HAZARD: analyzer / source-gen / PrivateAssets package is EMITTED with hazard + LOW confidence
