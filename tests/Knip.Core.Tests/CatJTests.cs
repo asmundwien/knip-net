@@ -63,12 +63,26 @@ public sealed class CatJTests
         Assert.Equal(string.Empty, r.StdOut.Trim());
     }
 
-    // ── J4: --format json parses; findings sorted project→file→line, stable across runs ───────
+    // ── J4: --format json is v2 shape; findings sorted project→file→line, stable across runs ──
+    // Updated to JSON v2 (WS8b): formatVersion 2 with tool/run/reliability/summary/findings; the
+    // finding's location moved under `location.{file,line}`. This is the sanctioned breaking change
+    // (§1: "we do NOT maintain both shapes"). The ordering + stability contract is unchanged.
     [Fact]
-    public void J4_json_parses_and_is_sorted_and_stable()
+    public void J4_json_is_v2_and_is_sorted_and_stable()
     {
         var first = RunCli("-s", WithFindingsSolution, "-f", "json");
         Assert.Equal(1, first.ExitCode);
+
+        using (var doc = JsonDocument.Parse(first.StdOut))
+        {
+            var root = doc.RootElement;
+            Assert.Equal(2, root.GetProperty("formatVersion").GetInt32());
+            Assert.Equal("Knip.NET", root.GetProperty("tool").GetProperty("name").GetString());
+            Assert.True(root.TryGetProperty("run", out _));
+            Assert.True(root.TryGetProperty("reliability", out _));
+            Assert.True(root.TryGetProperty("summary", out _));
+            Assert.True(root.TryGetProperty("findings", out _));
+        }
 
         var order1 = FindingKeys(first.StdOut);
         Assert.NotEmpty(order1);
@@ -81,7 +95,7 @@ public sealed class CatJTests
             .ToList();
         Assert.Equal(expected, order1);
 
-        // Stability: a second identical run yields the identical ordering.
+        // Stability: a second identical run yields the identical ordering AND identical ids.
         var second = RunCli("-s", WithFindingsSolution, "-f", "json");
         var order2 = FindingKeys(second.StdOut);
         Assert.Equal(order1, order2);
@@ -156,8 +170,8 @@ public sealed class CatJTests
         return doc.RootElement.GetProperty("findings").EnumerateArray()
             .Select(f => new FindingKey(
                 f.GetProperty("project").GetString() ?? "",
-                f.GetProperty("filePath").GetString() ?? "",
-                f.GetProperty("line").GetInt32()))
+                f.GetProperty("location").GetProperty("file").GetString() ?? "",
+                f.GetProperty("location").GetProperty("line").GetInt32()))
             .ToList();
     }
 

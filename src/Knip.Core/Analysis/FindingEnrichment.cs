@@ -1,0 +1,145 @@
+using System.Security.Cryptography;
+using System.Text;
+using Knip.Core.Model;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
+namespace Knip.Core.Analysis;
+
+/// <summary>
+/// Computes the published enrichment fields on a <see cref="Finding"/> (WS8 §3): the stable content-hash
+/// <c>id</c>, the deletion-unit <c>span</c>, and the <c>remediation</c> mapped from the finding kind.
+/// Confidence/hazard demotion is a separate task (WS8b-2); here confidence stays High and hazards empty.
+/// </summary>
+internal static class FindingEnrichment
+{
+    /// <summary>U+001F unit separator — cannot appear in any of the hashed display fields.</summary>
+    private const char Separator = '';
+
+    /// <summary>
+    /// Stable finding id (WS8 §3.2): "k1_" + first 10 lower-hex chars of SHA-256 over
+    /// kind ␟ symbol ␟ project [␟ referencedProject], UTF-8, no BOM. Content hash, NOT a graph key
+    /// (invariant #1); reproducible from published fields and independent of file/line.
+    /// </summary>
+    public static string ComputeId(FindingKind kind, string symbol, string project, string? referencedProject)
+    {
+        var builder = new StringBuilder();
+        builder.Append(CamelCase(kind));
+        builder.Append(Separator);
+        builder.Append(symbol);
+        builder.Append(Separator);
+        builder.Append(project);
+        if (referencedProject is not null)
+        {
+            builder.Append(Separator);
+            builder.Append(referencedProject);
+        }
+
+        byte[] hash;
+        using (var sha = SHA256.Create())
+            hash = sha.ComputeHash(new UTF8Encoding(encoderShouldEmitUTF8Identifier: false).GetBytes(builder.ToString()));
+
+        var hex = new StringBuilder("k1_", 13);
+        for (var i = 0; hex.Length < 13; i++)
+            hex.Append(hash[i].ToString("x2", System.Globalization.CultureInfo.InvariantCulture));
+        return hex.ToString(0, 13); // "k1_" + 10 hex chars
+    }
+
+    /// <summary>The serialized (camelCase) form of a kind — must match what the JSON reporter emits.</summary>
+    public static string CamelCase(FindingKind kind)
+    {
+        var name = kind.ToString();
+        return char.ToLowerInvariant(name[0]) + name.Substring(1);
+    }
+
+    public static Remediation RemediationFor(FindingKind kind) => kind switch
+    {
+        FindingKind.UnusedProjectReference => Remediation.RemoveProjectReference,
+        _ => Remediation.DeleteSymbol, // type/method/property/field/event
+    };
+
+    /// <summary>
+    /// The deletion unit (WS8 §3.3) for a symbol: from the earliest leading XML-doc / attribute trivia
+    /// through the declaration's closing brace / terminating semicolon. Field/event declarations report
+    /// the whole field-declaration statement (the variable's declarator sits inside it). Returns null
+    /// when no declaring C# syntax node can be located.
+    /// </summary>
+    public static SourceSpan? ComputeSpan(ISymbol symbol)
+    {
+        var reference = symbol.DeclaringSyntaxReferences.FirstOrDefault();
+        if (reference is null) return null;
+
+        var node = reference.GetSyntax();
+
+        // Fields/events declare a VariableDeclarator; the deletion unit is the enclosing
+        // (Base)FieldDeclaration which owns the attributes/modifiers and terminating ';'.
+        if (node is VariableDeclaratorSyntax or VariableDeclarationSyntax)
+        {
+            var owner = node.FirstAncestorOrSelf<BaseFieldDeclarationSyntax>();
+            if (owner is not null) node = owner;
+        }
+
+        var tree = node.SyntaxTree;
+        var text = tree.GetText();
+
+        // Full span INCLUDING leading trivia that belongs to this declaration (XML-doc + attributes).
+        // node.FullSpan swallows ALL leading trivia; trim back to the start of the doc-comment/attribute
+        // run so an unrelated preceding blank line or a comment on the previous member is not consumed.
+        var start = StartIncludingOwnedTrivia(node);
+        var end = node.Span.End; // node.Span excludes trailing trivia; end at the last token.
+
+        var startLine = text.Lines.GetLinePosition(start);
+        var endLine = text.Lines.GetLinePosition(end);
+
+        return new SourceSpan(
+            tree.FilePath,
+            new SourcePosition(startLine.Line + 1, startLine.Character + 1),
+            new SourcePosition(endLine.Line + 1, endLine.Character + 1));
+    }
+
+    /// <summary>
+    /// The offset at which the deletion unit starts: the first character of the earliest leading
+    /// XML-doc comment or attribute-list trivia directly owned by the declaration, else the first token.
+    /// Skips whitespace/end-of-line trivia and does not reach past a blank line or a preceding member's
+    /// trailing comment.
+    /// </summary>
+    private static int StartIncludingOwnedTrivia(SyntaxNode node)
+    {
+        var leading = node.GetLeadingTrivia();
+        var firstToken = node.GetFirstToken();
+
+        // Walk from the LAST leading trivia backwards; keep doc-comments and (whitespace/EOL that
+        // immediately precedes the declaration's own trivia). Stop at the first blank line or ordinary
+        // comment that belongs to the previous member.
+        int startOffset = firstToken.SpanStart;
+        for (var i = leading.Count - 1; i >= 0; i--)
+        {
+            var trivia = leading[i];
+            switch (trivia.Kind())
+            {
+                case SyntaxKind.SingleLineDocumentationCommentTrivia:
+                case SyntaxKind.MultiLineDocumentationCommentTrivia:
+                    // XML-doc belongs to THIS declaration; include it and any whitespace before it.
+                    startOffset = trivia.FullSpan.Start;
+                    break;
+                case SyntaxKind.WhitespaceTrivia:
+                case SyntaxKind.EndOfLineTrivia:
+                    // Interior whitespace/EOL between owned trivia and the token — keep scanning; it is
+                    // only kept if a doc-comment further up claims it (startOffset moves there).
+                    continue;
+                default:
+                    // A regular comment, #region, blank-line boundary, etc.: belongs to prior context.
+                    // Stop; do not swallow it.
+                    i = -1;
+                    break;
+            }
+        }
+
+        // Attribute lists are CHILD nodes of the declaration (not leading trivia): node.Span already
+        // starts at the first attribute's '[' when present, and firstToken is that '['. So the
+        // attribute run is naturally inside [firstToken.SpanStart .. node.Span.End]. Only the doc-comment
+        // (which IS leading trivia) needs the walk above. Take the earliest of the two.
+        return Math.Min(startOffset, node.Span.Start);
+    }
+}

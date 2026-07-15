@@ -21,11 +21,11 @@ public static class KnipEngine
         using var workspace = MSBuildWorkspace.Create();
         workspace.SkipUnrecognizedProjects = true;
 
-        var loadDiagnostics = new List<string>();
+        var loadDiagnostics = new List<(WorkspaceDiagnosticKind Kind, string Message)>();
         workspace.WorkspaceFailed += (_, e) =>
         {
             if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
-                loadDiagnostics.Add(e.Diagnostic.Message);
+                loadDiagnostics.Add((e.Diagnostic.Kind, e.Diagnostic.Message));
         };
 
         progress?.Report($"Loading {Path.GetFileName(targetPath)}");
@@ -36,8 +36,36 @@ public static class KnipEngine
 
         var analyzer = new DeadCodeAnalyzer(config);
         var result = await analyzer.AnalyzeAsync(solution, progress, ct);
-        result.LoadDiagnostics.AddRange(loadDiagnostics);
+
+        foreach (var (_, message) in loadDiagnostics)
+        {
+            result.LoadDiagnostics.Add(message);
+            // Workspace failures are genuine load failures — restore/SDK/project problems (invariant #6:
+            // stay LOUD). Attributed into the reliability block as restore failures; degraded => true.
+            result.Reliability.RestoreFailures.Add(message);
+        }
+
+        BuildStructuredDiagnostics(result);
         return result;
+    }
+
+    /// <summary>
+    /// Mirror the human-readable <see cref="AnalysisResult.LoadDiagnostics"/> into the structured
+    /// reliability channel (WS8 §1.1). Workspace/restore failures are error-severity (they drive
+    /// <see cref="Reliability.Degraded"/>); everything else is a warning.
+    /// </summary>
+    private static void BuildStructuredDiagnostics(AnalysisResult result)
+    {
+        var restoreFailures = new HashSet<string>(result.Reliability.RestoreFailures, StringComparer.Ordinal);
+        foreach (var message in result.LoadDiagnostics)
+        {
+            var isRestoreFailure = restoreFailures.Contains(message);
+            var severity = isRestoreFailure ? LoadSeverity.Error : LoadSeverity.Warning;
+            var code = isRestoreFailure ? "loadFailure"
+                : message.Contains("unresolved types") ? "unresolvedTypes"
+                : "loadWarning";
+            result.Reliability.LoadDiagnostics.Add(new LoadDiagnostic(severity, code, message));
+        }
     }
 
     private static bool IsProjectFile(string path) =>

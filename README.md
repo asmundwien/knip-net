@@ -57,7 +57,10 @@ GitHub/Azure DevOps. A non-empty result exits `1` to fail the build (use `--no-f
 ## Configuration (`knip.json`)
 
 Discovered automatically (nearest `knip.json` up the tree) or passed with `--config`.
-See [`knip.json`](./knip.json) for a fully-annotated example. Key knobs:
+See [`knip.json`](./knip.json) for a fully-annotated example (it references
+[`schemas/knip.config.schema.json`](./schemas/knip.config.schema.json) via `$schema`, so editors give
+completion + validation). The JSON output (`--format json`, `formatVersion: 2`) is described by
+[`schemas/knip.output.schema.json`](./schemas/knip.output.schema.json). Key knobs:
 
 - `entryPoints` — attributes / base types / name patterns / symbol names that seed reachability.
 - `roots.treatAllPublicAsUsed` — for **library solutions** consumed by other repos, treats the
