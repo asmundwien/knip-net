@@ -131,7 +131,18 @@ completion + validation). The JSON output (`--format json`, `formatVersion: 2`) 
   `[DataMember]`). It roots only a serialized type's own data members — never blanket-roots every
   property — so non-serialized types' plain members and unrelated dead types stay flagged. Optional
   `plugins.serialization.namespaces` glob list also roots the data members of types in matching
-  namespaces. Unknown plugin ids
+  namespaces. **`aspnetcore` ships OFF** (opt-in via `plugins.aspnetcore.enabled: true`) — keeps alive
+  ASP.NET Core convention-invoked members the framework dispatches by reflection: `app.UseMiddleware<T>()`
+  keeps the type alive but its `Invoke`/`InvokeAsync(HttpContext)` is called reflectively, so the entry
+  method + constructor + fields (`_next`/`_logger`) + private helpers would otherwise cascade to false
+  positives. The plugin roots the convention entry members — a middleware's `Invoke`/`InvokeAsync` +
+  constructors (via `UseMiddleware<T>()`/`UseMiddleware(typeof(T))` and `IMiddleware`), an MVC/Razor
+  filter's implementations of `IActionFilter`/`IAsyncActionFilter`/`IResultFilter`/`IAsyncResultFilter`/
+  `IExceptionFilter`/`IAsyncExceptionFilter`/`IAuthorizationFilter`/`IAsyncAuthorizationFilter`/
+  `IPageFilter`/`IAsyncPageFilter`, and an `IStartupFilter`'s `Configure` — matched by framework-type NAME
+  (offline, no NuGet needed), so their fields and helpers gain liveness via normal edges. It roots only the
+  convention entry members — never blanket-roots a middleware/filter's world — so an unrelated dead method
+  the entry point never calls stays flagged. Unknown plugin ids
   and unknown per-plugin keys print a **visible warning** rather than silently no-opping, so a typo
   is caught. Run with `-v` to see each plugin's contribution counts and per-project wall-time.
 

@@ -48,6 +48,10 @@ public static class PluginRegistry
         // 'namespaces' glob list roots DTO members by namespace.
         new("serialization", defaultEnabled: false, () => new SerializationPlugin(),
             SerializationPlugin.NamespacesSettingKey),
+        // aspnetcore — opt-in (default OFF): roots ASP.NET Core convention-invoked entry members the
+        // framework dispatches reflectively — middleware Invoke/InvokeAsync (+ ctors), MVC/Razor filter
+        // interface methods, IStartupFilter.Configure — so their fields/helpers stop cascading dead.
+        new("aspnetcore", defaultEnabled: false, () => new AspNetCorePlugin()),
     ];
 
     /// <summary>The ids that run under a default (<c>new KnipConfig()</c>) configuration.</summary>

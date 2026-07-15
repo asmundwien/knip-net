@@ -42,6 +42,11 @@ public sealed class PluginsTests
         Plugins = { ["serialization"] = new PluginSettings { Enabled = enabled } },
     };
 
+    private static KnipConfig WithAspNetCore(bool enabled) => new()
+    {
+        Plugins = { ["aspnetcore"] = new PluginSettings { Enabled = enabled } },
+    };
+
     private static Task<IReadOnlySet<string>> FindingsIn(string ns, KnipConfig config) =>
         FixtureRunner.FindingSymbolsInAsync(Category, ns, config);
 
@@ -191,6 +196,78 @@ public sealed class PluginsTests
         // 'namespaces' is a known key → no unknown-key warning.
         var result = await FixtureRunner.RunAsync(Category, config);
         Assert.DoesNotContain(result.LoadDiagnostics, d => d.Contains("plugins.serialization.namespaces"));
+    }
+
+    // ── aspnetcore differential + over-rooting guard: middleware Invoke (UseMiddleware<T>) ──────────
+    [Fact]
+    public async Task AspNetCore_middleware_invoke_and_cascade_kept_alive()
+    {
+        const string ns = "CatH.AspNetMiddleware";
+        // Plugin OFF (also the DEFAULT — it is opt-in): the framework calls Invoke reflectively, so Invoke +
+        // its ctor + fields + private helper are all false positives cascading dead → flagged.
+        var off = await FindingsIn(ns, WithAspNetCore(false));
+        Assert.Contains(ns + ".AuditLoggingMiddleware.Invoke(CatH.AspNetMiddleware.HttpContext)", off);
+        Assert.Contains(ns + ".AuditLoggingMiddleware.LeggTilRequestMetadata(CatH.AspNetMiddleware.HttpContext)", off);
+        Assert.Contains(ns + ".AuditLoggingMiddleware._next", off);
+        Assert.Contains(ns + ".AuditLoggingMiddleware._logger", off);
+
+        // Plugin ON: the plugin roots the convention entry (Invoke + ctors) → Invoke, ctor, _next/_logger and
+        // the private helper are alive → NOT reported…
+        var on = await FindingsIn(ns, WithAspNetCore(true));
+        Assert.DoesNotContain(ns + ".AuditLoggingMiddleware.Invoke(CatH.AspNetMiddleware.HttpContext)", on);
+        Assert.DoesNotContain(ns + ".AuditLoggingMiddleware.LeggTilRequestMetadata(CatH.AspNetMiddleware.HttpContext)", on);
+        Assert.DoesNotContain(ns + ".AuditLoggingMiddleware._next", on);
+        Assert.DoesNotContain(ns + ".AuditLoggingMiddleware._logger", on);
+        // …but the unrelated dead method STAYS FLAGGED (over-rooting guard: the plugin roots ONLY the
+        // convention entry members, never a method Invoke doesn't call).
+        Assert.Contains(ns + ".AuditLoggingMiddleware.NeverInvokedByPipeline()", on);
+    }
+
+    // ── aspnetcore differential + over-rooting guard: MVC filter interface method ───────────────────
+    [Fact]
+    public async Task AspNetCore_filter_method_and_helper_kept_alive()
+    {
+        const string ns = "CatH.AspNetFilter";
+        const string helper = ns + ".AuditFilter.LeggTilTjenestenavn(CatH.AspNetFilter.ActionExecutingContext)";
+
+        // Plugin OFF (also the DEFAULT): the framework dispatches OnActionExecutingAsync reflectively, so the
+        // concrete impl gains no incoming edge — the private helper it calls CASCADES to a false positive →
+        // flagged. (The impl itself is suppressed by the interface-implementation rule; the visible cascade is
+        // the helper, which is exactly the FP class this plugin kills.)
+        var off = await FindingsIn(ns, WithAspNetCore(false));
+        Assert.Contains(helper, off);
+
+        // Plugin ON: the plugin roots the filter's implementation of the interface methods → the helper it
+        // calls gains liveness → NOT reported…
+        var on = await FindingsIn(ns, WithAspNetCore(true));
+        Assert.DoesNotContain(helper, on);
+        // …but the unrelated dead method STAYS FLAGGED (over-rooting guard: only the interface-method
+        // implementations are rooted, not the whole type).
+        Assert.Contains(ns + ".AuditFilter.NeverDispatched()", on);
+    }
+
+    // aspnetcore is OFF by default (opt-in): a default config leaves the middleware Invoke flagged.
+    [Fact]
+    public async Task AspNetCore_is_off_by_default()
+    {
+        Assert.DoesNotContain("aspnetcore", PluginRegistry.DefaultEnabledIds);
+        Assert.False(new KnipConfig().IsPluginEnabled(Descriptor("aspnetcore")),
+            "aspnetcore must default OFF (opt-in)");
+
+        var byDefault = await FindingsIn("CatH.AspNetMiddleware", new KnipConfig());
+        Assert.Contains("CatH.AspNetMiddleware.AuditLoggingMiddleware.Invoke(CatH.AspNetMiddleware.HttpContext)", byDefault);
+    }
+
+    // A typo in the aspnetcore block surfaces a visible unknown-key warning (never silently no-ops).
+    [Fact]
+    public async Task UnknownAspNetCoreKey_emits_visible_warning()
+    {
+        var settings = new PluginSettings { Enabled = true };
+        settings.Extra["enabldd"] = System.Text.Json.JsonSerializer.SerializeToElement(true);
+        var config = new KnipConfig { Plugins = { ["aspnetcore"] = settings } };
+
+        var result = await FixtureRunner.RunAsync(Category, config);
+        Assert.Contains(result.LoadDiagnostics, d => d.Contains("plugins.aspnetcore.enabldd"));
     }
 
     // A typo in the blazorParameter block surfaces a visible unknown-key warning (never silently no-ops).
