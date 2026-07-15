@@ -71,14 +71,22 @@ public sealed class CatHTests
         AssertExactly(await FindingsIn("CatH.H4"), "CatH.H4.UnrelatedType");
     }
 
-    // H5 — CONFIRMED RED TODAY: [PersonDto.InternalScratch, PersonDto.Name] (Name flagged;
-    // serializer reflection is invisible).
-    [Fact(Skip = "H5 — WS5: serializer plugin (JSON reflection over DTO props); mitigation today: ignore.namespaces [\"CatH.H5.Dto*\"] / ignore.symbols")]
-    [Trait("status", "moat")]
+    // H5 — PROMOTED (WS5 serialization plugin, opt-in): PersonDto is passed to Serialize -> the plugin
+    // roots its public data members -> PersonDto.Name ALIVE. Runs WITH the plugin enabled.
+    [Fact]
+    [Trait("status", "contract")]
     public async Task H5_serialized_dto_property_alive()
     {
-        // FUTURE: PersonDto.Name ALIVE (touched only by the serializer); InternalScratch flagged.
-        AssertExactly(await FindingsIn("CatH.H5"), "CatH.H5.PersonDto.InternalScratch");
+        // The serialization plugin is OFF by default; enable it explicitly for this contract.
+        var config = new KnipConfig { Plugins = { ["serialization"] = new PluginSettings { Enabled = true } } };
+
+        // PersonDto.Name ALIVE (root via the serialize call over PersonDto). OVER-ROOTING GUARD (two decoys):
+        //   • NonDto.PlainDead — a plain member on a type that is NEVER serialized -> STAYS flagged (the
+        //     plugin roots serialized types' members, not every property in the solution).
+        //   • UnrelatedType — an unrelated dead type -> STAYS flagged (never rooted).
+        AssertExactly(await FixtureRunner.FindingSymbolsInAsync(Category, "CatH.H5", config),
+            "CatH.H5.NonDto.PlainDead",
+            "CatH.H5.UnrelatedType");
     }
 
     // H6 — PROMOTED (WS5 blazorParameter plugin, opt-in): [Parameter]/[CascadingParameter]/[Inject] members

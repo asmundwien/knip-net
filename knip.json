@@ -80,8 +80,20 @@
     // (matched by attribute NAME, offline). Conservative: roots ONLY the attribute-bearing member and
     // its accessors — never blanket-roots a component's members, so plain siblings stay flagged. Enable
     // it if your solution has Blazor components:
-    "blazorParameter": { "enabled": false }
+    "blazorParameter": { "enabled": false },
 
-    // serialization — OFF by default; enable if your solution uses it.
+    // serialization — OFF by default (opt-in). Keeps alive DTO data members touched only by a JSON
+    // serializer (reflection over the type's properties/fields), which the walker never sees named in
+    // source. Roots the public get/set PROPERTIES and public FIELDS of a DEMONSTRABLY-serialized type:
+    //   • the type argument or the serialized value of a serialize/deserialize call —
+    //     JsonSerializer.Serialize<T>/Deserialize<T> (System.Text.Json),
+    //     JsonConvert.SerializeObject/DeserializeObject<T> (Newtonsoft), matched by method NAME offline;
+    //   • plus any member wearing [JsonPropertyName] / [JsonProperty] / [DataMember] (matched by name).
+    // Conservative: roots ONLY serialized types' own data members — never blanket-roots every property,
+    // so non-serialized types' plain members and unrelated dead types stay flagged. Optional
+    // "namespaces" glob list also roots the data members of types in matching namespaces (a "these are
+    // DTOs" escape hatch for serialization the plugin cannot statically see). Enable it if your solution
+    // serializes DTOs:
+    "serialization": { "enabled": false, "namespaces": [] }
   }
 }

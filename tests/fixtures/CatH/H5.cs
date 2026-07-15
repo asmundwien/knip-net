@@ -2,13 +2,15 @@ using System;
 
 namespace CatH.H5;
 
-// H5 (G-moat): a DTO property read/written ONLY by a JSON serializer (via reflection over its
-// properties) is invisible to the walker — no source ever reads dto.Name — so the property is
-// flagged dead even though the DTO type itself is alive (passed to Serialize).
-// CORRECT eventual behavior (WS5 serializer plugin): serialized DTO properties should be ALIVE.
-// Mitigation today: ignore.symbols on DTO namespaces, e.g. ignore.namespaces ["CatH.H5.Dto*"].
+// H5 (PROMOTED — WS5 serialization plugin): a DTO property read/written ONLY by a JSON serializer (via
+// reflection over its properties) is invisible to the walker — no source ever reads dto.Name — so the
+// property is flagged dead even though the DTO type itself is alive (passed to Serialize). The
+// serialization plugin roots the public data members of a DEMONSTRABLY-serialized type, keeping them
+// alive. Over-rooting guard (two decoys): a member on a NON-serialized type, and an unrelated dead type,
+// STAY flagged — the plugin roots only the serialized type's own data members, never the whole solution.
 
-// Local stand-in for a serializer shape: accepts an object, reflects over its properties. No framework.
+// Local stand-in for a serializer shape: accepts an object, reflects over its properties. No framework
+// (offline; the plugin matches the method NAME "Serialize", not a NuGet type — invariant #9).
 public static class JsonSerializer
 {
     public static string Serialize(object value)
@@ -22,16 +24,31 @@ public sealed class Endpoint
 {
     public void ConfigureServices()
     {
-        var dto = new PersonDto(); // DTO TYPE referenced -> alive; its PROPERTY is not
+        var dto = new PersonDto();     // DTO TYPE referenced -> alive; its PROPERTY is not read in source
         _ = JsonSerializer.Serialize(dto);
+
+        _ = new NonDto();              // NonDto TYPE referenced -> alive; but it is NEVER serialized, so
+                                       // its PlainDead property is not rooted by the plugin (decoy #1).
     }
 }
 
 public sealed class PersonDto
 {
-    // ALIVE (future): touched only by the serializer's reflection, never read in source.
+    // ALIVE (plugin): PersonDto is serialized, so its public data members are rooted — touched only by
+    // the serializer's reflection, never read in source.
     public string Name { get; set; } = "";
+}
 
-    // DEAD SIBLING (honest): a property no serializer and no code ever touches -> flagged.
-    public string InternalScratch { get; set; } = "";
+// DECOY #1 — non-serialized plain dead member: NonDto is never serialized (never passed to Serialize),
+// so the plugin does NOT root its members. This plain unread property STAYS flagged (over-rooting guard:
+// the plugin roots serialized types' members, not every property in the solution).
+public sealed class NonDto
+{
+    public string PlainDead { get; set; } = "";
+}
+
+// DECOY #2 — unrelated dead type: never referenced anywhere. STAYS flagged (the plugin roots data
+// members of serialized types, never whole unrelated types).
+public sealed class UnrelatedType
+{
 }
