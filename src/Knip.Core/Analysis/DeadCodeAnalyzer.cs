@@ -128,7 +128,9 @@ public sealed class DeadCodeAnalyzer
 
         var reachable = Traverse(state);
         BuildFindings(state, reachable, result, ivtToNonSolution);
-        BuildProjectReferenceFindings(solution, projects, state, result);
+        BuildProjectReferenceFindings(projects, state, result);
+        BuildPackageReferenceFindings(projects, state, result);
+        SortFindings(result);
 
         if (state.UnresolvedTypeReferences > 0)
             result.LoadDiagnostics.Insert(0,
@@ -315,7 +317,7 @@ public sealed class DeadCodeAnalyzer
     /// is left alone. When unsure we prefer a false negative (don't flag) over a false positive.
     /// </remarks>
     private void BuildProjectReferenceFindings(
-        Solution solution, List<Project> projects, GraphState state, AnalysisResult result)
+        List<Project> projects, GraphState state, AnalysisResult result)
     {
         // Only reason about references whose target is a project we actually analyzed; otherwise we
         // have no usage data for it and could flag a genuinely-used reference.
@@ -360,7 +362,81 @@ public sealed class DeadCodeAnalyzer
                 });
             }
         }
+    }
 
+    /// <summary>
+    /// Emit a <see cref="FindingKind.UnusedPackageReference"/> for each declared &lt;PackageReference&gt;
+    /// none of whose delivered assemblies appears in the referencing project's EXTERNAL-assembly use set
+    /// (<see cref="GraphState.UsedExternalAssemblies"/> — the non-solution edges the walker records before
+    /// dropping them, invariant #5).
+    /// </summary>
+    /// <remarks>
+    /// Per REVISED §3.8 (recall over silence): known-hazard packages are EMITTED, not dropped:
+    /// <list type="bullet">
+    ///   <item>analyzer / source-generator / build-only packages deliver NO referenceable compile
+    ///     assembly, so their effect (codegen, targets, roslyn analysis) is invisible to symbol edges —
+    ///     tagged <see cref="Hazard.BuildOnlyPackage"/> and demoted to low confidence;</item>
+    ///   <item><c>PrivateAssets="all"</c> references are build/dev-only by intent — same tag/tier;</item>
+    ///   <item>a package used only via a TRANSITIVE type, or an implicit <c>Using</c>, still shows up as
+    ///     unused when the project's own code touches none of its assemblies — emitted at C3 medium
+    ///     (package-ref) so the agent triages it through the verify loop.</item>
+    /// </list>
+    /// Requires restore data: <c>obj/project.assets.json</c> (preferred) or resolved metadata-reference
+    /// paths. When neither yields a package map, the project's package references are left alone (no
+    /// restore data = no verdict) — conservative, and reported as an absence, never a false flag.
+    /// </remarks>
+    private void BuildPackageReferenceFindings(List<Project> projects, GraphState state, AnalysisResult result)
+    {
+        foreach (var project in projects)
+        {
+            var declared = PackageReferenceReader.Read(project.FilePath ?? "");
+            if (declared.Count == 0) continue;
+
+            var packageAssemblies = PackageAssemblyMap.Build(project);
+            if (packageAssemblies.Count == 0) continue; // no restore data → no verdict (conservative)
+
+            var used = state.UsedExternalAssemblies.TryGetValue(project.AssemblyName, out var set)
+                ? set
+                : (ISet<string>)System.Collections.Immutable.ImmutableHashSet<string>.Empty;
+
+            foreach (var package in declared)
+            {
+                // No mapping for this id (e.g. an analyzer package absent from the metadata-ref fallback,
+                // or a framework/meta package): we have no delivered-assembly evidence, so we cannot make
+                // an honest verdict — leave it alone (conservative, invariant #8 safe direction).
+                if (!packageAssemblies.TryGetValue(package.Id, out var delivered)) continue;
+
+                // Build-only / analyzer / PrivateAssets: no referenceable compile assembly OR explicitly
+                // dev-only. Its effect is invisible to symbol edges → EMIT with the BuildOnlyPackage
+                // hazard + (via ConfidenceModel) low confidence. Never dropped (REVISED §3.8).
+                var buildOnly = !delivered.DeliversCompileAssembly || package.PrivateAssetsAll;
+
+                // A non-build-only package is exercised iff any of its delivered assemblies is touched.
+                if (!buildOnly && delivered.Assemblies.Any(a => used.Contains(a))) continue;
+
+                var csproj = project.FilePath ?? project.Name;
+                result.Findings.Add(new Finding(
+                    FindingKind.UnusedPackageReference,
+                    package.Id,
+                    "package reference",
+                    "",
+                    project.Name,
+                    csproj,
+                    0,
+                    0)
+                {
+                    Id = FindingEnrichment.ComputeId(
+                        FindingKind.UnusedPackageReference, package.Id, project.Name, null),
+                    Span = package.Span,
+                    Remediation = Model.Remediation.RemovePackageReference,
+                    Hazards = buildOnly ? [Model.Hazard.BuildOnlyPackage] : [],
+                });
+            }
+        }
+    }
+
+    private static void SortFindings(AnalysisResult result)
+    {
         result.Findings.Sort((a, b) =>
         {
             var byProject = string.CompareOrdinal(a.Project, b.Project);

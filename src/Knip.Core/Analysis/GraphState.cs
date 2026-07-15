@@ -36,6 +36,16 @@ internal sealed class GraphState
     /// </summary>
     public Dictionary<string, HashSet<string>> UsedAssemblies { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Per source-project usage of EXTERNAL (non-solution) assemblies: source assembly NAME → the set
+    /// of external assembly NAMEs (BCL / NuGet) whose symbols that project's code touches. Mirrors
+    /// <see cref="UsedAssemblies"/> but for the NON-solution branch that <see cref="AddEdge"/> otherwise
+    /// drops (invariant #5: those symbols are NOT graph nodes — only the assembly NAME is recorded, as a
+    /// string, invariant #1). Consumed to detect unused &lt;PackageReference&gt;s: a package whose
+    /// delivered assemblies never appear here is never touched by any symbol.
+    /// </summary>
+    public Dictionary<string, HashSet<string>> UsedExternalAssemblies { get; } = new(StringComparer.Ordinal);
+
     public void AddEdge(string source, string target)
     {
         if (!Edges.TryGetValue(source, out var set))
@@ -49,5 +59,18 @@ internal sealed class GraphState
         if (!UsedAssemblies.TryGetValue(sourceAssembly, out var set))
             UsedAssemblies[sourceAssembly] = set = new HashSet<string>(StringComparer.Ordinal);
         set.Add(targetAssembly);
+    }
+
+    /// <summary>
+    /// Record that <paramref name="sourceAssembly"/>'s code references a symbol OWNED by the external
+    /// (non-solution) assembly <paramref name="externalAssembly"/>. The external symbol is NOT added to
+    /// the graph (invariant #5) — only the assembly name is retained (invariant #1) to reason about
+    /// unused &lt;PackageReference&gt;s.
+    /// </summary>
+    public void RecordExternalAssemblyUse(string sourceAssembly, string externalAssembly)
+    {
+        if (!UsedExternalAssemblies.TryGetValue(sourceAssembly, out var set))
+            UsedExternalAssemblies[sourceAssembly] = set = new HashSet<string>(StringComparer.Ordinal);
+        set.Add(externalAssembly);
     }
 }

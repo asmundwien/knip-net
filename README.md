@@ -13,8 +13,8 @@ an agent that consumes Knip.NET, read [`AGENTS.md`](./AGENTS.md) for the canonic
 dogfood validation.)*
 
 > Status: **working prototype.** Flagship feature (dead code) is implemented and validated on real
-> solutions. Unused `<ProjectReference>` detection is implemented; unused NuGet packages are on the
-> roadmap below.
+> solutions. Unused `<ProjectReference>` and unused `<PackageReference>` (NuGet) detection are both
+> implemented.
 
 ## How it works
 
@@ -143,7 +143,14 @@ against both Roslyn 4.x and 5.x; only build/loading glue differs per framework.
    referenced project's assembly (`UnusedProjectReference` finding). Conservative: references with any
    cross-project symbol edge (including `[InternalsVisibleTo]` usage) are kept; runtime-only/transitive
    dependencies with no symbol edge may still be flagged, so triage before removing.
-3. **Unused `<PackageReference>`s** — no symbol from a package's namespaces referenced.
+3. ✅ **Unused `<PackageReference>`s** — a package none of whose delivered assemblies is touched by any
+   symbol in the referencing project (`UnusedPackageReference` finding, remediation `removePackageReference`).
+   The assembly→package map comes from `obj/project.assets.json` (falling back to resolved metadata-reference
+   paths), so the project must be restored. Per the recall-over-silence policy, analyzer / source-generator /
+   build-only (`PrivateAssets="all"`) packages — whose effect is invisible to symbol edges — are **emitted**
+   with a `buildOnlyPackage` hazard at **low** confidence, never dropped; a normal unused package-ref lands at
+   **medium** (transitive-only / implicit-`Using` usage can still make a genuinely-needed package look unused,
+   so triage through the verify loop before removing).
 4. Framework plugins (ASP.NET Core minimal APIs, EF Core, MassTransit, source generators),
    incremental/cached index, `--baseline` for gating only new findings.
 

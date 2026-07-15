@@ -13,6 +13,13 @@ public enum FindingKind
 
     /// <summary>A &lt;ProjectReference&gt; whose referencing project touches no symbol in the referenced assembly.</summary>
     UnusedProjectReference,
+
+    /// <summary>
+    /// A &lt;PackageReference&gt; none of whose delivered assemblies are touched by any symbol in the
+    /// referencing project. Build-only / analyzer / transitive-only / implicit-Using packages are still
+    /// EMITTED (REVISED §3.8) with a hazard + low confidence, never dropped.
+    /// </summary>
+    UnusedPackageReference,
 }
 
 /// <summary>
@@ -46,6 +53,14 @@ public enum Hazard
 
     /// <summary>The declaring project carries [InternalsVisibleTo] a non-solution assembly.</summary>
     InternalsVisibleTo,
+
+    /// <summary>
+    /// (WS3) A &lt;PackageReference&gt; that delivers NO referenceable compile-time assembly — an
+    /// analyzer / source-generator / build-only (typically <c>PrivateAssets="all"</c>) package. Its
+    /// effect (codegen, MSBuild targets, roslyn analysis) is invisible to symbol edges, so "unused" is
+    /// unreliable: EMITTED (never dropped) but demoted to low confidence.
+    /// </summary>
+    BuildOnlyPackage,
 }
 
 /// <summary>
@@ -63,7 +78,7 @@ public enum Remediation
     /// <summary>(reserved, WS-enum) remove an unused interface member — a multi-file edit.</summary>
     RemoveFromInterface,
 
-    /// <summary>(reserved, WS3) remove the &lt;PackageReference&gt; element.</summary>
+    /// <summary>(WS3) remove the &lt;PackageReference&gt; element from the .csproj.</summary>
     RemovePackageReference,
 
     /// <summary>(reserved, WS7) delete the production symbol plus its test referrers.</summary>

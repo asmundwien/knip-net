@@ -56,6 +56,7 @@ internal static class FindingEnrichment
     public static Remediation RemediationFor(FindingKind kind) => kind switch
     {
         FindingKind.UnusedProjectReference => Remediation.RemoveProjectReference,
+        FindingKind.UnusedPackageReference => Remediation.RemovePackageReference,
         _ => Remediation.DeleteSymbol, // type/method/property/field/event
     };
 

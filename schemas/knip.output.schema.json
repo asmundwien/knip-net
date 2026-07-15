@@ -130,7 +130,8 @@
           "type": "string",
           "enum": [
             "unusedType", "unusedMethod", "unusedProperty", "unusedField",
-            "unusedEvent", "unusedProjectReference"
+            "unusedEvent", "unusedEnumMember", "unusedProjectReference",
+            "unusedPackageReference"
           ]
         },
         "symbol": { "type": "string" },
@@ -144,7 +145,7 @@
             "type": "string",
             "enum": [
               "publicApi", "serializationShaped", "configBoundType",
-              "diPluginShaped", "internalsVisibleTo"
+              "diPluginShaped", "internalsVisibleTo", "buildOnlyPackage"
             ]
           }
         },

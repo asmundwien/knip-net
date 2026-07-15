@@ -576,11 +576,24 @@ Keep this section updated as tasks complete — it is the handoff memory between
       used-assembly sets tracked in `AddEdge`. Conservative: runtime-only/transitive refs (zero
       symbol edges) are a documented FP surface (README "triage before removing"); a future
       opt-out `knip.json` key would need sign-off (not added).
-- [ ] WS3 unused PackageReferences — UNBLOCKED (WS8a signed off): emit `RemovePackageReference`
-      remediation into the v2 vocabulary. Per revised §3.8: analyzer/PrivateAssets/transitive-only/
-      implicit-Using hazards are EMITTED with hazard + low/medium confidence, never dropped. NOTE
-      (offline): reading `obj/project.assets.json` needs a restored fixture — the test must restore
-      its fixture (nuget.org-cached package) or the task solves assembly→package mapping another way.
+- [x] WS3 unused PackageReferences — DONE. New `FindingKind.UnusedPackageReference` +
+      `Remediation.RemovePackageReference` (WS8 v2 vocabulary). The walker now records per-project
+      EXTERNAL-assembly uses (`GraphState.UsedExternalAssemblies`) in `ReferenceWalker.AddEdge` on the
+      NON-solution branch, BEFORE the edge is dropped — invariant #5 preserved (external symbols are NOT
+      graph nodes; only the assembly NAME is retained, a string, invariant #1). Assembly→package map from
+      `obj/project.assets.json` (`targets[tfm][id].compile`/`runtime`), fallback to
+      `Project.MetadataReferences` paths (`…/packages/<id>/…`). A package none of whose delivered
+      assemblies appears in the touched-external set → flagged. Per revised §3.8,
+      build-only/analyzer/source-gen/`PrivateAssets="all"` packages (empty `compile` set → no
+      referenceable assembly) are EMITTED with a new `Hazard.BuildOnlyPackage` + LOW confidence (new
+      `ConfidenceModel` rule, below C3), never dropped; a normal unused package-ref lands at C3 MEDIUM.
+      When neither assets.json nor metadata paths yield a package map (unrestored project) the references
+      are left alone (no restore data = no verdict — conservative). Fixture `tests/fixtures/WS3` (one
+      project: Newtonsoft.Json USED, Humanizer.Core UNUSED-medium, PolySharp build-only-hazard-low);
+      `WS3Tests` restores the fixture in setup (offline caveat, nuget.org-cached packages) and asserts the
+      tier not absence for the hazard. Both TFMs build `-warnaserror`; suite 122 passing / 14 skipped.
+      Schema (`schemas/knip.output.schema.json`) gained `unusedPackageReference` + `unusedEnumMember`
+      kinds and the `buildOnlyPackage` hazard.
 - [x] WS4 net472 multi-target + legacy csproj — both TFMs build `-warnaserror` (Roslyn 4.14 for
       net472, 5.6 for net10); ZERO `#if` in any source (all divergence at csproj level; BCL gaps
       via PolySharp + a shim file); legacy-format fixture authored. **Windows-only e2e of the

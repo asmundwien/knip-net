@@ -53,7 +53,7 @@ public sealed class ConsoleReporter : IReporter
             output.WriteLine($"{C(Bold)}{group.Key}{C(Reset)} {C(Dim)}({group.Count()} unused){C(Reset)}");
             foreach (var f in group)
             {
-                if (f.Kind == FindingKind.UnusedProjectReference)
+                if (f.Kind is FindingKind.UnusedProjectReference or FindingKind.UnusedPackageReference)
                 {
                     output.WriteLine(
                         $"  {C(Red)}{f.SymbolKind,-10}{C(Reset)} {C(Cyan)}{f.ReferencedProject ?? f.Symbol}{C(Reset)}");
@@ -212,9 +212,14 @@ public sealed class SarifReporter : IReporter
             level = "warning",
             message = new
             {
-                text = f.Kind == FindingKind.UnusedProjectReference
-                    ? $"Project '{f.Project}' references '{f.ReferencedProject ?? f.Symbol}' but uses no type from it."
-                    : $"Unused {f.SymbolKind} '{f.Symbol}' is never referenced.",
+                text = f.Kind switch
+                {
+                    FindingKind.UnusedProjectReference =>
+                        $"Project '{f.Project}' references '{f.ReferencedProject ?? f.Symbol}' but uses no type from it.",
+                    FindingKind.UnusedPackageReference =>
+                        $"Project '{f.Project}' references package '{f.Symbol}' but uses no type from it.",
+                    _ => $"Unused {f.SymbolKind} '{f.Symbol}' is never referenced.",
+                },
             },
             // Stable content-hash id (WS8 §3.2 / §5.5): lets code-scanning platforms dedupe/track a
             // finding across commits. Same value the JSON v2 output publishes as `id`.
