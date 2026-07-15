@@ -18,6 +18,9 @@ namespace Knip.Core.Analysis;
 ///     Other C2 hazards (serialization/config/DI) → <see cref="Confidence.Low"/>.</item>
 ///   <item>InternalsVisibleTo: a <see cref="Hazard.InternalsVisibleTo"/> finding →
 ///     <see cref="Confidence.Low"/> (invisible external consumer).</item>
+///   <item>WS3 build-only package (<see cref="Hazard.BuildOnlyPackage"/>: analyzer / source-generator /
+///     <c>PrivateAssets="all"</c> — no referenceable compile assembly) → <see cref="Confidence.Low"/>,
+///     below the C3 medium a normal package-ref gets.</item>
 ///   <item>C3: project/package-reference findings → <see cref="Confidence.Medium"/>.</item>
 /// </list>
 /// A finding with no hazard in a healthy project stays <see cref="Confidence.High"/>.
@@ -71,6 +74,12 @@ internal static class ConfidenceModel
         if (finding.Hazards.Contains(Hazard.SerializationShaped)
             || finding.Hazards.Contains(Hazard.ConfigBoundType)
             || finding.Hazards.Contains(Hazard.DiPluginShaped))
+            return Confidence.Low;
+
+        // WS3 build-only / analyzer / source-generator package (no referenceable compile assembly): its
+        // effect is invisible to symbol edges, so an "unused" verdict is unreliable → low (below the C3
+        // medium a normal package-ref gets). Emitted, never dropped (REVISED §3.8).
+        if (finding.Hazards.Contains(Hazard.BuildOnlyPackage))
             return Confidence.Low;
 
         // InternalsVisibleTo — an invisible external consumer may bind this internal symbol → low.

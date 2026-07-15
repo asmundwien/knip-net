@@ -522,7 +522,20 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     {
         // Only keep edges to symbols defined somewhere in the solution (source in any project).
         var assembly = target.OriginalDefinition.ContainingAssembly?.Name;
-        if (assembly is null || !_solutionAssemblies.Contains(assembly)) return;
+
+        // EXTERNAL branch: the target lives in a NON-solution assembly (BCL / NuGet). We do NOT add it
+        // as a graph node (invariant #5), but we DO record (ownAssembly → externalAssemblyName) — the
+        // only place the walker sees which external assemblies a project's code actually touches. This
+        // is the raw signal WS3 maps back to <PackageReference>s (a package none of whose delivered
+        // assemblies appear here is never referenced). Skip the own assembly (self is not external).
+        if (assembly is not null && !_solutionAssemblies.Contains(assembly))
+        {
+            if (_ownAssembly is not null && !string.Equals(assembly, _ownAssembly, StringComparison.Ordinal))
+                _state.RecordExternalAssemblyUse(_ownAssembly, assembly);
+            return;
+        }
+
+        if (assembly is null) return;
 
         // Cross-assembly edge: this project's code touches a symbol OWNED by another solution
         // assembly. Record (ownAssembly -> targetAssembly) so DeadCodeAnalyzer can tell which
