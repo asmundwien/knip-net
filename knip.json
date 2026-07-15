@@ -142,8 +142,8 @@
     //     DefaultAuthorizationPolicyProvider) → GetPolicyAsync/GetDefaultPolicyAsync/GetFallbackPolicyAsync +
     //     instance ctors.
     // Conservative: roots ONLY the convention entry members, never blanket-roots a middleware/filter's
-    // world — an unrelated dead method the entry point never calls stays flagged. Enable it for ASP.NET
-    // Core web projects:
-    "aspnetcore": { "enabled": false }
+    // world — an unrelated dead method the entry point never calls stays flagged. Shown at its default
+    // (ON); set "enabled": false to turn it off for non-ASP.NET Core solutions:
+    "aspnetcore": { "enabled": true }
   }
 }
