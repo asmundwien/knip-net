@@ -8,11 +8,35 @@ namespace Knip.Core.Analysis;
 /// </summary>
 internal sealed class GraphState
 {
+    /// <summary>
+    /// When true the walker records a representative source <see cref="Location"/> per (source→target)
+    /// edge into <see cref="EdgeSources"/>, so <c>--why</c> can render "referenced at file:line". OFF by
+    /// default — provenance costs memory (invariant, WS8c §5.2), so it is gated behind the CLI flag and
+    /// the default run keeps its current memory profile. NEVER surfaces graph keys (invariant #1): the
+    /// map is consulted only to resolve a hop to a display name + file:line inside Core.
+    /// </summary>
+    public bool CaptureProvenance { get; init; }
+
     /// <summary>Symbol id → a representative declaring symbol (for reporting).</summary>
     public Dictionary<string, ISymbol> Declared { get; } = new(StringComparer.Ordinal);
 
     /// <summary>Symbol id → ids it references ("uses" edges).</summary>
     public Dictionary<string, HashSet<string>> Edges { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// (WS8c, gated by <see cref="CaptureProvenance"/>) One representative reference-site source location
+    /// per edge, keyed "source␟target". Populated only when provenance is requested; consumed by the
+    /// <c>--why</c> report to render a hop's <c>file:line</c>. Empty on a default run.
+    /// </summary>
+    public Dictionary<string, Location> EdgeSources { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Record a representative reference-site location for an edge (no-op unless provenance is on).</summary>
+    public void RecordEdgeSource(string source, string target, Location? location)
+    {
+        if (!CaptureProvenance || location is null || !location.IsInSource) return;
+        var key = source + "" + target;
+        if (!EdgeSources.ContainsKey(key)) EdgeSources[key] = location;
+    }
 
     /// <summary>Root ids: framework entry points reachability starts from.</summary>
     public HashSet<string> Roots { get; } = new(StringComparer.Ordinal);

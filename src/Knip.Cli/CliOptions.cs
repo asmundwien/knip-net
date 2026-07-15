@@ -12,6 +12,12 @@ internal sealed class CliOptions
     /// <summary>(WS7) Production mode: flag production code reachable only via tests as OnlyUsedByTests.</summary>
     public bool Production { get; private set; }
 
+    /// <summary>(WS8c) The symbol id (k1_…) or display name to trace with <c>--why</c>; null when not requested.</summary>
+    public string? Why { get; private set; }
+
+    /// <summary>(WS8c) Print the effective merged config as JSON and exit, without running analysis.</summary>
+    public bool PrintConfig { get; private set; }
+
     public static CliOptions Parse(string[] args)
     {
         var options = new CliOptions();
@@ -41,6 +47,12 @@ internal sealed class CliOptions
                     break;
                 case "--production":
                     options.Production = true;
+                    break;
+                case "--why":
+                    options.Why = Next(args, ref i, arg);
+                    break;
+                case "--print-config":
+                    options.PrintConfig = true;
                     break;
                 default:
                     if (arg.StartsWith("-", StringComparison.Ordinal))
@@ -83,10 +95,12 @@ internal sealed class CliOptions
               -v, --verbose          Print per-project progress (incl. test/production classification) to stderr
                   --no-fail          Always exit 0, even when unused code is found
                   --production       Flag production code reachable only via tests (OnlyUsedByTests)
+                  --why <sym-or-id>  Explain why one symbol is dead/alive (finding id k1_… or display name); exit 0
+                  --print-config     Print the effective merged config as JSON and exit 0 (no analysis)
               -h, --help             Show this help
 
             Exit codes:
-              0  no unused code (or --no-fail)
+              0  no unused code (or --no-fail, --why, --print-config)
               1  unused code found
               2  usage/load error
             """);

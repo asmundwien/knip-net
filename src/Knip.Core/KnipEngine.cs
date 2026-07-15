@@ -16,7 +16,8 @@ public static class KnipEngine
         KnipConfig config,
         string targetPath,
         IProgress<string>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        bool captureProvenance = false)
     {
         using var workspace = MSBuildWorkspace.Create();
         workspace.SkipUnrecognizedProjects = true;
@@ -35,7 +36,7 @@ public static class KnipEngine
             : await workspace.OpenSolutionAsync(targetPath, cancellationToken: ct);
 
         var analyzer = new DeadCodeAnalyzer(config);
-        var result = await analyzer.AnalyzeAsync(solution, progress, ct);
+        var result = await analyzer.AnalyzeAsync(solution, progress, ct, captureProvenance);
 
         foreach (var (_, message) in loadDiagnostics)
         {

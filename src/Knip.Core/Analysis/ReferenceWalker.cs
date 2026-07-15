@@ -54,6 +54,12 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     private readonly string? _ownAssembly;
     private readonly Stack<string> _context = new();
 
+    // (WS8c) The reference-SITE location of the syntax node currently being recorded, so an edge can
+    // carry "where the reference lives" for the --why report. Set around RecordReference-style calls;
+    // only READ when GraphState.CaptureProvenance is on (default runs never touch it). Null falls back
+    // to the target/source declaration location at render time.
+    private Location? _currentSite;
+
     public ReferenceWalker(
         SemanticModel model,
         KnipConfig config,
@@ -162,6 +168,9 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     {
         var id = SymbolId.For(symbol);
         if (id is null) return null;
+        // Signature edges added below are not "reference sites" in a body — clear any stale --why site
+        // so they fall back to the target declaration location rather than an unrelated prior node.
+        _currentSite = null;
         // A declaration whose id first appears in a generated tree is "generated" for reporting: its own
         // dead code is not the user's to delete (H11). Marked here — where "declared in THIS tree" is
         // known — rather than post-hoc from Locations, which would also cover a partial's user-authored
@@ -267,6 +276,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (node.IsKind(SyntaxKind.CollectionInitializerExpression) && _context.Count > 0)
         {
             var source = _context.Peek();
+            SetSite(node);
             foreach (var element in node.Expressions)
             {
                 var info = _model.GetCollectionInitializerSymbolInfo(element);
@@ -283,6 +293,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     private void RecordDeconstruction(AssignmentExpressionSyntax node)
     {
         if (_context.Count == 0) return;
+        SetSite(node);
         RecordDeconstructionInfo(_model.GetDeconstructionInfo(node), _context.Peek());
     }
 
@@ -313,6 +324,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (_model.GetOperation(node) is not IImplicitIndexerReferenceOperation implicitIndexer) return;
 
         var source = _context.Peek();
+        SetSite(node);
         if (implicitIndexer.LengthSymbol is { } length) AddEdge(source, length);
         if (implicitIndexer.IndexerSymbol is { } indexer) AddEdge(source, indexer);
     }
@@ -332,6 +344,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (_context.Count == 0) return;
         var info = _model.GetForEachStatementInfo(node);
         var source = _context.Peek();
+        SetSite(node);
         if (info.GetEnumeratorMethod is { } getEnumerator) AddEdge(source, getEnumerator);
         if (info.MoveNextMethod is { } moveNext) AddEdge(source, moveNext);
         if (info.CurrentProperty is { } current) AddEdge(source, current);
@@ -352,6 +365,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (_context.Count == 0) return;
         var info = _model.GetAwaitExpressionInfo(node);
         var source = _context.Peek();
+        SetSite(node);
         if (info.GetAwaiterMethod is { } getAwaiter) AddEdge(source, getAwaiter);
         if (info.IsCompletedProperty is { } isCompleted) AddEdge(source, isCompleted);
         if (info.GetResultMethod is { } getResult) AddEdge(source, getResult);
@@ -371,6 +385,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (_context.Count > 0)
         {
             var source = _context.Peek();
+            SetSite(node);
             RecordQueryClauseInfo(_model.GetQueryClauseInfo(node.FromClause), source);
             RecordQueryBody(node.Body, source);
         }
@@ -455,6 +470,9 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     {
         if (_context.Count == 0 || type is null) return;
         var source = _context.Peek();
+        // No single reference-site node here (pattern dispose is implicit); leave the site unset so
+        // --why falls back to the target declaration location.
+        _currentSite = null;
         foreach (var member in type.GetMembers("Dispose"))
             if (member is IMethodSymbol { Parameters.IsEmpty: true, IsStatic: false })
                 AddEdge(source, member);
@@ -465,13 +483,21 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (_context.Count == 0) return;
         var conversion = _model.GetConversion(expression);
         if (conversion.IsUserDefined && conversion.MethodSymbol is { } method)
+        {
+            _currentSite = _state.CaptureProvenance ? expression.GetLocation() : null;
             AddEdge(_context.Peek(), method);
+        }
     }
+
+    /// <summary>(WS8c) Set the reference-site for the edges a body-recording helper is about to add.</summary>
+    private void SetSite(SyntaxNode node) => _currentSite = _state.CaptureProvenance ? node.GetLocation() : null;
 
     private void RecordReference(SyntaxNode node)
     {
         if (_context.Count == 0) return;
         var source = _context.Peek();
+        // (WS8c) Remember the reference SITE so any edge recorded below carries its file:line for --why.
+        _currentSite = _state.CaptureProvenance ? node.GetLocation() : null;
         var info = _model.GetSymbolInfo(node);
         if (info.Symbol is { } symbol)
         {
@@ -581,6 +607,8 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (targetId is null || string.Equals(targetId, sourceId, StringComparison.Ordinal)) return;
 
         _state.AddEdge(sourceId, targetId);
+        // (WS8c) Attach the reference-site location for --why (no-op unless provenance is on).
+        _state.RecordEdgeSource(sourceId, targetId, _currentSite);
     }
 
     // ---- roots: framework entry points seeded from config ----------------------------------

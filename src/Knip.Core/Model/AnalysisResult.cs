@@ -75,4 +75,12 @@ public sealed class AnalysisResult
     public int SymbolsAnalyzed { get; set; }
     public int RootCount { get; set; }
     public TimeSpan Elapsed { get; set; }
+
+    /// <summary>
+    /// (WS8c) Provenance graph retained ONLY when a run requests <c>--why</c> (gated so default runs keep
+    /// their memory profile). Opaque to callers — an <c>object</c> so no internal graph type or graph key
+    /// (invariant #1) crosses the public API; <see cref="Knip.Core.Analysis.WhyService"/> consumes it to
+    /// render the report. Null on a normal run.
+    /// </summary>
+    public object? WhyContext { get; set; }
 }

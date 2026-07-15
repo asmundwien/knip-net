@@ -651,13 +651,24 @@ Keep this section updated as tasks complete — it is the handoff memory between
       unchanged. Both TFMs build `-warnaserror`; suite 143 passing / 8 skipped. Second BFS pass cost is a
       full extra reachable-set walk (only when `--production`); default runs do ONE pass (unchanged).
 - [~] WS8 — Agent-first interface (JSON = product API). **WS8a signed off** + **WS8b DONE** (JSON v2
-      shape + reliability + schemas + L9 confidence/hazard engine; L1–L4/L8/L10–L14/L16/L17 promoted).
-      Remaining: **WS8c** (`--why`/`--print-config`/all-config-key warnings → L5/L6/L7); **WS8d**
-      AGENTS.md — DRAFT merged, **NOT done until dogfood-validated against a real run** (needs feed
-      auth). Deferred detectors: L15 (serialization/config/DI hazards → the serialization plugin +
-      later). Backlog: reconcile design-doc vs shipped-schema (`reliability.projectsFailed` is an
-      ARRAY per schema; drop/rename `productionModeWarnings`/`testProjectClassification`/`run.target`
-      or add them to the schema when WS7 lands).
+      shape + reliability + schemas + L9 confidence/hazard engine; L1–L4/L8/L10–L14/L16/L17 promoted)
+      + **WS8c DONE 2026-07-15** (`--why` / `--print-config` / all-config-key unknown-key warnings;
+      L5/L6/L7 promoted `G-feat` → `C`). WS8c notes: `--why` provenance is GATED behind the flag
+      (`GraphState.CaptureProvenance` + a per-edge representative reference-site `Location`; a default
+      run keeps its memory profile and drops the graph). `WhyService` (Core) renders keys → display
+      names + file:line — invariant #1 holds (no `Assembly::docId` ever printed); the CLI only prints
+      the string (invariant #9). Arg resolves by finding id (k1_…) OR display name (exact, else
+      unambiguous suffix; ambiguity lists candidates). `--print-config` serializes the merged config
+      via `KnipConfig.JsonOptions` (no analysis, exit 0). Unknown-key warnings: `KnipConfig.ValidateKeys`
+      diffs the raw JsonDocument against a known-key TREE (generalizes `ValidatePlugins`; `plugins.<id>`
+      values still validated by `ValidatePlugins`), routed through LoadDiagnostics. Both TFMs build
+      `-warnaserror`; suite 147 passing / 5 skipped (was 144/8 — L5/L6/L7 un-skipped). New fixture
+      `tests/fixtures/CatL/ConfigProbe` (partial + unknown-key knip.json). Remaining: **WS8d**
+      AGENTS.md — DRAFT merged (`--why`/`--print-config` now documented), **NOT done until
+      dogfood-validated against a real run** (needs feed auth). Deferred detectors: L15
+      (serialization/config/DI hazards → the serialization plugin + later). Backlog: reconcile
+      design-doc vs shipped-schema (`reliability.projectsFailed` is an ARRAY per schema; drop/rename
+      `productionModeWarnings`/`testProjectClassification`/`run.target` or add them to the schema).
 
 ---
 
@@ -861,9 +872,9 @@ the "agents may act autonomously" line and is decided with the human at WS8a sig
 | L2 `G-feat` | Two consecutive runs, same fixture | identical finding ids and order (extends J4) |
 | L3 `G-feat` | Broken-restore fixture (reuse I7) / clean (I8) | `reliability.degraded: true` with failure detail / `false` with zeroes |
 | L4 `G-feat` | Delete every high-confidence finding strictly by reported span, then build | compiles green — spans are complete deletion units (the interface-level anti-vacuous test) |
-| L5 `G-feat` | `--why` on a flagged / on an alive symbol | "no incoming edges" report / root-to-symbol path; exit 0 |
-| L6 `G-feat` | `--print-config` with partial knip.json | effective config = file merged over defaults, valid JSON on stdout |
-| L7 `G-feat` | Unknown top-level + unknown nested config key | one warning each, naming the key; analysis proceeds, exit unchanged |
+| L5 `C` | `--why` on a flagged / on an alive symbol | IMPLEMENTED 2026-07-15 (WS8c): flagged → "no incoming references" (or dead referrers + rootCause); alive → shortest root→symbol path with file:line hops; exit 0. Prose + display names + file:line only — NEVER a graph key (invariant #1). Provenance gated behind the flag (GraphState.CaptureProvenance; a default run drops the graph). Arg resolves by finding id (k1_…) OR display name (exact, else unambiguous suffix). Pinned by `CatLTests.L5` on CatL/Main (out-of-process CLI) |
+| L6 `C` | `--print-config` with partial knip.json | IMPLEMENTED 2026-07-15 (WS8c): effective config = file merged over defaults, valid JSON on stdout, exit 0, no analysis. Pinned by `CatLTests.L6` on CatL/ConfigProbe/knip.partial.json (out-of-process CLI) |
+| L7 `C` | Unknown top-level + unknown nested config key | IMPLEMENTED 2026-07-15 (WS8c): `KnipConfig.ValidateKeys` generalizes the `plugins.*` pattern to a known-key TREE diffed against the raw JsonDocument — one warning per unknown key, naming the path (e.g. `roots.treatAllPubic`); analysis proceeds, exit unchanged. Routed through the LoadDiagnostics channel (alongside ValidatePlugins). Pinned by `CatLTests.L7` on CatL/ConfigProbe/knip.unknown.json (out-of-process CLI) |
 | L8 `G-feat` | Summary block vs findings array | counts agree exactly |
 | L9 `G-feat` | Confidence rule table (high/medium/low criteria) | DECIDED 2026-07-15 (see §5 WS8 "L9 model"): start high, first-match demotion; hazards advisory-only; autonomy = delete `high` (verify-loop precondition) / propose `medium` / surface `low`. Rows L11–L17 pin the individual rules. IMPLEMENTED 2026-07-15 (WS8b-2); left `G-feat` because L15 (serialization/config/DI hazard DETECTION) is still deferred (WS5) — the table is not fully pinned until its detectors land, though the low-tier demotion off those hazards already exists |
 | L10 `G-feat` | Cascade finding carries the parent's id as `rootCause`; directly-unreferenced finding carries `null` | as stated — enables outermost-first deletion; `--why` reuses it |
