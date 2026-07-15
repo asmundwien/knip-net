@@ -2,14 +2,27 @@ using CatK;
 
 namespace CatK.K3;
 
-// K3 (G-feat, PRODUCTION mode): the OnlyUsedByTests finding must name the referencing TEST symbols,
-// so a human can see the remediation unit (delete the test(s) then the production code, or promote a
-// real caller). Two distinct tests reference the same production method; the future finding should
-// enumerate both referrers. Compiled today; assertion Skip-tagged (WS7).
+// K3 (PRODUCTION mode): the OnlyUsedByTests finding must name the referencing TEST symbols, so a human
+// sees the remediation unit (delete the test(s) then the production code). Two distinct [Fact] tests
+// reference the same production method; the finding must enumerate BOTH referrers.
+//
+// The TYPE is kept alive by a production caller (Entry.Main) so the finding lands on the Add METHOD
+// (which carries the test referrers), not on the whole type under outermost-only.
 public sealed class Calculator
 {
-    // Under production mode: OnlyUsedByTests, referrers = {AlphaTests.Adds, BetaTests.AlsoAdds}.
+    // PRODUCTION mode: OnlyUsedByTests, referrers = {AlphaTests.Adds, BetaTests.AlsoAdds}.
     public int Add(int a, int b) => a + b;
+
+    // Keeps the Calculator TYPE alive in every mode.
+    public int KeepAlive() => 0;
+}
+
+public sealed class Entry
+{
+    public static void Main()
+    {
+        _ = new Calculator().KeepAlive();
+    }
 }
 
 public sealed class AlphaTests

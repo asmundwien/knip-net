@@ -136,6 +136,11 @@ public sealed class JsonReporter : IReporter
                 loadDiagnostics = result.Reliability.LoadDiagnostics
                     .Select(d => new { severity = Camel(d.Severity.ToString()), code = d.Code, message = d.Message })
                     .ToList(),
+                // WS7: surfaced (does NOT set degraded — changes finding MEANING, not graph trust).
+                productionModeWarnings = result.Reliability.ProductionModeWarnings,
+                testProjectClassification = result.Reliability.TestProjectClassifications
+                    .Select(c => new { project = c.Project, kind = c.Kind, signal = c.Signal })
+                    .ToList(),
             },
             summary = BuildSummary(result.Findings),
             findings = result.Findings.Select(ToJson).ToList(),
@@ -192,7 +197,11 @@ public sealed class JsonReporter : IReporter
         },
         referencedProject = f.ReferencedProject,
         rootCause = f.RootCause,
-        details = new { },
+        // WS7: OnlyUsedByTests carries its referencing test symbols under details.testReferrers (K3), so
+        // the deletion unit — code AND its tests — is visible. Empty object for every other kind.
+        details = f.TestReferrers.Count == 0
+            ? (object)new { }
+            : new { testReferrers = f.TestReferrers.Select(r => new { symbol = r.Symbol, file = r.File, line = r.Line }).ToList() },
     };
 
     private static string Camel(string pascal) =>

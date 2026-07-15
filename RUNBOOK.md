@@ -613,11 +613,23 @@ Keep this section updated as tasks complete — it is the handoff memory between
       `-v` emits per-plugin contribution counts (roots/edges) + wall-time per project.
 - [~] WS6 — repo CI (build + test GitHub Action) DONE (`.github/workflows/ci.yml`). Packaging
       (global tool `Hdir.Knip`, marketplace/feed publish) still TODO and human-approved.
-- [ ] WS7 production-mode analysis / test-only reachability (Appendix A category K). Real-world
-      signal: Tjenesteportalen has ~151 production findings kept alive only by test roots in default
-      mode — high-value. K7 classification DECIDED (see WS7 card). UNBLOCKED (WS8a done): emit
-      `OnlyUsedByTests` / `DeleteCodeAndTests` remediation into the v2 vocabulary. Promotes category K
-      + the C4 confidence rule (deleteCodeAndTests → medium).
+- [x] **WS7 production-mode analysis / test-only reachability — DONE 2026-07-15.** `--production` CLI flag
+      OR `knip.json` `"production": true` (OFF by default; K1/B1 default semantics UNCHANGED). New
+      `TestProjectClassifier` (signal order: `testProjects` globs → referenced test-framework assembly →
+      name globs). Roots are 2-colored (`GraphState.TestRoots`/`ProductionRoots`; test origin = a test
+      project OR a test-framework attribute like `[Fact]`); PRODUCTION wins. TWO BFS passes (FULL +
+      production-only); a symbol alive in FULL but dead in production and NOT test-side (test declarations
+      / test roots excluded) → new `FindingKind.OnlyUsedByTests` (`Remediation.DeleteCodeAndTests`),
+      outermost-only across dead ∪ test-only. `Finding.TestReferrers` (`details.testReferrers[]`) lists the
+      referring test symbols (K3, two-pass). Transitive (K5) falls out of the production-only closure. C4
+      wired: `deleteCodeAndTests` → `medium`, applied right after C1 (before the publicApi C2 demotion, so
+      the remediation shape dominates — test-only code is nearly always public). Zero-test-project →
+      `reliability.productionModeWarnings` (LOUD on stderr regardless of `-v`, machine block) + never fails;
+      does NOT set `degraded`. Reliability gains `productionModeWarnings` + `testProjectClassification`;
+      output schema gains `onlyUsedByTests` kind + `details.testReferrers` + the two reliability fields;
+      config schema gains `production` + `testProjects`. Category K promoted K2/K3/K5/K6/K7 → `C`; K1/K4
+      unchanged. Both TFMs build `-warnaserror`; suite 143 passing / 8 skipped. Second BFS pass cost is a
+      full extra reachable-set walk (only when `--production`); default runs do ONE pass (unchanged).
 - [~] WS8 — Agent-first interface (JSON = product API). **WS8a signed off** + **WS8b DONE** (JSON v2
       shape + reliability + schemas + L9 confidence/hazard engine; L1–L4/L8/L10–L14/L16/L17 promoted).
       Remaining: **WS8c** (`--why`/`--print-config`/all-config-key warnings → L5/L6/L7); **WS8d**
@@ -810,12 +822,12 @@ alive. K1 pins that default; the rest assert production mode (`--production` / `
 | ID | Scenario | Expected |
 |---|---|---|
 | K1 `C` | Default mode: production method referenced only from a `[Fact]` test | alive — pins default semantics AND documents the known false negative |
-| K2 `G-feat` | Production mode: production method + type reachable only via test roots | flagged as `OnlyUsedByTests` (distinct finding kind) |
-| K3 `G-feat` | Production mode: the K2 finding lists the referencing test symbols | remediation unit ("delete code and tests") visible in output |
+| K2 `C` | Production mode: production method + type reachable only via test roots | IMPLEMENTED 2026-07-15 (WS7): flagged as `OnlyUsedByTests` (distinct kind, remediation `deleteCodeAndTests`, C4 → `medium`). Fixture keeps the TYPE alive (production caller) so the finding lands at member granularity; whole-test-only types report the type (outermost-only) |
+| K3 `C` | Production mode: the K2 finding lists the referencing test symbols | IMPLEMENTED 2026-07-15 (WS7): `Finding.TestReferrers` / `details.testReferrers[]` enumerates the referring `[Fact]` symbols (display name + file:line, never a graph key), deterministically ordered |
 | K4 `C` | Workaround: `ignore.projects` excluding the test project | test-only production method flagged (verify — expected green) |
-| K5 `G-feat` | Transitive: A used by B; B used only by tests | production mode flags BOTH A and B |
-| K6 `G-feat` | Production code genuinely used by production AND by tests | never flagged in production mode (tests don't taint) |
-| K7 `G-feat` | Test-project classification default and zero-test-project warning | DECIDED 2026-07-15 (see WS7 card): signal order = explicit `testProjects` globs → referenced test-framework assemblies (`MSTest.TestFramework`/`xunit.core`/`nunit.framework`) → name globs (`*Tests`/`*.Test`/`*.Tests`). Zero detected in production mode → loud warning (stderr + machine diagnostics), never fail. `-v` shows each project's classification + the signal. Promotes with a fixture per signal + the zero-detection warning |
+| K5 `C` | Transitive: A used by B; B used only by tests | IMPLEMENTED 2026-07-15 (WS7): production mode flags BOTH A and B as `OnlyUsedByTests` (A transitively, empty referrers; B directly, with its test referrer) |
+| K6 `C` | Production code genuinely used by production AND by tests | IMPLEMENTED 2026-07-15 (WS7): never flagged in production mode — production wins in the two-color merge, so a production root keeps the whole closure alive (tests don't taint) |
+| K7 `C` | Test-project classification default and zero-test-project warning | IMPLEMENTED 2026-07-15 (WS7): `TestProjectClassifier` — signal order explicit `testProjects` globs → referenced test-framework assemblies (`MSTest.TestFramework`/`xunit.core`/`nunit.framework`) → name globs (`*Tests`/`*.Test`/`*.Tests`); no match → production/`default`. Zero detected in production mode → loud warning (stderr + `reliability.productionModeWarnings`), never fails. `-v` + `reliability.testProjectClassification` show each project's classification + the signal. Pinned by a `TestProjectClassifierTests` unit test per signal (signal-2 via synthesized in-memory `xunit.core` reference) + the `CatK7NoTests` zero-detection fixture |
 
 ### L. Agent contract — the machine output as product API (WS8 feed)
 
@@ -840,5 +852,5 @@ the "agents may act autonomously" line and is decided with the human at WS8a sig
 | L13 `C` | `publicApi`-hazard finding, `publicApiProjects`/`treatAllPublicAsUsed` SET | IMPLEMENTED 2026-07-15 (WS8b-2): → `medium` (C2 configured branch). CatL PublicApi fixture, glob set to a non-matching project so the public symbol survives to a finding |
 | L14 `C` | `publicApi`-hazard finding, NEITHER key set | IMPLEMENTED 2026-07-15 (WS8b-2): → `low` (C2 unconfigured branch). CatL PublicApi fixture, default config |
 | L15 `G-feat` | `serializationShaped`/`configBoundType`/`diPluginShaped` hazard | → `low` (C2 other hazards). DETECTION deferred (WS5 heuristics/plugins): the enum values + the low-tier demotion off them exist in ConfidenceModel, but nothing attaches these hazards yet, so nothing to pin end-to-end |
-| L16 `C` | project-ref / package-ref (C3) and `deleteCodeAndTests` (C4) findings | IMPLEMENTED 2026-07-15 (WS8b-2): project/package-ref → `medium` (C3). Pinned by the WS2 UnusedProjectReference finding. `deleteCodeAndTests` (C4) DEFERRED to WS7 — no `OnlyUsedByTests` kind exists yet |
+| L16 `C` | project-ref / package-ref (C3) and `deleteCodeAndTests` (C4) findings | IMPLEMENTED 2026-07-15 (WS8b-2): project/package-ref → `medium` (C3). Pinned by the WS2 UnusedProjectReference finding. C4 (`deleteCodeAndTests` → `medium`) LANDED with WS7 — pinned by `CatKTests.K2` (asserts `Confidence.Medium` on an `OnlyUsedByTests` finding) |
 | L17 `C` | `[InternalsVisibleTo]` names an assembly NOT in the solution | IMPLEMENTED 2026-07-15 (WS8b-2): internal findings in that project → `low` (new `internalsVisibleTo` hazard). CatL InternalsVisibleTo fixture; private sibling stays `high` (anti-vacuous) |

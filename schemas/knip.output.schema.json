@@ -37,7 +37,8 @@
       "additionalProperties": false,
       "required": [
         "degraded", "projectsLoaded", "projectsFailed",
-        "unresolvedTypeReferences", "restoreFailures", "loadDiagnostics"
+        "unresolvedTypeReferences", "restoreFailures", "loadDiagnostics",
+        "productionModeWarnings", "testProjectClassification"
       ],
       "properties": {
         "degraded": {
@@ -69,6 +70,25 @@
               "severity": { "type": "string", "enum": ["warning", "error"] },
               "code": { "type": "string" },
               "message": { "type": "string" }
+            }
+          }
+        },
+        "productionModeWarnings": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "WS7: e.g. production mode requested but zero test projects detected. Does NOT set degraded."
+        },
+        "testProjectClassification": {
+          "type": "array",
+          "description": "WS7: per-project production/test verdict + the signal that decided it (K7).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "kind", "signal"],
+            "properties": {
+              "project": { "type": "string" },
+              "kind": { "type": "string", "enum": ["production", "test"] },
+              "signal": { "type": "string" }
             }
           }
         }
@@ -131,7 +151,7 @@
           "enum": [
             "unusedType", "unusedMethod", "unusedProperty", "unusedField",
             "unusedEvent", "unusedEnumMember", "unusedProjectReference",
-            "unusedPackageReference"
+            "unusedPackageReference", "onlyUsedByTests"
           ]
         },
         "symbol": { "type": "string" },
@@ -178,7 +198,25 @@
         },
         "referencedProject": { "type": ["string", "null"] },
         "rootCause": { "type": ["string", "null"], "pattern": "^k1_[0-9a-f]{10}$" },
-        "details": { "type": "object" }
+        "details": {
+          "type": "object",
+          "description": "Kind-specific extras. For onlyUsedByTests: testReferrers[] (WS7 K3).",
+          "properties": {
+            "testReferrers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["symbol", "file", "line"],
+                "properties": {
+                  "symbol": { "type": "string" },
+                  "file": { "type": "string" },
+                  "line": { "type": "integer", "minimum": 0 }
+                }
+              }
+            }
+          }
+        }
       }
     }
   }

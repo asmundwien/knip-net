@@ -62,6 +62,9 @@ public sealed class DeadCodeAnalyzer
         // Keyed by assembly name (invariant #1); drives the InternalsVisibleTo hazard in ToFinding.
         var ivtToNonSolution = new HashSet<string>(StringComparer.Ordinal);
 
+        // WS7: per-project test/production classification (recorded for reliability + -v).
+        var classifications = new List<ProjectClassification>();
+
         foreach (var project in projects)
         {
             ct.ThrowIfCancellationRequested();
@@ -73,11 +76,23 @@ public sealed class DeadCodeAnalyzer
             if (FindingEnrichment.HasInternalsVisibleToNonSolutionAssembly(compilation, solutionAssemblies))
                 ivtToNonSolution.Add(compilation.Assembly.Name);
 
+            // WS7: classify the project (production vs test) and record WHICH signal decided it (surfaced
+            // via -v + reliability). Drives two-color root origin; only meaningful in production mode, but
+            // classification is cheap and the -v report is useful either way.
+            var classification = TestProjectClassifier.Classify(project, compilation, _config);
+            classifications.Add(classification);
+            var isTestProject = classification.Kind == ProjectKind.Test;
+            progress?.Report(
+                $"project {project.Name}: {classification.Kind.ToString().ToLowerInvariant()} " +
+                $"(signal: {classification.Signal})");
+
             var isPublicApi = Glob.IsMatchAny(project.Name, _config.Roots.PublicApiProjects);
             if (compilation.GetEntryPoint(ct) is { } entry)
             {
-                if (SymbolId.For(entry) is { } entryId) state.Roots.Add(entryId);
-                if (entry.ContainingType is { } host && SymbolId.For(host) is { } hostId) state.Roots.Add(hostId);
+                // Program entry point roots take the project's origin (test project → test root).
+                if (SymbolId.For(entry) is { } entryId) AddRoot(state, entryId, isTestProject);
+                if (entry.ContainingType is { } host && SymbolId.For(host) is { } hostId)
+                    AddRoot(state, hostId, isTestProject);
             }
 
             foreach (var tree in compilation.SyntaxTrees)
@@ -98,7 +113,8 @@ public sealed class DeadCodeAnalyzer
 
                 var model = compilation.GetSemanticModel(tree);
                 var walker = new ReferenceWalker(
-                    model, _config, isPublicApi, solutionAssemblies, state, generatedTree: isGenerated);
+                    model, _config, isPublicApi, solutionAssemblies, state,
+                    generatedTree: isGenerated, testProject: isTestProject);
                 walker.Visit(root);
             }
 
@@ -126,11 +142,35 @@ public sealed class DeadCodeAnalyzer
         result.SymbolsAnalyzed = state.Declared.Count;
         result.RootCount = state.Roots.Count;
 
-        var reachable = Traverse(state);
-        BuildFindings(state, reachable, result, ivtToNonSolution);
+        // Two-color reachability (WS7). FULL = reachable from ANY root (default liveness, unchanged). In
+        // production mode PRODUCTION = reachable from production-origin roots only; a symbol dead in
+        // PRODUCTION but alive in FULL is reachable ONLY via tests → OnlyUsedByTests. In default mode the
+        // production set is unused (every FULL-reachable symbol stays alive — K1/B1 pinned).
+        var reachable = Traverse(state, state.Roots);
+        var productionReachable = _config.Production
+            ? Traverse(state, state.Roots.Where(r => !state.TestRoots.Contains(r) || state.ProductionRoots.Contains(r)))
+            : reachable;
+
+        BuildFindings(state, reachable, productionReachable, result, ivtToNonSolution);
         BuildProjectReferenceFindings(projects, state, result);
         BuildPackageReferenceFindings(projects, state, result);
         SortFindings(result);
+
+        // WS7: record classifications + the zero-test-project warning into the reliability block. In
+        // production mode with NO test projects detected, warn LOUDLY (stderr via progress + machine
+        // diagnostics) — every test-only symbol would otherwise flip to a finding. Never fails; exit codes
+        // unchanged (invariant: production mode EMITS a finding class, it does not change exit semantics).
+        result.Reliability.TestProjectClassifications.AddRange(classifications.Select(c =>
+            new Model.TestProjectClassificationInfo(
+                c.Project, c.Kind.ToString().ToLowerInvariant(), c.Signal)));
+        if (_config.Production && classifications.All(c => c.Kind == ProjectKind.Production))
+        {
+            var warning =
+                "production mode requested, but ZERO test projects were detected — no code will be " +
+                "flagged OnlyUsedByTests. Configure 'testProjects' globs or check the solution. " +
+                "(Classification signals per project are in reliability.testProjectClassifications.)";
+            result.Reliability.ProductionModeWarnings.Add(warning);
+        }
 
         if (state.UnresolvedTypeReferences > 0)
             result.LoadDiagnostics.Insert(0,
@@ -181,12 +221,25 @@ public sealed class DeadCodeAnalyzer
             state.AddEdge(fromId, toId);
     }
 
-    private static HashSet<string> Traverse(GraphState state)
+    /// <summary>(WS7) Seed a root from the analyzer, recording its production/test origin.</summary>
+    private static void AddRoot(GraphState state, string id, bool asTest)
+    {
+        state.Roots.Add(id);
+        if (asTest) state.TestRoots.Add(id);
+        else state.ProductionRoots.Add(id);
+    }
+
+    /// <summary>
+    /// Mark-and-sweep BFS from the given <paramref name="roots"/> (WS7 two-color: called once for ALL
+    /// roots — default liveness — and once for the production-only roots). Only declared symbols enter the
+    /// reachable set; edges to non-declared ids are ignored.
+    /// </summary>
+    private static HashSet<string> Traverse(GraphState state, IEnumerable<string> roots)
     {
         var reachable = new HashSet<string>(StringComparer.Ordinal);
         var queue = new Queue<string>();
 
-        foreach (var root in state.Roots)
+        foreach (var root in roots)
             if (state.Declared.ContainsKey(root) && reachable.Add(root))
                 queue.Enqueue(root);
 
@@ -203,11 +256,31 @@ public sealed class DeadCodeAnalyzer
     }
 
     private void BuildFindings(
-        GraphState state, HashSet<string> reachable, AnalysisResult result, HashSet<string> ivtToNonSolution)
+        GraphState state,
+        HashSet<string> reachable,
+        HashSet<string> productionReachable,
+        AnalysisResult result,
+        HashSet<string> ivtToNonSolution)
     {
         var dead = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (id, _) in state.Declared)
             if (!reachable.Contains(id)) dead.Add(id);
+
+        // WS7 two-color: TEST-ONLY = alive in FULL but dead in PRODUCTION (reachable only through test
+        // roots). Empty in default mode (productionReachable == reachable). These become OnlyUsedByTests
+        // findings — a distinct kind whose remediation is "delete the code AND its tests" (K2/K5). Their
+        // reporting is outermost-only within the test-only set (a test-only member of a test-only TYPE
+        // reports the type). Test-side symbols themselves (test classes/methods) are NOT test-only —
+        // they are dead only in production but they ARE the tests; we exclude anything whose defining
+        // project is a test project by requiring the symbol be reachable via a PRODUCTION-origin path in
+        // FULL... simpler: a test-only production symbol is one edged-to FROM the test side. We identify
+        // them as {alive in FULL} \ {alive in PRODUCTION} \ {test-origin roots and their test-side-only
+        // closure}. Concretely: exclude ids that are themselves test roots (the test methods/classes).
+        var testOnly = new HashSet<string>(StringComparer.Ordinal);
+        if (_config.Production)
+            foreach (var (id, _) in state.Declared)
+                if (reachable.Contains(id) && !productionReachable.Contains(id) && !IsTestSide(id, state))
+                    testOnly.Add(id);
 
         // Graph key of each REPORTED dead symbol → its emitted finding id. A dead member whose containing
         // type is also dead is NOT reported (the outermost type is); rootCause resolution walks up to the
@@ -215,11 +288,28 @@ public sealed class DeadCodeAnalyzer
         var reportedKeyToFindingId = new Dictionary<string, string>(StringComparer.Ordinal);
         var emitted = new List<(string Key, ISymbol Symbol, int Index)>();
 
+        // Direct test-referrer index (K3): production symbol id → the test methods that reference it.
+        var testReferrers = _config.Production
+            ? BuildTestReferrers(state, testOnly)
+            : new Dictionary<string, List<TestReferrer>>(StringComparer.Ordinal);
+
+        // Outermost-only (§3.7) suppresses a member whose containing TYPE will itself be reported/deleted.
+        // The deletion unit of an OnlyUsedByTests TYPE is the whole type — so a member that is plain-dead OR
+        // test-only inside a test-only (or dead) type is subsumed. Suppress against dead ∪ testOnly.
+        var suppressed = new HashSet<string>(dead, StringComparer.Ordinal);
+        suppressed.UnionWith(testOnly);
+
         foreach (var (id, symbol) in state.Declared)
         {
-            if (!dead.Contains(id)) continue;
-            if (!ShouldReport(id, symbol, dead, state)) continue;
-            if (ToFinding(symbol, ivtToNonSolution) is not { } finding) continue;
+            var isTestOnly = testOnly.Contains(id);
+            if (!dead.Contains(id) && !isTestOnly) continue;
+            // Outermost-only: a member reported/deleted via its containing type (dead or test-only) is
+            // subsumed by the outer symbol.
+            if (!ShouldReport(id, symbol, suppressed, state)) continue;
+            var finding = isTestOnly
+                ? ToTestOnlyFinding(symbol, ivtToNonSolution, testReferrers)
+                : ToFinding(symbol, ivtToNonSolution);
+            if (finding is null) continue;
             reportedKeyToFindingId[id] = finding.Id;
             emitted.Add((id, symbol, result.Findings.Count));
             result.Findings.Add(finding);
@@ -253,6 +343,55 @@ public sealed class DeadCodeAnalyzer
             }
         }
         return incoming;
+    }
+
+    /// <summary>
+    /// (WS7) True when the id is TEST CODE (declared in a test project) or itself a test root — never an
+    /// OnlyUsedByTests production finding. A test helper in a PRODUCTION project reached only by a test is
+    /// NOT test-side (it is exactly the test-only production code we flag).
+    /// </summary>
+    private static bool IsTestSide(string id, GraphState state) =>
+        state.TestDeclarations.Contains(id)
+        || (state.TestRoots.Contains(id) && !state.ProductionRoots.Contains(id));
+
+    /// <summary>
+    /// (WS7 / K3) For each OnlyUsedByTests production symbol, the TEST methods that DIRECTLY reference it —
+    /// the "and its tests" half of the deletion unit. A referrer is a source with an edge into the symbol
+    /// that is itself a test root (an actual test method). Prose display names + file:line, never graph
+    /// keys (invariant #1). Deterministic order (by display name).
+    /// </summary>
+    private static Dictionary<string, List<TestReferrer>> BuildTestReferrers(
+        GraphState state, HashSet<string> testOnly)
+    {
+        var referrers = new Dictionary<string, List<TestReferrer>>(StringComparer.Ordinal);
+        foreach (var (source, targets) in state.Edges)
+        {
+            // Only edges FROM an actual test method (a test-origin root) count as test referrers.
+            if (!state.TestRoots.Contains(source) || state.ProductionRoots.Contains(source)) continue;
+            if (!state.Declared.TryGetValue(source, out var sourceSymbol)) continue;
+
+            foreach (var target in targets)
+            {
+                if (!testOnly.Contains(target)) continue;
+                if (ToTestReferrer(sourceSymbol) is not { } referrer) continue;
+                if (!referrers.TryGetValue(target, out var list))
+                    referrers[target] = list = [];
+                if (!list.Contains(referrer)) list.Add(referrer);
+            }
+        }
+
+        foreach (var list in referrers.Values)
+            list.Sort((a, b) => string.CompareOrdinal(a.Symbol, b.Symbol));
+        return referrers;
+    }
+
+    private static TestReferrer? ToTestReferrer(ISymbol symbol)
+    {
+        var location = symbol.Locations.FirstOrDefault(l => l.IsInSource);
+        if (location is null) return null;
+        var lineSpan = location.GetLineSpan();
+        return new TestReferrer(
+            symbol.ToDisplayString(DisplayFormat), lineSpan.Path, lineSpan.StartLinePosition.Line + 1);
     }
 
     /// <summary>
@@ -548,6 +687,49 @@ public sealed class DeadCodeAnalyzer
             // WS8b-2: attach ADVISORY hazards (publicApi / internalsVisibleTo). Confidence is graded in a
             // final pass (ConfidenceModel.Apply) once the reliability picture is complete.
             Hazards = FindingEnrichment.ComputeHazards(symbol, hasIvt),
+        };
+    }
+
+    /// <summary>
+    /// (WS7) An OnlyUsedByTests finding for a production symbol reachable only via test roots. Same span /
+    /// location / hazards as an ordinary finding, but a distinct kind + DeleteCodeAndTests remediation, and
+    /// it carries the referencing test symbols (K3) so the deletion unit — code AND its tests — is visible.
+    /// </summary>
+    private static Finding? ToTestOnlyFinding(
+        ISymbol symbol,
+        HashSet<string> ivtToNonSolution,
+        Dictionary<string, List<TestReferrer>> testReferrers)
+    {
+        var location = symbol.Locations.FirstOrDefault(l => l.IsInSource);
+        if (location is null) return null;
+
+        // OnlyUsedByTests reports whole symbols (types, methods, properties, fields, events, enum
+        // members). Anything ToFinding wouldn't map (already filtered by ShouldReport) shouldn't reach here.
+        var lineSpan = location.GetLineSpan();
+        var displayName = symbol.ToDisplayString(DisplayFormat);
+        var project = symbol.ContainingAssembly?.Name ?? "?";
+        var hasIvt = symbol.ContainingAssembly is { } asm && ivtToNonSolution.Contains(asm.Name);
+
+        var id = SymbolId.For(symbol);
+        var referrers = id is not null && testReferrers.TryGetValue(id, out var list)
+            ? (IReadOnlyList<TestReferrer>)list
+            : [];
+
+        return new Finding(
+            FindingKind.OnlyUsedByTests,
+            displayName,
+            SymbolKindName(symbol),
+            AccessibilityName(symbol.DeclaredAccessibility),
+            project,
+            lineSpan.Path,
+            lineSpan.StartLinePosition.Line + 1,
+            lineSpan.StartLinePosition.Character + 1)
+        {
+            Id = FindingEnrichment.ComputeId(FindingKind.OnlyUsedByTests, displayName, project, null),
+            Span = FindingEnrichment.ComputeSpan(symbol),
+            Remediation = Model.Remediation.DeleteCodeAndTests,
+            Hazards = FindingEnrichment.ComputeHazards(symbol, hasIvt),
+            TestReferrers = referrers,
         };
     }
 

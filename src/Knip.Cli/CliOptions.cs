@@ -9,6 +9,9 @@ internal sealed class CliOptions
     public bool NoFail { get; private set; }
     public bool ShowHelp { get; private set; }
 
+    /// <summary>(WS7) Production mode: flag production code reachable only via tests as OnlyUsedByTests.</summary>
+    public bool Production { get; private set; }
+
     public static CliOptions Parse(string[] args)
     {
         var options = new CliOptions();
@@ -35,6 +38,9 @@ internal sealed class CliOptions
                     break;
                 case "--no-fail":
                     options.NoFail = true;
+                    break;
+                case "--production":
+                    options.Production = true;
                     break;
                 default:
                     if (arg.StartsWith("-", StringComparison.Ordinal))
@@ -74,8 +80,9 @@ internal sealed class CliOptions
               -s, --solution <path>  Solution or project to analyze
               -c, --config <path>    Path to knip.json (default: nearest knip.json up the tree)
               -f, --format <fmt>     Output format: console | json | sarif (default: console)
-              -v, --verbose          Print per-project progress to stderr
+              -v, --verbose          Print per-project progress (incl. test/production classification) to stderr
                   --no-fail          Always exit 0, even when unused code is found
+                  --production       Flag production code reachable only via tests (OnlyUsedByTests)
               -h, --help             Show this help
 
             Exit codes:

@@ -47,7 +47,27 @@ dotnet-knip Your.sln            # also invokable as `dotnet knip`
 ```
 
 Options: `-s/--solution`, `-c/--config`, `-f/--format console|json|sarif`, `-v/--verbose`,
-`--no-fail`. **Exit codes:** `0` clean · `1` unused code found (CI gate) · `2` error.
+`--no-fail`, `--production`. **Exit codes:** `0` clean · `1` unused code found (CI gate) · `2` error.
+
+### Production mode (`--production`) — find tested-but-dead code
+
+By default every `[Fact]`/`[Theory]` is a root, so production code called **only by its own tests**
+is reachable and never flagged (a deliberate false negative). Pass `--production` (or set
+`"production": true` in `knip.json`) to run **two-color reachability**: code reachable only via test
+roots is reported as `onlyUsedByTests` — a distinct kind whose remediation is *delete the code **and**
+its tests* (`deleteCodeAndTests`). Each such finding lists the referring test symbols
+(`details.testReferrers` in JSON) so the whole deletion unit — a dead feature plus its test suite — is
+visible. This is the biggest deletable unit there is before a migration.
+
+Projects are classified test vs production by, first match wins: (1) `testProjects` globs in
+`knip.json`; (2) a referenced test-framework assembly (`MSTest.TestFramework`/`xunit.core`/
+`nunit.framework`); (3) name globs (`*Tests`/`*.Test`/`*.Tests`). `-v` prints each project's
+classification and the signal that decided it; if production mode detects **zero** test projects it
+warns loudly (stderr + `reliability.productionModeWarnings`) but never fails.
+
+`onlyUsedByTests` findings land at `medium` confidence — propose in a PR for human review, don't
+auto-delete. (Blunt workaround if you can't use `--production`: `ignore.projects: ["*Tests*"]` drops
+the test projects entirely — but then test code isn't analyzed and `InternalsVisibleTo` edges are lost.)
 
 ### CI
 

@@ -18,6 +18,30 @@ internal sealed class GraphState
     public HashSet<string> Roots { get; } = new(StringComparer.Ordinal);
 
     /// <summary>
+    /// (WS7) Roots whose ORIGIN is a test: a root seeded while walking a TEST project, or a root seeded
+    /// from a test attribute (<c>[Fact]</c>/<c>[Theory]</c>/…) in any project. May overlap
+    /// <see cref="ProductionRoots"/> (an id rooted from both a test and a production site); the net
+    /// TEST-ONLY roots are <see cref="TestOnlyRoots"/>. String-keyed (invariant #1).
+    /// </summary>
+    public HashSet<string> TestRoots { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>(WS7) Roots whose ORIGIN is production (a non-test root site). See <see cref="TestRoots"/>.</summary>
+    public HashSet<string> ProductionRoots { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// (WS7) Ids DECLARED in a TEST project. These are test CODE, never OnlyUsedByTests production
+    /// findings (the two-color pass excludes them). String-keyed (invariant #1).
+    /// </summary>
+    public HashSet<string> TestDeclarations { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// (WS7) The roots that are TEST-ONLY: test-origin and NOT also production-rooted. Production wins so a
+    /// symbol rooted from any production site keeps its whole closure alive; the two-color traversal seeds
+    /// its PRODUCTION color from <c>Roots \ TestOnlyRoots</c> and its FULL color from all <see cref="Roots"/>.
+    /// </summary>
+    public IEnumerable<string> TestOnlyRoots => TestRoots.Where(r => !ProductionRoots.Contains(r));
+
+    /// <summary>
     /// Ids DECLARED inside a BUILT-IN generated tree (H11). These are still walked for their outbound
     /// edges/roots (so user symbols they reference stay alive), but are NEVER reported as dead — the
     /// user did not author that code. String-keyed by <see cref="SymbolId"/> (invariant #1). Consulted

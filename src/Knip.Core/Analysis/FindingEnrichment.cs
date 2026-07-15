@@ -57,6 +57,7 @@ internal static class FindingEnrichment
     {
         FindingKind.UnusedProjectReference => Remediation.RemoveProjectReference,
         FindingKind.UnusedPackageReference => Remediation.RemovePackageReference,
+        FindingKind.OnlyUsedByTests => Remediation.DeleteCodeAndTests,
         _ => Remediation.DeleteSymbol, // type/method/property/field/event
     };
 

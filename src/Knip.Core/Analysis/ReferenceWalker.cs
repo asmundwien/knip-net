@@ -16,9 +16,34 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     internal static readonly SymbolDisplayFormat FqFormat = SymbolDisplayFormat.FullyQualifiedFormat
         .WithGlobalNamespaceStyle(SymbolDisplayGlobalNamespaceStyle.Omitted);
 
+    /// <summary>
+    /// (WS7) Attribute names (with or without the "Attribute" suffix) that mark a root as TEST-ORIGIN,
+    /// regardless of the declaring project. These are the test-FRAMEWORK attributes — the runner invokes
+    /// the method, and it exists to exercise production code. NON-test entry-point attributes (ASP.NET
+    /// routing like <c>HttpGet</c>, <c>IHostedService</c> conventions) are NOT here: they are genuine
+    /// production entry points and must seed PRODUCTION roots. Kept in sync with the test-framework subset
+    /// of <see cref="EntryPointConfig.Attributes"/>.
+    /// </summary>
+    internal static readonly HashSet<string> TestAttributeNames = new(StringComparer.Ordinal)
+    {
+        // xUnit
+        "Fact", "Theory",
+        // MSTest
+        "TestMethod", "DataTestMethod",
+        "TestInitialize", "TestCleanup", "ClassInitialize", "ClassCleanup",
+        "AssemblyInitialize", "AssemblyCleanup",
+        // NUnit
+        "Test", "TestCase", "SetUp", "TearDown", "OneTimeSetUp", "OneTimeTearDown",
+        // BenchmarkDotNet (a benchmark harness, not a production entry point)
+        "Benchmark", "GlobalSetup",
+    };
+
     private readonly SemanticModel _model;
     private readonly KnipConfig _config;
     private readonly bool _publicApiProject;
+    // (WS7) When true this walker's project is a TEST project: EVERY root it seeds is a test root
+    // (feeds two-color reachability). In a production project only test-ATTRIBUTE-driven roots are test.
+    private readonly bool _testProject;
     // ISet (not IReadOnlySet) is the common surface across the net10.0 and net472 BCLs — IReadOnlySet<T>
     // does not exist on net472. Only .Contains is used here, and it is never mutated after construction.
     private readonly ISet<string> _solutionAssemblies;
@@ -35,7 +60,8 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         bool publicApiProject,
         ISet<string> solutionAssemblies,
         GraphState state,
-        bool generatedTree = false)
+        bool generatedTree = false,
+        bool testProject = false)
         : base(SyntaxWalkerDepth.Node)
     {
         _model = model;
@@ -44,6 +70,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         _solutionAssemblies = solutionAssemblies;
         _state = state;
         _generatedTree = generatedTree;
+        _testProject = testProject;
         // The assembly this tree belongs to — the source project of every edge this walker records.
         _ownAssembly = model.Compilation.Assembly.Name;
     }
@@ -58,9 +85,10 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
             && SymbolId.For(entry) is { } entryId)
         {
             _state.Declared[entryId] = entry;
-            _state.Roots.Add(entryId);
+            // Program entry point: production origin (a test project's own Main would be test-origin).
+            AddRoot(entryId, _testProject);
             if (entry.ContainingType is { } host && SymbolId.For(host) is { } hostId)
-                _state.Roots.Add(hostId);
+                AddRoot(hostId, _testProject);
 
             _context.Push(entryId);
             base.VisitCompilationUnit(node);
@@ -139,6 +167,8 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         // known — rather than post-hoc from Locations, which would also cover a partial's user-authored
         // part in another file.
         if (_generatedTree) _state.GeneratedDeclarations.Add(id);
+        // (WS7) Symbols declared in a test project are test CODE — never OnlyUsedByTests production findings.
+        if (_testProject) _state.TestDeclarations.Add(id);
         if (_state.Declared.TryAdd(id, symbol)) // partial types/methods appear once per file
         {
             EvaluateRoots(symbol, id);
@@ -559,25 +589,47 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     {
         var ep = _config.EntryPoints;
 
+        // A test-ATTRIBUTE-driven root is test-origin even in a production project (WS7 two-color).
+        var hasTestAttribute =
+            symbol.GetAttributes().Any(a => MatchesTestAttribute(a));
+
         var isRoot = ep.SymbolNames.Contains(symbol.Name)
             || symbol.GetAttributes().Any(a => MatchesAttribute(a, ep.Attributes))
             || ((_publicApiProject || _config.Roots.TreatAllPublicAsUsed) && IsExternallyVisible(symbol));
 
         if (isRoot)
         {
-            _state.Roots.Add(id);
-            // A framework-invoked member implies its declaring type is instantiated/used.
+            // TEST origin when the whole project is a test project OR this specific root fired on a test
+            // attribute. Everything else (Main, publicApi surface, ASP.NET routing) is a PRODUCTION root.
+            var asTest = _testProject || hasTestAttribute;
+            AddRoot(id, asTest);
+            // A framework-invoked member implies its declaring type is instantiated/used. The type chain
+            // inherits the SAME origin as the member (a test class kept alive only by its [Fact]s is test).
             for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)
-                if (SymbolId.For(container) is { } containerId) _state.Roots.Add(containerId);
+                if (SymbolId.For(container) is { } containerId) AddRoot(containerId, asTest);
         }
 
         if (symbol is INamedTypeSymbol type && IsEntryType(type, ep))
         {
-            _state.Roots.Add(id);
+            // Entry types (Controller, IHostedService, …) are production entry points; in a test project
+            // they still take the project's test origin.
+            AddRoot(id, _testProject);
             foreach (var member in type.GetMembers())
                 if (!member.IsImplicitlyDeclared && IsExternallyVisible(member) && SymbolId.For(member) is { } memberId)
-                    _state.Roots.Add(memberId);
+                    AddRoot(memberId, _testProject);
         }
+    }
+
+    /// <summary>
+    /// Seed a root, recording its ORIGIN (WS7). A single id can be added from several sites with different
+    /// origins; both origins are recorded and the FINAL classification (production wins) is resolved at
+    /// traversal time by <see cref="GraphState.TestOnlyRoots"/>.
+    /// </summary>
+    private void AddRoot(string id, bool asTest)
+    {
+        _state.Roots.Add(id);
+        if (asTest) _state.TestRoots.Add(id);
+        else _state.ProductionRoots.Add(id);
     }
 
     private static bool MatchesAttribute(AttributeData attr, List<string> names)
@@ -588,6 +640,17 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
             ? name[..^"Attribute".Length]
             : name;
         return names.Contains(name) || names.Contains(trimmed);
+    }
+
+    /// <summary>(WS7) True when the attribute is a test-FRAMEWORK attribute (see <see cref="TestAttributeNames"/>).</summary>
+    private static bool MatchesTestAttribute(AttributeData attr)
+    {
+        var name = attr.AttributeClass?.Name;
+        if (name is null) return false;
+        var trimmed = name.EndsWith("Attribute", StringComparison.Ordinal)
+            ? name[..^"Attribute".Length]
+            : name;
+        return TestAttributeNames.Contains(name) || TestAttributeNames.Contains(trimmed);
     }
 
     private static bool IsEntryType(INamedTypeSymbol type, EntryPointConfig ep)

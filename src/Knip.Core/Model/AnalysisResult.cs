@@ -14,6 +14,13 @@ public sealed record LoadDiagnostic(LoadSeverity Severity, string Code, string M
 public sealed record ProjectLoadFailure(string Project, string Message);
 
 /// <summary>
+/// (WS7) How production mode classified one project: production or test, and WHICH signal decided it
+/// (<c>testProjects:&lt;glob&gt;</c> / <c>referencedAssembly:&lt;name&gt;</c> / <c>nameGlob:&lt;glob&gt;</c> /
+/// <c>default</c>). Surfaced so nobody trusts an OnlyUsedByTests finding blind (K7).
+/// </summary>
+public sealed record TestProjectClassificationInfo(string Project, string Kind, string Signal);
+
+/// <summary>
 /// The run's trustworthiness signal (WS8 §1.1). An agent reads <see cref="Degraded"/> to gate autonomous
 /// action; the detail fields explain why. Populated by the analyzer; <see cref="Degraded"/> is derived.
 /// </summary>
@@ -33,6 +40,15 @@ public sealed class Reliability
 
     /// <summary>The load-diagnostics channel, structured (severity/code/message).</summary>
     public List<LoadDiagnostic> LoadDiagnostics { get; } = [];
+
+    /// <summary>
+    /// (WS7) Production-mode warnings (e.g. zero test projects detected). SURFACED but they do NOT set
+    /// <see cref="Degraded"/> — they change the MEANING of OnlyUsedByTests findings, not graph trust.
+    /// </summary>
+    public List<string> ProductionModeWarnings { get; } = [];
+
+    /// <summary>(WS7) Per-project test/production classification + the signal that decided it (K7).</summary>
+    public List<TestProjectClassificationInfo> TestProjectClassifications { get; } = [];
 
     /// <summary>
     /// OR of: any <see cref="ProjectsFailed"/>, <see cref="UnresolvedTypeReferences"/> &gt; 0, any

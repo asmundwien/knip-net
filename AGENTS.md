@@ -297,10 +297,12 @@ Knip in CI is a **converging gate**, not a linter that replaces build/test:
 - `reliability.projectsFailed` follows the **output schema** (`schemas/knip.output.schema.json`): an
   ARRAY of `{ project, message }`. The WS8a design doc §1.1 prose shows it as an integer — the schema
   is the actual shape and this recipe matches the schema. Flag if the doc should be reconciled.
-- The WS8a §1.1 example additionally shows `productionModeWarnings` and `testProjectClassification`
-  under `reliability`, and a `run.target` field. The published output schema has
-  `additionalProperties: false` and does NOT include these, so they are omitted from the example above.
-  If WS7 lands those fields, both the schema and this doc need updating together.
-- The `deleteCodeAndTests` remediation (WS7 `onlyUsedByTests`, `details.testReferrers`) is described in
-  the design doc but is deferred (no `onlyUsedByTests` kind ships yet), so the worked example does not
-  include it. When WS7 lands, add: `medium` tier, `details.testReferrers[]`, delete code AND its tests.
+- WS7 (production mode) LANDED: `reliability.productionModeWarnings` (string[]) and
+  `reliability.testProjectClassification` (`[{ project, kind, signal }]`) are now in both the output
+  schema and the JSON output. They appear only meaningfully under `--production`; they do NOT set
+  `degraded` (they change the MEANING of `onlyUsedByTests` findings, not graph trust). A `run.target`
+  field is still NOT emitted (not in the schema) — flag if the design doc should drop it.
+- The `onlyUsedByTests` kind (remediation `deleteCodeAndTests`) SHIPS under `--production`: a production
+  symbol reachable only via test roots, landing at `medium` confidence (propose in a PR, do NOT
+  auto-delete). Its `details.testReferrers[]` lists the referring test symbols (`{ symbol, file, line }`)
+  — the deletion unit is the code AND its tests. Delete both, then build + run tests.
