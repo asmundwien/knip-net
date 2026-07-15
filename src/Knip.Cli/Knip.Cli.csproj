@@ -8,15 +8,45 @@
     <LangVersion>latest</LangVersion>
     <RootNamespace>Knip.Cli</RootNamespace>
 
-    <!-- Packaged as a .NET global tool: `dotnet tool install -g Hdir.Knip` -> `dotnet knip`.
-         Only the net10.0 TFM ships as the tool; net472 exists so the engine can be built against
-         full-framework MSBuild for legacy (packages.config) solutions on Windows. -->
-    <PackAsTool>true</PackAsTool>
-    <ToolCommandName>dotnet-knip</ToolCommandName>
+    <RollForward>LatestMajor</RollForward>
+
+    <!-- Package metadata for the .NET global tool: `dotnet tool install -g Hdir.Knip` -> `dotnet-knip`.
+         A .NET global tool runs on .NET (not .NET Framework), so the tool is packed for net10.0 ONLY.
+         net472 exists so the engine can be built against full-framework MSBuild for legacy
+         (packages.config) solutions on Windows — it is a normal build target, NOT the tool
+         distribution. PackAsTool + a net4x TFM errors (NETSDK1054), so tool packaging is scoped to
+         net10.0 below and metadata common to both TFMs (harmless on net472, which is never packed). -->
     <PackageId>Hdir.Knip</PackageId>
     <Version>0.1.0</Version>
-    <Description>Knip for .NET — finds solution-wide dead code (and, later, unused project/package references) via Roslyn.</Description>
-    <RollForward>LatestMajor</RollForward>
+    <Authors>Helsedirektoratet</Authors>
+    <Description>Knip for .NET — a Roslyn-based, solution-wide dead-code finder (and unused project/package reference detector) for .NET, shipped as a `dotnet-knip` global tool with console/JSON/SARIF output and CI exit codes.</Description>
+    <PackageTags>dead-code;roslyn;dotnet-tool;analyzer;knip;unused-code;static-analysis;cleanup;migration</PackageTags>
+  </PropertyGroup>
+
+  <!-- Global-tool packaging. A .NET tool runs on .NET (not .NET Framework), so the tool is built and
+       packed for net10.0 ONLY. `PackAsTool` must be TRUE in the OUTER (TFM-less) evaluation too — that
+       is where NuGet stamps the `DotnetTool` package type into the nuspec; without it `dotnet tool
+       install` rejects the package ("… is not a .NET tool"). But `PackAsTool=true` on the INNER net472
+       build trips NETSDK1054 (PackAsTool only supports .NET Core). So: turn PackAsTool ON everywhere
+       EXCEPT the net472 inner build, whose build output is additionally excluded from the package. -->
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>dotnet-knip</ToolCommandName>
+  </PropertyGroup>
+
+  <!-- net472 stays a normal build target (the legacy-analysis story needs it to COMPILE), but it is not
+       the tool distribution: disable PackAsTool for its inner build (avoids NETSDK1054) and keep its
+       build output out of the nuspec. The outer/net10 builds above still carry the DotnetTool type. -->
+  <PropertyGroup Condition="'$(TargetFramework)'=='net472'">
+    <PackAsTool>false</PackAsTool>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+  </PropertyGroup>
+
+  <!-- Excluding net472's build output leaves a net472 dependency group in the nuspec with no matching
+       lib/ref folder (NU5128). That is intentional for this tool package (net472 is never distributed),
+       so silence the packaging-only warning; it does not apply to build (`-warnaserror` on build stays). -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);NU5128</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
