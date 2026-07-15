@@ -407,7 +407,14 @@ public sealed class DeadCodeAnalyzer
 
     private bool IsIgnored(ISymbol symbol)
     {
-        if (Glob.IsMatchAny(symbol.ToDisplayString(ReferenceWalker.FqFormat), _config.Ignore.Symbols)) return true;
+        // ignore.symbols matches a symbol by its FULLY-QUALIFIED name — the same shape shown in findings
+        // (DisplayFormat): namespace + containing type(s) + member name, with parameters for methods
+        // (e.g. "CatI.I2.Sample.OnlyDead()", "CatI.I2.Sample.IgnoredProperty", type "CatI.I2.Sample").
+        // A doc-style glob like "CatI.I2.Sample.Ignored*" therefore matches the MEMBER, not only a bare
+        // name. We deliberately reuse DisplayFormat (rather than FqFormat, whose member rendering is the
+        // bare name and is shared with ignore.namespaces / entry-point base-type matching) so the ignore
+        // name is consistent with what the user sees reported.
+        if (Glob.IsMatchAny(symbol.ToDisplayString(DisplayFormat), _config.Ignore.Symbols)) return true;
         var ns = symbol.ContainingNamespace?.ToDisplayString() ?? string.Empty;
         return Glob.IsMatchAny(ns, _config.Ignore.Namespaces);
     }
