@@ -7,6 +7,11 @@ The paid tools (ReSharper/Rider, NDepend) own this space; the free Roslyn analyz
 
 Runs locally and in CI, and is **configured entirely in code** (`knip.json`).
 
+**AI agents are first-class users** — the JSON v2 output is the product API. If you are (or are driving)
+an agent that consumes Knip.NET, read [`AGENTS.md`](./AGENTS.md) for the canonical run → triage → delete
+→ verify → PR recipe, the confidence/hazard autonomy rules, and a full JSON v2 example. *(Draft — pending
+dogfood validation.)*
+
 > Status: **working prototype.** Flagship feature (dead code) is implemented and validated on real
 > solutions. Unused `<ProjectReference>` detection is implemented; unused NuGet packages are on the
 > roadmap below.
