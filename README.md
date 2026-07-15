@@ -91,7 +91,15 @@ completion + validation). The JSON output (`--format json`, `formatVersion: 2`) 
   `.razor` markup or the DI container: properties carrying `[Parameter]`, `[CascadingParameter]`,
   `[SupplyParameterFromQuery]`, `[EditorRequired]`, or `[Inject]`, matched by attribute NAME (offline).
   It roots only the attribute-bearing member and its accessors — never blanket-roots a component's
-  members, so plain sibling properties stay flagged. Unknown plugin ids
+  members, so plain sibling properties stay flagged. **`serialization` ships OFF** (opt-in via
+  `plugins.serialization.enabled: true`) — keeps alive DTO data members touched only by a JSON
+  serializer: the public get/set properties and public fields of a demonstrably-serialized type
+  (`JsonSerializer.Serialize<T>`/`Deserialize<T>`, `JsonConvert.SerializeObject`/`DeserializeObject<T>`,
+  matched by method NAME offline; also members carrying `[JsonPropertyName]`/`[JsonProperty]`/
+  `[DataMember]`). It roots only a serialized type's own data members — never blanket-roots every
+  property — so non-serialized types' plain members and unrelated dead types stay flagged. Optional
+  `plugins.serialization.namespaces` glob list also roots the data members of types in matching
+  namespaces. Unknown plugin ids
   and unknown per-plugin keys print a **visible warning** rather than silently no-opping, so a typo
   is caught. Run with `-v` to see each plugin's contribution counts and per-project wall-time.
 

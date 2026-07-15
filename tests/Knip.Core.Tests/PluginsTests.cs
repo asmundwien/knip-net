@@ -37,6 +37,11 @@ public sealed class PluginsTests
         Plugins = { ["blazorParameter"] = new PluginSettings { Enabled = enabled } },
     };
 
+    private static KnipConfig WithSerialization(bool enabled) => new()
+    {
+        Plugins = { ["serialization"] = new PluginSettings { Enabled = enabled } },
+    };
+
     private static Task<IReadOnlySet<string>> FindingsIn(string ns, KnipConfig config) =>
         FixtureRunner.FindingSymbolsInAsync(Category, ns, config);
 
@@ -133,6 +138,59 @@ public sealed class PluginsTests
 
         var byDefault = await FindingsIn("CatH.H6", new KnipConfig());
         Assert.Contains("CatH.H6.MyComponent.Title", byDefault);
+    }
+
+    // ── serialization differential + over-rooting guard: H5 (Serialize(dto) over DTO props) ────────
+    [Fact]
+    public async Task Serialization_serialized_dto_members_kept_alive_H5()
+    {
+        // Plugin OFF (also the DEFAULT — it is opt-in): the serializer-touched property is a false
+        // positive (no source reads dto.Name; the serializer reflects over it) → flagged.
+        var off = await FindingsIn("CatH.H5", WithSerialization(false));
+        Assert.Contains("CatH.H5.PersonDto.Name", off);
+
+        // Plugin ON: PersonDto is passed to Serialize → the plugin roots its public data members →
+        // Name alive → NOT reported…
+        var on = await FindingsIn("CatH.H5", WithSerialization(true));
+        Assert.DoesNotContain("CatH.H5.PersonDto.Name", on);
+        // …but two decoys STAY FLAGGED (over-rooting guard: the plugin roots only serialized types' own
+        // data members, never every property in the solution):
+        Assert.Contains("CatH.H5.NonDto.PlainDead", on);  // plain member on a NON-serialized type
+        Assert.Contains("CatH.H5.UnrelatedType", on);     // unrelated dead type
+    }
+
+    // serialization is OFF by default (opt-in): a default config leaves the serialized property flagged.
+    [Fact]
+    public async Task Serialization_is_off_by_default()
+    {
+        Assert.DoesNotContain("serialization", PluginRegistry.DefaultEnabledIds);
+        Assert.False(new KnipConfig().IsPluginEnabled(Descriptor("serialization")),
+            "serialization must default OFF (opt-in)");
+
+        var byDefault = await FindingsIn("CatH.H5", new KnipConfig());
+        Assert.Contains("CatH.H5.PersonDto.Name", byDefault);
+    }
+
+    // The optional 'namespaces' glob roots the data members of matching-namespace types even when the
+    // plugin can't see them serialized — and is a RECOGNIZED key (no unknown-key warning).
+    [Fact]
+    public async Task Serialization_namespaces_glob_roots_dto_members_by_namespace()
+    {
+        var settings = new PluginSettings { Enabled = true };
+        settings.Extra["namespaces"] = System.Text.Json.JsonSerializer.SerializeToElement(new[] { "CatH.H5" });
+        var config = new KnipConfig { Plugins = { ["serialization"] = settings } };
+
+        // With CatH.H5 declared a DTO namespace, NonDto.PlainDead (a plain member the serialize-call rule
+        // would NOT root) is now rooted by the namespace glob → alive → NOT reported…
+        var on = await FindingsIn("CatH.H5", config);
+        Assert.DoesNotContain("CatH.H5.NonDto.PlainDead", on);
+        Assert.DoesNotContain("CatH.H5.PersonDto.Name", on);
+        // …while the unrelated dead TYPE stays flagged (namespace rooting is data-members-only).
+        Assert.Contains("CatH.H5.UnrelatedType", on);
+
+        // 'namespaces' is a known key → no unknown-key warning.
+        var result = await FixtureRunner.RunAsync(Category, config);
+        Assert.DoesNotContain(result.LoadDiagnostics, d => d.Contains("plugins.serialization.namespaces"));
     }
 
     // A typo in the blazorParameter block surfaces a visible unknown-key warning (never silently no-ops).

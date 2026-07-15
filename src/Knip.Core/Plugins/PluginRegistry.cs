@@ -41,8 +41,13 @@ public static class PluginRegistry
         new("reflection", defaultEnabled: true, () => new ReflectionPlugin()),
         new("scanningDi", defaultEnabled: true, () => new ScanningDiPlugin()),
         // blazorParameter — opt-in (default OFF): roots Blazor [Parameter]/[CascadingParameter]/[Inject]
-        // members set from .razor markup / DI. serialization — lands in a later task.
+        // members set from .razor markup / DI.
         new("blazorParameter", defaultEnabled: false, () => new BlazorParameterPlugin()),
+        // serialization — opt-in (default OFF): roots the public data members of demonstrably-serialized
+        // DTO types (Serialize/Deserialize target) and serialization-annotated members. Optional
+        // 'namespaces' glob list roots DTO members by namespace.
+        new("serialization", defaultEnabled: false, () => new SerializationPlugin(),
+            SerializationPlugin.NamespacesSettingKey),
     ];
 
     /// <summary>The ids that run under a default (<c>new KnipConfig()</c>) configuration.</summary>
