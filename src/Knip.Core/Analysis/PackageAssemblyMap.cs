@@ -13,17 +13,44 @@ namespace Knip.Core.Analysis;
 /// referenceable DLLs per package, and an EMPTY <c>compile</c> set is the reliable signal for an
 /// analyzer / source-generator / build-only package (no referenceable assembly at all).</para>
 ///
+/// <para>METAPACKAGES: some packages (e.g. <c>Swashbuckle.AspNetCore</c>) declare an EMPTY own
+/// <c>compile</c> set yet ARE used — the functionality is delivered by their DEPENDENCY packages
+/// (<c>Swashbuckle.AspNetCore.SwaggerGen</c> etc.). To avoid flagging a used metapackage as unused (and
+/// mis-tagging it build-only), the assets file's per-library <c>dependencies</c> map is retained, and WS3
+/// grades a declared package against its full DEPENDENCY CLOSURE: the package itself plus every package it
+/// transitively pulls. A package is USED if ANY assembly in that closure is touched; it is BUILD-ONLY only
+/// when the WHOLE closure delivers no referenceable compile assembly (a genuine analyzer / build-target
+/// package such as StyleCop.Analyzers or coverlet.msbuild).</para>
+///
 /// <para>Fallback (no assets file): the Roslyn <see cref="Project.MetadataReferences"/> paths, where a
 /// NuGet assembly lives under <c>…/packages/&lt;id&gt;/&lt;version&gt;/lib/…/X.dll</c> — the path segment
 /// after <c>packages/</c> gives the package id. The fallback cannot see build-only packages (they
-/// contribute no metadata reference), so those are simply absent rather than flagged.</para>
+/// contribute no metadata reference) NOR the dependency graph (no closure), so its per-package assemblies
+/// are its own only.</para>
 ///
 /// All keys are strings (assembly / package names) — invariant #1; no symbols are retained.
 /// </summary>
 internal static class PackageAssemblyMap
 {
-    /// <summary>Assemblies a package delivers, plus whether it delivers any referenceable compile assembly.</summary>
-    internal sealed record PackageAssemblies(IReadOnlyCollection<string> Assemblies, bool DeliversCompileAssembly);
+    /// <summary>
+    /// The assemblies a package delivers itself, whether it delivers any referenceable compile assembly of
+    /// its own, and the ids of the packages it directly depends on (from the assets <c>dependencies</c>
+    /// map). <see cref="Dependencies"/> is empty for the metadata-reference fallback (no graph available).
+    /// </summary>
+    internal sealed record PackageAssemblies(
+        IReadOnlyCollection<string> Assemblies,
+        bool DeliversCompileAssembly,
+        IReadOnlyCollection<string> Dependencies);
+
+    /// <summary>
+    /// The dependency-closure view of a declared package: the assemblies delivered by the package AND every
+    /// package it transitively depends on, plus whether ANY of them delivers a referenceable compile
+    /// assembly. A metapackage (empty own compile) whose closure delivers used assemblies resolves to
+    /// <see cref="DeliversCompileAssembly"/> = true here; a genuine analyzer / build-only package resolves
+    /// to false (its whole closure is compile-less).
+    /// </summary>
+    internal sealed record ClosureAssemblies(
+        IReadOnlyCollection<string> Assemblies, bool DeliversCompileAssembly);
 
     /// <summary>
     /// Package id (case-insensitive, as declared) → the assemblies it delivers for the project's target.
@@ -36,6 +63,37 @@ internal static class PackageAssemblyMap
         var fromAssets = TryFromAssets(project);
         if (fromAssets is not null) return fromAssets;
         return FromMetadataReferences(project);
+    }
+
+    /// <summary>
+    /// The DEPENDENCY-CLOSURE assemblies for <paramref name="packageId"/>: the union of the compile+runtime
+    /// assemblies of the package and every package it transitively depends on (per the assets
+    /// <c>dependencies</c> graph in <paramref name="map"/>), plus whether ANY package in that closure
+    /// delivers a referenceable compile assembly. Null when the id is not in the map (no delivered-assembly
+    /// evidence at all — the caller then leaves the reference alone). Cycle-safe.
+    /// </summary>
+    public static ClosureAssemblies? Closure(
+        IReadOnlyDictionary<string, PackageAssemblies> map, string packageId)
+    {
+        if (!map.TryGetValue(packageId, out _)) return null;
+
+        var assemblies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var deliversCompile = false;
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var stack = new Stack<string>();
+        stack.Push(packageId);
+
+        while (stack.Count > 0)
+        {
+            var id = stack.Pop();
+            if (!visited.Add(id)) continue;
+            if (!map.TryGetValue(id, out var pkg)) continue; // dependency not in the graph (framework/meta)
+            foreach (var assembly in pkg.Assemblies) assemblies.Add(assembly);
+            deliversCompile |= pkg.DeliversCompileAssembly;
+            foreach (var dep in pkg.Dependencies) stack.Push(dep);
+        }
+
+        return new ClosureAssemblies(assemblies, deliversCompile);
     }
 
     // ---- project.assets.json (preferred, authoritative) ------------------------------------------
@@ -78,7 +136,7 @@ internal static class PackageAssemblyMap
                     var assemblies = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     var hasCompile = CollectAssemblies(lib.Value, "compile", assemblies);
                     CollectAssemblies(lib.Value, "runtime", assemblies);
-                    map[id] = new PackageAssemblies(assemblies, hasCompile);
+                    map[id] = new PackageAssemblies(assemblies, hasCompile, CollectDependencies(lib.Value));
                 }
                 break; // first plain-TFM target only
             }
@@ -105,6 +163,21 @@ internal static class PackageAssemblyMap
             any = true;
         }
         return any;
+    }
+
+    /// <summary>
+    /// The package ids under the library's <c>dependencies</c> map (keys are ids, values are version
+    /// ranges — invariant #1 keeps only the id). Empty when the library declares no dependencies.
+    /// </summary>
+    private static IReadOnlyCollection<string> CollectDependencies(JsonElement lib)
+    {
+        if (!lib.TryGetProperty("dependencies", out var deps) || deps.ValueKind != JsonValueKind.Object)
+            return [];
+
+        var ids = new List<string>();
+        foreach (var dep in deps.EnumerateObject())
+            ids.Add(dep.Name);
+        return ids;
     }
 
     private static string? AssetsPathFor(Project project)
@@ -139,9 +212,13 @@ internal static class PackageAssemblyMap
             set.Add(assembly);
         }
 
+        // No assets graph in the fallback → no dependency closure. Each package's own assemblies stand
+        // alone (Dependencies empty). A metapackage would be invisible here (contributes no metadata
+        // reference), so it is simply absent from the map and left alone by the caller (conservative).
         var map = new Dictionary<string, PackageAssemblies>(StringComparer.OrdinalIgnoreCase);
         foreach (var (id, assemblies) in byPackage)
-            map[id] = new PackageAssemblies(assemblies, DeliversCompileAssembly: assemblies.Count > 0);
+            map[id] = new PackageAssemblies(
+                assemblies, DeliversCompileAssembly: assemblies.Count > 0, Dependencies: []);
         return map;
     }
 
