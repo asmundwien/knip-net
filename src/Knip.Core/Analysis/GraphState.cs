@@ -17,6 +17,14 @@ internal sealed class GraphState
     /// <summary>Root ids: framework entry points reachability starts from.</summary>
     public HashSet<string> Roots { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Ids DECLARED inside a BUILT-IN generated tree (H11). These are still walked for their outbound
+    /// edges/roots (so user symbols they reference stay alive), but are NEVER reported as dead — the
+    /// user did not author that code. String-keyed by <see cref="SymbolId"/> (invariant #1). Consulted
+    /// by DeadCodeAnalyzer.ShouldReport, mirroring the existing ignore-for-reporting path.
+    /// </summary>
+    public HashSet<string> GeneratedDeclarations { get; } = new(StringComparer.Ordinal);
+
     /// <summary>Count of references to unresolved (error) types — a signal the solution isn't fully restored.</summary>
     public int UnresolvedTypeReferences;
 

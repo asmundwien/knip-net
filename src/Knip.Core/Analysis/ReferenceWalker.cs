@@ -23,6 +23,9 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     // does not exist on net472. Only .Contains is used here, and it is never mutated after construction.
     private readonly ISet<string> _solutionAssemblies;
     private readonly GraphState _state;
+    // When true this tree is BUILT-IN generated (H11): walk it for edges/roots exactly as normal, but
+    // record every id it DECLARES as "never report" so its own dead code is not flagged to the user.
+    private readonly bool _generatedTree;
     private readonly string? _ownAssembly;
     private readonly Stack<string> _context = new();
 
@@ -31,7 +34,8 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         KnipConfig config,
         bool publicApiProject,
         ISet<string> solutionAssemblies,
-        GraphState state)
+        GraphState state,
+        bool generatedTree = false)
         : base(SyntaxWalkerDepth.Node)
     {
         _model = model;
@@ -39,6 +43,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         _publicApiProject = publicApiProject;
         _solutionAssemblies = solutionAssemblies;
         _state = state;
+        _generatedTree = generatedTree;
         // The assembly this tree belongs to — the source project of every edge this walker records.
         _ownAssembly = model.Compilation.Assembly.Name;
     }
@@ -123,6 +128,11 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     {
         var id = SymbolId.For(symbol);
         if (id is null) return null;
+        // A declaration whose id first appears in a generated tree is "generated" for reporting: its own
+        // dead code is not the user's to delete (H11). Marked here — where "declared in THIS tree" is
+        // known — rather than post-hoc from Locations, which would also cover a partial's user-authored
+        // part in another file.
+        if (_generatedTree) _state.GeneratedDeclarations.Add(id);
         if (_state.Declared.TryAdd(id, symbol)) // partial types/methods appear once per file
         {
             EvaluateRoots(symbol, id);
