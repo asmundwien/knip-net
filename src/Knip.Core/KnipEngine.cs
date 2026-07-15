@@ -46,6 +46,11 @@ public static class KnipEngine
         }
 
         BuildStructuredDiagnostics(result);
+
+        // WS8b-2 L9: grade confidence in a FINAL pass, once reliability (incl. workspace restore/load
+        // failures attributed above) is complete — C1 per-project attribution needs the full picture.
+        // Hazards were attached by the analyzer; this only demotes confidence off them + reliability.
+        Analysis.ConfidenceModel.Apply(result, config);
         return result;
     }
 

@@ -60,6 +60,59 @@ internal static class FindingEnrichment
     };
 
     /// <summary>
+    /// The ADVISORY hazards (WS8 §4.2) for a symbol finding — never changes the emitted set, only tags
+    /// risk (the demotion of confidence off these tags is <see cref="ConfidenceModel"/>). Detected here:
+    /// <list type="bullet">
+    ///   <item><see cref="Hazard.PublicApi"/> — the symbol is externally visible
+    ///     (public / protected / protected-internal): a consumer outside the solution may bind it.</item>
+    ///   <item><see cref="Hazard.InternalsVisibleTo"/> — the symbol is INTERNAL and its declaring project
+    ///     carries an <c>[InternalsVisibleTo]</c> naming an assembly NOT in the solution (an invisible
+    ///     friend consumer), signalled by <paramref name="declaringProjectHasIvtToNonSolution"/>.</item>
+    /// </list>
+    /// SerializationShaped / ConfigBoundType / DiPluginShaped detection is DEFERRED (WS5) — not set here.
+    /// </summary>
+    public static IReadOnlyList<Hazard> ComputeHazards(ISymbol symbol, bool declaringProjectHasIvtToNonSolution)
+    {
+        var hazards = new List<Hazard>();
+
+        if (IsExternallyVisible(symbol.DeclaredAccessibility))
+            hazards.Add(Hazard.PublicApi);
+        else if (declaringProjectHasIvtToNonSolution && symbol.DeclaredAccessibility == Accessibility.Internal)
+            hazards.Add(Hazard.InternalsVisibleTo);
+
+        return hazards.Count == 0 ? [] : hazards;
+    }
+
+    /// <summary>public / protected / protected-internal are visible to code OUTSIDE the assembly.</summary>
+    private static bool IsExternallyVisible(Accessibility accessibility) => accessibility is
+        Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal;
+
+    /// <summary>
+    /// True when the compilation's assembly carries an <c>[InternalsVisibleTo("X")]</c> whose target
+    /// assembly <c>X</c> is NOT one of <paramref name="solutionAssemblies"/> — i.e. an INVISIBLE external
+    /// friend that may bind this project's internals (same "unknown consumer" logic as unconfigured
+    /// publicApi). The target name is the bare assembly name; strip any <c>, PublicKey=…</c> suffix.
+    /// Read from assembly attributes (not source) so metadata-only viewpoints agree.
+    /// </summary>
+    public static bool HasInternalsVisibleToNonSolutionAssembly(
+        Compilation compilation, ISet<string> solutionAssemblies)
+    {
+        foreach (var attribute in compilation.Assembly.GetAttributes())
+        {
+            if (attribute.AttributeClass?.Name != "InternalsVisibleToAttribute") continue;
+            if (attribute.ConstructorArguments.Length == 0) continue;
+            if (attribute.ConstructorArguments[0].Value is not string target) continue;
+
+            // "Friend, PublicKey=00240000..." → "Friend". IVT targets are bare assembly names.
+            var comma = target.IndexOf(',');
+            var name = (comma >= 0 ? target.Substring(0, comma) : target).Trim();
+            if (name.Length > 0 && !solutionAssemblies.Contains(name))
+                return true;
+        }
+        return false;
+    }
+
+    /// <summary>
     /// The deletion unit (WS8 §3.3) for a symbol: from the earliest leading XML-doc / attribute trivia
     /// through the declaration's closing brace / terminating semicolon. Field/event declarations report
     /// the whole field-declaration statement (the variable's declarator sits inside it). Returns null

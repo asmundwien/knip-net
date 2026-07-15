@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Json.Schema;
 using Knip.Core;
+using Knip.Core.Analysis;
 using Knip.Core.Configuration;
 using Knip.Core.Model;
 using Knip.Core.Reporting;
@@ -12,14 +13,16 @@ namespace Knip.Core.Tests;
 
 /// <summary>
 /// Category L — the WS8 agent-first interface (JSON v2 output = product API). WS8b-1 ships the FIELD
-/// SHAPE (id/span/confidence/hazards/remediation/rootCause + reliability + summary + schemas). The
-/// confidence/hazard DEMOTION engine is WS8b-2, so every finding here is confidence:"high" hazards:[].
+/// SHAPE; WS8b-2 ships the L9 confidence/hazard DEMOTION engine (hazards advisory-only, first-match
+/// demotion C1 → publicApi/C2 → internalsVisibleTo → C3).
 ///
 /// Promoted rows: L1 (output validates against the schema), L2 (stable ids + order across runs),
 /// L3 (degraded true vs false), L4 (delete every finding strictly by span → compiles green),
-/// L8 (summary == findings), L10 (cascade carries parent id as rootCause; direct == null).
-/// Rows tagged Skip "G-feat" belong to later work streams (WS8b-2 demotion / WS8c CLI):
-/// L5/L6/L7 (--why / --print-config / all-config-key warnings) and L9/L11–L17 (confidence/hazard demotion).
+/// L8 (summary == findings), L10 (cascade carries parent id as rootCause; direct == null),
+/// and the WS8b-2 demotion rows L11 (global → all low), L12 (per-project attribution), L13/L14
+/// (publicApi + config split), L16 (unusedProjectReference → medium; C4 deferred), L17 (IVT → low).
+/// Still Skip "G-feat": L5/L6/L7 (--why / --print-config / all-config-key warnings, WS8c) and
+/// L15 (serialization/config/DI hazard DETECTION, WS5).
 /// </summary>
 [Collection(MsBuildCollection.Name)]
 public sealed class CatLTests
@@ -173,6 +176,112 @@ public sealed class CatLTests
         Assert.Null(documented.RootCause);
     }
 
+    // ══ L9 confidence/hazard demotion engine (WS8b-2). Rows L11–L17 pin the individual rules; each
+    //    asserts the TIER (never absence — every finding is still emitted; hazards are advisory). ══
+
+    // ── L11: solution-GLOBAL degradation → ALL findings low (C1 global). Reuses the Degraded fixture,
+    //    whose unresolved-type reference drives reliability.degraded end-to-end through KnipEngine. ────
+    [Fact]
+    public async Task L11_global_degradation_demotes_all_to_low()
+    {
+        var result = await FixtureRunner_Run("Degraded");
+
+        Assert.True(result.Reliability.Degraded, "L11 precondition: the Degraded fixture must be degraded.");
+        Assert.NotEmpty(result.Findings);
+        // Global degradation taints the whole graph: nothing may be trusted for autonomous deletion.
+        Assert.All(result.Findings, f => Assert.Equal(Confidence.Low, f.Confidence));
+    }
+
+    // ── L12: a load failure in ONE project only → that project's findings low, others unaffected
+    //    (C1 per-project attribution). Real offline fixtures cannot make MSBuild fail a single project,
+    //    so this drives ConfidenceModel directly with a synthetic per-project ProjectsFailed. ──────────
+    [Fact]
+    public void L12_per_project_failure_demotes_only_that_project()
+    {
+        var result = new AnalysisResult();
+        result.Findings.Add(HighFinding("Bad.Sample", "Bad"));
+        result.Findings.Add(HighFinding("Healthy.Sample", "Healthy"));
+        // ONE project failed; the solution is NOT globally degraded (no unresolved types / restore fail).
+        result.Reliability.ProjectsFailed.Add(new ProjectLoadFailure("Bad", "boom"));
+
+        ConfidenceModel.Apply(result, new KnipConfig());
+
+        Assert.Equal(Confidence.Low, result.Findings.Single(f => f.Project == "Bad").Confidence);
+        // A healthy project's finding is NOT demoted by another project's failure.
+        Assert.Equal(Confidence.High, result.Findings.Single(f => f.Project == "Healthy").Confidence);
+    }
+
+    // ── L13: publicApi-hazard finding, API posture DECLARED (publicApiProjects/treatAllPublicAsUsed
+    //    set) → medium (C2 configured branch). The config glob deliberately does NOT match this project,
+    //    so the public symbol survives to a finding and is graded medium rather than rooted. ───────────
+    [Fact]
+    public async Task L13_publicapi_hazard_medium_when_posture_declared()
+    {
+        // publicApiProjects set (posture declared) but matching a DIFFERENT project name.
+        var config = new KnipConfig();
+        config.Roots.PublicApiProjects.Add("SomeOther*");
+
+        var result = await FixtureRunner_Run("PublicApi", config);
+
+        var pub = Single(result, "CatL.PublicApi.DeadPublicApi");
+        Assert.Contains(Hazard.PublicApi, pub.Hazards);
+        Assert.Equal(Confidence.Medium, pub.Confidence);
+
+        // Anti-vacuous: the no-hazard internal sibling stays HIGH — only the publicApi finding is graded.
+        Assert.Equal(Confidence.High, Single(result, "CatL.PublicApi.DeadInternalPlain").Confidence);
+    }
+
+    // ── L14: publicApi-hazard finding, NEITHER key set → low (C2 unconfigured branch). ────────────────
+    [Fact]
+    public async Task L14_publicapi_hazard_low_when_posture_unknown()
+    {
+        var result = await FixtureRunner_Run("PublicApi"); // default config: no publicApi posture declared
+
+        var pub = Single(result, "CatL.PublicApi.DeadPublicApi");
+        Assert.Contains(Hazard.PublicApi, pub.Hazards);
+        Assert.Equal(Confidence.Low, pub.Confidence);
+
+        // Anti-vacuous: the no-hazard internal sibling stays HIGH.
+        Assert.Equal(Confidence.High, Single(result, "CatL.PublicApi.DeadInternalPlain").Confidence);
+    }
+
+    // ── L16 (C3 half): an UnusedProjectReference finding → medium. C4 (deleteCodeAndTests) is DEFERRED
+    //    to WS7 — no test-only reachability kind exists yet, so only the project-ref half is pinned. ───
+    [Fact]
+    public async Task L16_unused_project_reference_is_medium()
+    {
+        var result = await FixtureRunner.RunAsync("WS2");
+
+        Assert.False(result.Reliability.Degraded, "L16 precondition: WS2 fixture must load clean (no C1 global demotion).");
+        var projectRef = result.Findings.Single(f =>
+            f.Kind == FindingKind.UnusedProjectReference && f.ReferencedProject == "WS2.UnusedLib");
+        Assert.Equal(Confidence.Medium, projectRef.Confidence);
+    }
+
+    // ── L17: [InternalsVisibleTo] names a NON-solution assembly → this project's INTERNAL findings low
+    //    (new internalsVisibleTo hazard). Private findings are unaffected (invisible even to friends). ─
+    [Fact]
+    public async Task L17_internals_visible_to_non_solution_demotes_internal_to_low()
+    {
+        var result = await FixtureRunner_Run("InternalsVisibleTo");
+
+        var @internal = Single(result, "CatL.InternalsVisibleTo.DeadInternal");
+        Assert.Contains(Hazard.InternalsVisibleTo, @internal.Hazards);
+        Assert.Equal(Confidence.Low, @internal.Confidence);
+
+        // Anti-vacuous: a PRIVATE member is invisible even to a friend assembly, so no hazard applies
+        // and it stays HIGH — proving IVT tags only internal findings, not everything in the project.
+        var priv = result.Findings.Single(f => f.Symbol.EndsWith("DeadPrivate()", StringComparison.Ordinal));
+        Assert.Empty(priv.Hazards);
+        Assert.Equal(Confidence.High, priv.Confidence);
+    }
+
+    // ── L15 left G-feat: serializationShaped/configBoundType/diPluginShaped hazard DETECTION needs
+    //    heuristics/plugins (WS5). The enum values + the low-tier demotion off them already exist in the
+    //    engine, but with no detector to attach them there is nothing to pin end-to-end yet. ───────────
+    [Fact(Skip = "G-feat: serialization/config/DI hazard DETECTION is WS5 (enum + low demotion exist; no detector yet)")]
+    public void L15_serialization_config_di_hazards() { }
+
     // ── Skipped rows (deferred work streams) ──────────────────────────────────────────────────
     [Fact(Skip = "G-feat: --why provenance is WS8c")]
     public void L5_why_flagged_and_alive() { }
@@ -183,11 +292,9 @@ public sealed class CatLTests
     [Fact(Skip = "G-feat: generalized unknown-key warnings are WS8c")]
     public void L7_all_config_key_warnings() { }
 
-    [Fact(Skip = "G-feat: confidence/hazard demotion engine is WS8b-2")]
-    public void L9_confidence_hazard_rule_table() { }
-
-    [Fact(Skip = "G-feat: confidence/hazard demotion pinned by fixtures is WS8b-2")]
-    public void L11_to_L17_demotion_fixtures() { }
+    // ── helper: a High-confidence, no-hazard symbol finding for the synthetic L12 unit test. ──────────
+    private static Finding HighFinding(string symbol, string project) => new(
+        FindingKind.UnusedMethod, symbol, "method", "private", project, "X.cs", 1, 1);
 
     // ── helpers ───────────────────────────────────────────────────────────────────────────────
 
@@ -202,8 +309,8 @@ public sealed class CatLTests
         return writer.ToString();
     }
 
-    private static Task<AnalysisResult> FixtureRunner_Run(string variant) =>
-        KnipEngine.RunAsync(new KnipConfig(), FixtureSolution(variant));
+    private static Task<AnalysisResult> FixtureRunner_Run(string variant, KnipConfig? config = null) =>
+        KnipEngine.RunAsync(config ?? new KnipConfig(), FixtureSolution(variant));
 
     private static IReadOnlyList<string> ExtractIds(string json)
     {

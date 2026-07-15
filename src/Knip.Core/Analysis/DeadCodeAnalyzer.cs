@@ -58,6 +58,10 @@ public sealed class DeadCodeAnalyzer
         // The single choke point through which every plugin mutates the graph (invariants #1, #5, add-only).
         var sink = new ContributionSink(state, solutionAssemblies);
 
+        // Per-DEFINING-assembly: does that project carry [InternalsVisibleTo] a NON-solution assembly?
+        // Keyed by assembly name (invariant #1); drives the InternalsVisibleTo hazard in ToFinding.
+        var ivtToNonSolution = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var project in projects)
         {
             ct.ThrowIfCancellationRequested();
@@ -65,6 +69,9 @@ public sealed class DeadCodeAnalyzer
             var compilation = await project.GetCompilationAsync(ct);
             if (compilation is null) continue;
             result.ProjectsAnalyzed++;
+
+            if (FindingEnrichment.HasInternalsVisibleToNonSolutionAssembly(compilation, solutionAssemblies))
+                ivtToNonSolution.Add(compilation.Assembly.Name);
 
             var isPublicApi = Glob.IsMatchAny(project.Name, _config.Roots.PublicApiProjects);
             if (compilation.GetEntryPoint(ct) is { } entry)
@@ -120,7 +127,7 @@ public sealed class DeadCodeAnalyzer
         result.RootCount = state.Roots.Count;
 
         var reachable = Traverse(state);
-        BuildFindings(state, reachable, result);
+        BuildFindings(state, reachable, result, ivtToNonSolution);
         BuildProjectReferenceFindings(solution, projects, state, result);
 
         if (state.UnresolvedTypeReferences > 0)
@@ -193,7 +200,8 @@ public sealed class DeadCodeAnalyzer
         return reachable;
     }
 
-    private void BuildFindings(GraphState state, HashSet<string> reachable, AnalysisResult result)
+    private void BuildFindings(
+        GraphState state, HashSet<string> reachable, AnalysisResult result, HashSet<string> ivtToNonSolution)
     {
         var dead = new HashSet<string>(StringComparer.Ordinal);
         foreach (var (id, _) in state.Declared)
@@ -209,7 +217,7 @@ public sealed class DeadCodeAnalyzer
         {
             if (!dead.Contains(id)) continue;
             if (!ShouldReport(id, symbol, dead, state)) continue;
-            if (ToFinding(symbol) is not { } finding) continue;
+            if (ToFinding(symbol, ivtToNonSolution) is not { } finding) continue;
             reportedKeyToFindingId[id] = finding.Id;
             emitted.Add((id, symbol, result.Findings.Count));
             result.Findings.Add(finding);
@@ -418,7 +426,7 @@ public sealed class DeadCodeAnalyzer
         return false;
     }
 
-    private static Finding? ToFinding(ISymbol symbol)
+    private static Finding? ToFinding(ISymbol symbol, HashSet<string> ivtToNonSolution)
     {
         var location = symbol.Locations.FirstOrDefault(l => l.IsInSource);
         if (location is null) return null;
@@ -437,6 +445,7 @@ public sealed class DeadCodeAnalyzer
         var lineSpan = location.GetLineSpan();
         var displayName = symbol.ToDisplayString(DisplayFormat);
         var project = symbol.ContainingAssembly?.Name ?? "?";
+        var hasIvt = symbol.ContainingAssembly is { } asm && ivtToNonSolution.Contains(asm.Name);
         return new Finding(
             kind.Value,
             displayName,
@@ -450,7 +459,9 @@ public sealed class DeadCodeAnalyzer
             Id = FindingEnrichment.ComputeId(kind.Value, displayName, project, null),
             Span = FindingEnrichment.ComputeSpan(symbol),
             Remediation = FindingEnrichment.RemediationFor(kind.Value),
-            // Confidence stays High and Hazards stays empty in WS8b-1 (demotion is WS8b-2).
+            // WS8b-2: attach ADVISORY hazards (publicApi / internalsVisibleTo). Confidence is graded in a
+            // final pass (ConfidenceModel.Apply) once the reliability picture is complete.
+            Hazards = FindingEnrichment.ComputeHazards(symbol, hasIvt),
         };
     }
 

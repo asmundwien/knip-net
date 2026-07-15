@@ -11,6 +11,16 @@
     <NoWarn>$(NoWarn);RS1039;CS0618</NoWarn>
   </PropertyGroup>
 
+  <!-- WS8b-2: the test battery exercises the internal L9 confidence/hazard engine (ConfidenceModel)
+       against synthetic reliability (L11 global / L12 per-project) which real offline fixtures cannot
+       reproduce. Emitted via a csproj attribute so no source InternalsVisibleTo attribute (or #if) is
+       needed, and it applies uniformly across net10.0 + net472 (invariant #9). -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>Knip.Core.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <!-- net472-only down-level BCL shims. Compiled and globally-imported ONLY for net472 so the
        analysis sources stay byte-identical across TFMs (no #if in walker/analyzer/graph — invariant #9).
        On net10.0 these files are excluded and the BCL/runtime methods are used directly. -->
