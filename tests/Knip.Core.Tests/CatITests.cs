@@ -129,13 +129,48 @@ public sealed class CatITests
         var overrideConfig = Path.Combine(
             RepoRoot(), "tests", "fixtures", "CatI", "I5.Cli", "override.knip.json");
 
-        // Default run (no --config): the single dead symbol is found -> exit 1.
+        // Default run (no --config): I5.Cli has NO solution-adjacent knip.json, and RepoRoot's own
+        // knip.json does not ignore this symbol, so the single dead symbol is found -> exit 1.
         var defaultRun = RunCli("-s", solution);
         Assert.Equal(1, defaultRun.ExitCode);
 
         // With --config pointing at a knip.json that ignores that symbol: nothing found -> exit 0.
         var overridden = RunCli("-s", solution, "-c", overrideConfig);
         Assert.Equal(0, overridden.ExitCode);
+    }
+
+    // ── I5c: config is discovered relative to the TARGET SOLUTION, not the CLI's cwd ───────────
+    //
+    // CORRECTED CONTRACT (bug fix): a knip.json sitting NEXT TO the analyzed solution is discovered
+    // regardless of where the CLI is invoked from. RunCli sets WorkingDirectory = RepoRoot(), whose
+    // own knip.json does NOT ignore this symbol — so before the fix, cwd-based discovery found the
+    // repo's config and the CLI exited 1 (the solution-adjacent config was silently ignored). After
+    // the fix, discovery walks up from the SOLUTION's directory, finds the solution-adjacent
+    // knip.json whose ignore.symbols suppresses OnlyDead, and the CLI exits 0.
+    [Fact]
+    public void I5_config_discovered_relative_to_target_solution_not_cwd()
+    {
+        var solution = Path.Combine(
+            RepoRoot(), "tests", "fixtures", "CatI", "I5.SolutionAdjacent", "Fixture.slnx");
+
+        // Sanity/anti-vacuous: the solution-adjacent knip.json exists and is the config under test.
+        var adjacentConfig = Path.Combine(
+            RepoRoot(), "tests", "fixtures", "CatI", "I5.SolutionAdjacent", "knip.json");
+        Assert.True(File.Exists(adjacentConfig));
+
+        // No --config: discovery starts from the SOLUTION's directory (not RepoRoot cwd). The
+        // solution-adjacent knip.json ignores the only dead symbol -> nothing reported -> exit 0.
+        var discovered = RunCli("-s", solution);
+        Assert.Equal(0, discovered.ExitCode);
+
+        // RED-FLIP (anti-vacuous): point --config at a config that does NOT ignore the symbol
+        // (I5.Cli/override ignores a DIFFERENT namespace's symbol) — the dead symbol resurfaces ->
+        // exit 1. This proves the exit-0 above came from the solution-adjacent ignore, not an
+        // always-clean fixture, and keeps --config OVERRIDING discovery.
+        var otherConfig = Path.Combine(
+            RepoRoot(), "tests", "fixtures", "CatI", "I5.Cli", "override.knip.json");
+        var overridden = RunCli("-s", solution, "-c", otherConfig);
+        Assert.Equal(1, overridden.ExitCode);
     }
 
     // ── I6: malformed knip.json → exit 2 with a clean error, NO stack trace ───────────────────

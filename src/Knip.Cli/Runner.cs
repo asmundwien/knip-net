@@ -32,7 +32,16 @@ internal static class Runner
             return 0;
         }
 
-        var configPath = options.ConfigPath ?? KnipConfig.Discover(Directory.GetCurrentDirectory());
+        // Config discovery is relative to the ANALYZED solution, not the caller's cwd. When an explicit
+        // target is given (-s/--solution or the positional arg), start the walk-up from THAT solution
+        // file's directory so a knip.json next to it always wins — running the tool on an external
+        // solution from an unrelated directory must not pick up (and mis-apply) the caller's knip.json.
+        // Only when no explicit solution is given do we fall back to cwd (the config may then itself name
+        // the solution). --config still overrides discovery entirely.
+        var searchDir = options.Solution is { } solution
+            ? Path.GetDirectoryName(Path.GetFullPath(solution)) ?? Directory.GetCurrentDirectory()
+            : Directory.GetCurrentDirectory();
+        var configPath = options.ConfigPath ?? KnipConfig.Discover(searchDir);
         KnipConfig config;
         try
         {
