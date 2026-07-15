@@ -129,6 +129,11 @@ public sealed class DeadCodeAnalyzer
                 "fully restored/buildable. Run 'dotnet restore' (and ensure private feeds are authenticated); " +
                 "otherwise dead-code results can include false positives.");
 
+        // Reliability block (WS8 §1.1): what the analyzer knows. Project-load/restore failures observed at
+        // the workspace boundary are attributed by KnipEngine after this returns.
+        result.Reliability.ProjectsLoaded = result.ProjectsAnalyzed;
+        result.Reliability.UnresolvedTypeReferences = state.UnresolvedTypeReferences;
+
         result.Elapsed = stopwatch.Elapsed;
         return result;
     }
@@ -194,12 +199,101 @@ public sealed class DeadCodeAnalyzer
         foreach (var (id, _) in state.Declared)
             if (!reachable.Contains(id)) dead.Add(id);
 
+        // Graph key of each REPORTED dead symbol → its emitted finding id. A dead member whose containing
+        // type is also dead is NOT reported (the outermost type is); rootCause resolution walks up to the
+        // reported ancestor via this map. Two passes: emit findings first, then attribute rootCause.
+        var reportedKeyToFindingId = new Dictionary<string, string>(StringComparer.Ordinal);
+        var emitted = new List<(string Key, ISymbol Symbol, int Index)>();
+
         foreach (var (id, symbol) in state.Declared)
         {
             if (!dead.Contains(id)) continue;
             if (!ShouldReport(id, symbol, dead, state)) continue;
-            if (ToFinding(symbol) is { } finding) result.Findings.Add(finding);
+            if (ToFinding(symbol) is not { } finding) continue;
+            reportedKeyToFindingId[id] = finding.Id;
+            emitted.Add((id, symbol, result.Findings.Count));
+            result.Findings.Add(finding);
         }
+
+        // Reverse edges over the DEAD set only: target key → dead source keys that reference it. A dead
+        // referrer whose deletion would remove an incoming edge to this finding is its rootCause (L10).
+        var incoming = BuildDeadIncomingEdges(state, dead);
+
+        foreach (var (key, symbol, index) in emitted)
+        {
+            var rootCause = ResolveRootCause(key, symbol, incoming, dead, state, reportedKeyToFindingId);
+            if (rootCause is not null)
+                result.Findings[index] = result.Findings[index] with { RootCause = rootCause };
+        }
+    }
+
+    /// <summary>target key → the set of DEAD source keys with an edge into it (incoming edges over dead).</summary>
+    private static Dictionary<string, HashSet<string>> BuildDeadIncomingEdges(GraphState state, HashSet<string> dead)
+    {
+        var incoming = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var (source, targets) in state.Edges)
+        {
+            if (!dead.Contains(source)) continue;
+            foreach (var target in targets)
+            {
+                if (!dead.Contains(target)) continue;
+                if (!incoming.TryGetValue(target, out var set))
+                    incoming[target] = set = new HashSet<string>(StringComparer.Ordinal);
+                set.Add(source);
+            }
+        }
+        return incoming;
+    }
+
+    /// <summary>
+    /// The <see cref="Finding.Id"/> of the nearest DEAD symbol keeping this one dead (WS8 §L10): prefer the
+    /// finding's own dead containing type; else a dead referrer (incoming edge) resolved to its reported
+    /// ancestor. Null when directly unreferenced (no dead incoming edges and no dead containing type).
+    /// </summary>
+    private static string? ResolveRootCause(
+        string key,
+        ISymbol symbol,
+        Dictionary<string, HashSet<string>> incoming,
+        HashSet<string> dead,
+        GraphState state,
+        Dictionary<string, string> reportedKeyToFindingId)
+    {
+        // Prefer the containing type when it is itself dead (the deletion of the type removes this symbol).
+        // NB: when the containing type is dead this member is NOT emitted (ShouldReport skips it), so this
+        // branch only fires for reported members whose *type* is live but an enclosing scope is dead — rare;
+        // kept for completeness per L10's "prefer the containing type".
+        for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)
+            if (SymbolId.For(container) is { } cId && dead.Contains(cId)
+                && reportedKeyToFindingId.TryGetValue(cId, out var containerFindingId))
+                return containerFindingId;
+
+        // Otherwise the nearest dead referrer whose deletion severs an incoming edge. Resolve each dead
+        // source to its REPORTED finding (walk up to a reported ancestor); pick a deterministic one.
+        if (incoming.TryGetValue(key, out var sources))
+        {
+            var ownFindingId = reportedKeyToFindingId.TryGetValue(key, out var own) ? own : null;
+            foreach (var source in sources.OrderBy(s => s, StringComparer.Ordinal))
+            {
+                if (source == key) continue; // self-edge is not a cause
+                var resolved = ResolveReported(source, state, reportedKeyToFindingId);
+                if (resolved is not null && resolved != ownFindingId)
+                    return resolved;
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>Map a dead graph key to the finding id actually reported for it, walking to a reported ancestor.</summary>
+    private static string? ResolveReported(
+        string key, GraphState state, Dictionary<string, string> reportedKeyToFindingId)
+    {
+        if (reportedKeyToFindingId.TryGetValue(key, out var direct)) return direct;
+        if (!state.Declared.TryGetValue(key, out var symbol)) return null;
+        for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)
+            if (SymbolId.For(container) is { } cId && reportedKeyToFindingId.TryGetValue(cId, out var id))
+                return id;
+        return null;
     }
 
     /// <summary>
@@ -236,16 +330,26 @@ public sealed class DeadCodeAnalyzer
 
                 if (used.Contains(referenced.AssemblyName)) continue; // reference IS exercised
 
+                var csproj = project.FilePath ?? project.Name;
+                // The deletion unit is the <ProjectReference/> element; `location` stays at 0/0 (the
+                // finding points at the .csproj as a whole — the element position lives in `span`).
+                var refSpan = ProjectFileSpan.ForProjectReference(csproj, referenced);
                 result.Findings.Add(new Finding(
                     FindingKind.UnusedProjectReference,
                     referenced.Name,
                     "project reference",
                     "",
                     project.Name,
-                    project.FilePath ?? project.Name,
+                    csproj,
                     0,
                     0,
-                    referenced.Name));
+                    referenced.Name)
+                {
+                    Id = FindingEnrichment.ComputeId(
+                        FindingKind.UnusedProjectReference, referenced.Name, project.Name, referenced.Name),
+                    Span = refSpan,
+                    Remediation = Model.Remediation.RemoveProjectReference,
+                });
             }
         }
 
@@ -330,16 +434,24 @@ public sealed class DeadCodeAnalyzer
         };
         if (kind is null) return null;
 
-        var span = location.GetLineSpan();
+        var lineSpan = location.GetLineSpan();
+        var displayName = symbol.ToDisplayString(DisplayFormat);
+        var project = symbol.ContainingAssembly?.Name ?? "?";
         return new Finding(
             kind.Value,
-            symbol.ToDisplayString(DisplayFormat),
+            displayName,
             SymbolKindName(symbol),
             AccessibilityName(symbol.DeclaredAccessibility),
-            symbol.ContainingAssembly?.Name ?? "?",
-            span.Path,
-            span.StartLinePosition.Line + 1,
-            span.StartLinePosition.Character + 1);
+            project,
+            lineSpan.Path,
+            lineSpan.StartLinePosition.Line + 1,
+            lineSpan.StartLinePosition.Character + 1)
+        {
+            Id = FindingEnrichment.ComputeId(kind.Value, displayName, project, null),
+            Span = FindingEnrichment.ComputeSpan(symbol),
+            Remediation = FindingEnrichment.RemediationFor(kind.Value),
+            // Confidence stays High and Hazards stays empty in WS8b-1 (demotion is WS8b-2).
+        };
     }
 
     private static string SymbolKindName(ISymbol symbol) => symbol switch

@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hdir/knip-net/main/schemas/knip.output.schema.json",
+  "title": "Knip.NET JSON output (formatVersion 2)",
+  "description": "The machine-readable output of a Knip.NET run. THIS IS THE PRODUCT API (WS8 §1).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["formatVersion", "tool", "run", "reliability", "summary", "findings"],
+  "properties": {
+    "formatVersion": {
+      "type": "integer",
+      "const": 2,
+      "description": "Contract version; a consumer asserts the shape it was built against."
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["projectsAnalyzed", "symbolsAnalyzed", "roots", "elapsedSeconds"],
+      "properties": {
+        "projectsAnalyzed": { "type": "integer", "minimum": 0 },
+        "symbolsAnalyzed": { "type": "integer", "minimum": 0 },
+        "roots": { "type": "integer", "minimum": 0 },
+        "elapsedSeconds": { "type": "number", "minimum": 0 }
+      }
+    },
+    "reliability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "degraded", "projectsLoaded", "projectsFailed",
+        "unresolvedTypeReferences", "restoreFailures", "loadDiagnostics"
+      ],
+      "properties": {
+        "degraded": {
+          "type": "boolean",
+          "description": "The single gate for autonomous action: true => an agent must NOT auto-delete."
+        },
+        "projectsLoaded": { "type": "integer", "minimum": 0 },
+        "projectsFailed": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "message"],
+            "properties": {
+              "project": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        },
+        "unresolvedTypeReferences": { "type": "integer", "minimum": 0 },
+        "restoreFailures": { "type": "array", "items": { "type": "string" } },
+        "loadDiagnostics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["severity", "code", "message"],
+            "properties": {
+              "severity": { "type": "string", "enum": ["warning", "error"] },
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "byKind", "byConfidence", "byProject"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "byKind": { "$ref": "#/$defs/countMap" },
+        "byConfidence": { "$ref": "#/$defs/countMap" },
+        "byProject": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "total", "byKind", "byConfidence"],
+            "properties": {
+              "project": { "type": "string" },
+              "total": { "type": "integer", "minimum": 0 },
+              "byKind": { "$ref": "#/$defs/countMap" },
+              "byConfidence": { "$ref": "#/$defs/countMap" }
+            }
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "countMap": {
+      "type": "object",
+      "additionalProperties": { "type": "integer", "minimum": 0 }
+    },
+    "position": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["line", "column"],
+      "properties": {
+        "line": { "type": "integer", "minimum": 0 },
+        "column": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "kind", "symbol", "symbolKind", "accessibility", "project",
+        "confidence", "hazards", "remediation", "location", "details"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^k1_[0-9a-f]{10}$" },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "unusedType", "unusedMethod", "unusedProperty", "unusedField",
+            "unusedEvent", "unusedProjectReference"
+          ]
+        },
+        "symbol": { "type": "string" },
+        "symbolKind": { "type": "string" },
+        "accessibility": { "type": "string" },
+        "project": { "type": "string" },
+        "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+        "hazards": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "publicApi", "serializationShaped", "configBoundType",
+              "diPluginShaped", "internalsVisibleTo"
+            ]
+          }
+        },
+        "remediation": {
+          "type": "string",
+          "enum": [
+            "deleteSymbol", "removeProjectReference", "removeFromInterface",
+            "removePackageReference", "deleteCodeAndTests"
+          ]
+        },
+        "location": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["file", "line", "column"],
+          "properties": {
+            "file": { "type": "string" },
+            "line": { "type": "integer", "minimum": 0 },
+            "column": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "span": {
+          "type": ["object", "null"],
+          "additionalProperties": false,
+          "required": ["file", "start", "end"],
+          "properties": {
+            "file": { "type": "string" },
+            "start": { "$ref": "#/$defs/position" },
+            "end": { "$ref": "#/$defs/position" }
+          }
+        },
+        "referencedProject": { "type": ["string", "null"] },
+        "rootCause": { "type": ["string", "null"], "pattern": "^k1_[0-9a-f]{10}$" },
+        "details": { "type": "object" }
+      }
+    }
+  }
+}

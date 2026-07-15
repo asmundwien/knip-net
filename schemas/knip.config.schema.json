@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/hdir/knip-net/main/schemas/knip.config.schema.json",
+  "title": "Knip.NET configuration (knip.json)",
+  "description": "Config-as-code for a Knip.NET run. All keys optional; defaults tuned for ASP.NET Core + xUnit/NUnit.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "solution": {
+      "type": "string",
+      "description": "Path to the .sln/.slnx/.csproj to analyze. CLI --solution overrides this."
+    },
+    "entryPoints": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Members the framework/runtime invokes without a by-name reference in your code.",
+      "properties": {
+        "symbolNames": { "type": "array", "items": { "type": "string" } },
+        "attributes": { "type": "array", "items": { "type": "string" } },
+        "baseTypes": { "type": "array", "items": { "type": "string" } },
+        "implementedInterfaces": { "type": "array", "items": { "type": "string" } },
+        "namePatterns": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "roots": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "treatAllPublicAsUsed": {
+          "type": "boolean",
+          "description": "Treat the whole public surface as used (libraries consumed by other repos)."
+        },
+        "publicApiProjects": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Project-name globs whose public API is treated as the used surface."
+        }
+      }
+    },
+    "ignore": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "files": { "type": "array", "items": { "type": "string" } },
+        "symbols": { "type": "array", "items": { "type": "string" } },
+        "namespaces": { "type": "array", "items": { "type": "string" } },
+        "projects": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "output": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": { "type": "string", "enum": ["console", "json", "sarif"] }
+      }
+    },
+    "plugins": {
+      "type": "object",
+      "description": "Built-in analysis plugins keyed by camelCase plugin id. Each block sets 'enabled' plus optional settings.",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "enabled": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

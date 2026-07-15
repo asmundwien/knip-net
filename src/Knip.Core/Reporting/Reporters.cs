@@ -94,33 +94,109 @@ public sealed class ConsoleReporter : IReporter
     private string C(string code) => _color ? code : string.Empty;
 }
 
-/// <summary>Machine-readable JSON for CI pipelines and other tools.</summary>
+/// <summary>
+/// Machine-readable JSON v2 — the product API (WS8 §1). Root: formatVersion, tool, run, reliability,
+/// summary, findings[]. BREAKING change from v1 (single shape; formatVersion lets consumers fail fast).
+/// </summary>
 public sealed class JsonReporter : IReporter
 {
+    private const int FormatVersion = 2;
+    private const string ToolName = "Knip.NET";
+    private const string ToolVersion = "0.1.0";
+
     private static readonly JsonSerializerOptions Options = new()
     {
         WriteIndented = true,
-        Converters = { new JsonStringEnumConverter() },
+        Converters = { new JsonStringEnumConverter(JsonNamingPolicy.CamelCase) },
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
     public void Report(AnalysisResult result, TextWriter output)
     {
         var payload = new
         {
-            summary = new
+            formatVersion = FormatVersion,
+            tool = new { name = ToolName, version = ToolVersion },
+            run = new
             {
                 projectsAnalyzed = result.ProjectsAnalyzed,
                 symbolsAnalyzed = result.SymbolsAnalyzed,
                 roots = result.RootCount,
-                unused = result.Findings.Count,
                 elapsedSeconds = Math.Round(result.Elapsed.TotalSeconds, 2),
             },
-            loadDiagnostics = result.LoadDiagnostics,
-            findings = result.Findings,
+            reliability = new
+            {
+                degraded = result.Reliability.Degraded,
+                projectsLoaded = result.Reliability.ProjectsLoaded,
+                projectsFailed = result.Reliability.ProjectsFailed
+                    .Select(p => new { project = p.Project, message = p.Message }).ToList(),
+                unresolvedTypeReferences = result.Reliability.UnresolvedTypeReferences,
+                restoreFailures = result.Reliability.RestoreFailures,
+                loadDiagnostics = result.Reliability.LoadDiagnostics
+                    .Select(d => new { severity = Camel(d.Severity.ToString()), code = d.Code, message = d.Message })
+                    .ToList(),
+            },
+            summary = BuildSummary(result.Findings),
+            findings = result.Findings.Select(ToJson).ToList(),
         };
         output.WriteLine(JsonSerializer.Serialize(payload, Options));
     }
+
+    private static object BuildSummary(IReadOnlyList<Finding> findings) => new
+    {
+        total = findings.Count,
+        byKind = CountBy(findings, f => Camel(f.Kind.ToString())),
+        byConfidence = CountBy(findings, f => Camel(f.Confidence.ToString())),
+        byProject = findings
+            .GroupBy(f => f.Project, StringComparer.Ordinal)
+            .OrderBy(g => g.Key, StringComparer.Ordinal)
+            .Select(g => new
+            {
+                project = g.Key,
+                total = g.Count(),
+                byKind = CountBy(g, f => Camel(f.Kind.ToString())),
+                byConfidence = CountBy(g, f => Camel(f.Confidence.ToString())),
+            })
+            .ToList(),
+    };
+
+    private static Dictionary<string, int> CountBy(IEnumerable<Finding> findings, Func<Finding, string> key)
+    {
+        var counts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (var f in findings)
+        {
+            var k = key(f);
+            counts[k] = counts.TryGetValue(k, out var n) ? n + 1 : 1;
+        }
+        return counts;
+    }
+
+    private static object ToJson(Finding f) => new
+    {
+        id = f.Id,
+        kind = Camel(f.Kind.ToString()),
+        symbol = f.Symbol,
+        symbolKind = f.SymbolKind,
+        accessibility = f.Accessibility,
+        project = f.Project,
+        confidence = Camel(f.Confidence.ToString()),
+        hazards = f.Hazards.Select(h => Camel(h.ToString())).ToList(),
+        remediation = Camel(f.Remediation.ToString()),
+        location = new { file = f.FilePath, line = f.Line, column = f.Column },
+        span = f.Span is null ? null : new
+        {
+            file = f.Span.File,
+            start = new { line = f.Span.Start.Line, column = f.Span.Start.Column },
+            end = new { line = f.Span.End.Line, column = f.Span.End.Column },
+        },
+        referencedProject = f.ReferencedProject,
+        rootCause = f.RootCause,
+        details = new { },
+    };
+
+    private static string Camel(string pascal) =>
+        pascal.Length == 0 ? pascal : char.ToLowerInvariant(pascal[0]) + pascal.Substring(1);
 }
 
 /// <summary>Minimal SARIF 2.1.0 so findings surface as annotations in GitHub/Azure DevOps.</summary>
@@ -140,6 +216,9 @@ public sealed class SarifReporter : IReporter
                     ? $"Project '{f.Project}' references '{f.ReferencedProject ?? f.Symbol}' but uses no type from it."
                     : $"Unused {f.SymbolKind} '{f.Symbol}' is never referenced.",
             },
+            // Stable content-hash id (WS8 §3.2 / §5.5): lets code-scanning platforms dedupe/track a
+            // finding across commits. Same value the JSON v2 output publishes as `id`.
+            partialFingerprints = new Dictionary<string, string> { ["knipId/v1"] = f.Id },
             locations = new[]
             {
                 new
