@@ -165,8 +165,9 @@ made. Reject any diff that violates one, even if its tests pass.
     `--why` diagnosed #3.
   - **Precision payoff (all fixes + all plugins):** person HIGH 65→5, sof HIGH 19→0, hego HIGH 58→34
     (hego's 34 are GENUINE dead code — the tool's sweet spot). High-confidence set is now
-    true-dead-dominated, not convention-FP-dominated. Strongest argument for making the plugins
-    **default-on** for this ASP.NET-heavy org (open DECISION).
+    true-dead-dominated, not convention-FP-dominated. **DECIDED 2026-07-15: `aspnetcore` is now
+    DEFAULT-ON** (default set = `{reflection, scanningDi, aspnetcore}`); `blazorParameter`/`serialization`
+    stay opt-in.
 - WS4 (legacy projects) ultimately needs **Windows + Visual Studio Build Tools** to run
   end-to-end. Cross-platform agents can still do the multi-targeting/compile work; flag the
   Windows-only verification for the human or a Windows runner.

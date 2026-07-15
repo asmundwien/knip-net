@@ -371,16 +371,16 @@ public sealed class PluginsTests
         Assert.Contains(ns + ".HintAuthorizationPolicyProvider.NeverConsulted()", on);
     }
 
-    // aspnetcore is OFF by default (opt-in): a default config leaves the middleware Invoke flagged.
+    // aspnetcore is ON by default (decided 2026-07-15): a default config keeps the middleware Invoke alive.
     [Fact]
-    public async Task AspNetCore_is_off_by_default()
+    public async Task AspNetCore_is_on_by_default()
     {
-        Assert.DoesNotContain("aspnetcore", PluginRegistry.DefaultEnabledIds);
-        Assert.False(new KnipConfig().IsPluginEnabled(Descriptor("aspnetcore")),
-            "aspnetcore must default OFF (opt-in)");
+        Assert.Contains("aspnetcore", PluginRegistry.DefaultEnabledIds);
+        Assert.True(new KnipConfig().IsPluginEnabled(Descriptor("aspnetcore")),
+            "aspnetcore must default ON");
 
         var byDefault = await FindingsIn("CatH.AspNetMiddleware", new KnipConfig());
-        Assert.Contains("CatH.AspNetMiddleware.AuditLoggingMiddleware.Invoke(CatH.AspNetMiddleware.HttpContext)", byDefault);
+        Assert.DoesNotContain("CatH.AspNetMiddleware.AuditLoggingMiddleware.Invoke(CatH.AspNetMiddleware.HttpContext)", byDefault);
     }
 
     // A typo in the aspnetcore block surfaces a visible unknown-key warning (never silently no-ops).
@@ -409,15 +409,19 @@ public sealed class PluginsTests
 
     // ── default-enabled set (F8-style): pin which plugins run under a default config ──────────
     [Fact]
-    public void DefaultEnabledSet_is_reflection_and_scanningDi_for_v1()
+    public void DefaultEnabledSet_is_reflection_scanningDi_aspnetcore()
     {
-        // The shipped default-on set: reflection + scanningDi (approved). This pins the seam's default so
-        // a regression (accidentally enabling/disabling a plugin) is caught.
-        Assert.Equal(new[] { "reflection", "scanningDi" }, PluginRegistry.DefaultEnabledIds);
+        // The shipped default-on set: reflection + scanningDi + aspnetcore (aspnetcore added by the
+        // 2026-07-15 decision after dogfooding). blazorParameter/serialization stay opt-in. This pins
+        // the seam's default so a regression (accidentally enabling/disabling a plugin) is caught.
+        Assert.Equal(new[] { "reflection", "scanningDi", "aspnetcore" }, PluginRegistry.DefaultEnabledIds);
 
         var config = new KnipConfig();
         Assert.True(config.IsPluginEnabled(Descriptor("reflection")), "reflection must default ON");
         Assert.True(config.IsPluginEnabled(Descriptor("scanningDi")), "scanningDi must default ON");
+        Assert.True(config.IsPluginEnabled(Descriptor("aspnetcore")), "aspnetcore must default ON");
+        Assert.False(config.IsPluginEnabled(Descriptor("blazorParameter")), "blazorParameter opt-in");
+        Assert.False(config.IsPluginEnabled(Descriptor("serialization")), "serialization opt-in");
     }
 
     [Fact]

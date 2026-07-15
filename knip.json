@@ -115,7 +115,7 @@
     // serializes DTOs:
     "serialization": { "enabled": false, "namespaces": [] },
 
-    // aspnetcore — OFF by default (opt-in). Keeps alive ASP.NET Core CONVENTION-INVOKED members the
+    // aspnetcore — ON by default (disable with "enabled": false). Keeps alive ASP.NET Core CONVENTION-INVOKED members the
     // framework dispatches by REFLECTION, so no source names them: app.UseMiddleware<T>() keeps the TYPE
     // alive but the middleware's Invoke/InvokeAsync(HttpContext) is called reflectively, so the entry
     // method + ctor + fields (_next/_logger) + private helpers cascade to false positives; likewise an

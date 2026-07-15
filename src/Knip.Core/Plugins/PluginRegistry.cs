@@ -48,10 +48,13 @@ public static class PluginRegistry
         // 'namespaces' glob list roots DTO members by namespace.
         new("serialization", defaultEnabled: false, () => new SerializationPlugin(),
             SerializationPlugin.NamespacesSettingKey),
-        // aspnetcore — opt-in (default OFF): roots ASP.NET Core convention-invoked entry members the
-        // framework dispatches reflectively — middleware Invoke/InvokeAsync (+ ctors), MVC/Razor filter
-        // interface methods, IStartupFilter.Configure — so their fields/helpers stop cascading dead.
-        new("aspnetcore", defaultEnabled: false, () => new AspNetCorePlugin()),
+        // aspnetcore — DEFAULT ON (decided 2026-07-15): roots ASP.NET Core convention-invoked entry
+        // members the framework dispatches reflectively — middleware Invoke/InvokeAsync (+ ctors),
+        // MVC/Razor filter interface methods, auth handlers/policy providers, telemetry processors,
+        // health checks, Blazor lifecycle, IStartupFilter.Configure. Dogfooding showed these produce
+        // dangerous HIGH-confidence FPs on the org's ASP.NET portfolio; default-on keeps the tool
+        // trustworthy out of the box. (blazorParameter/serialization stay opt-in.)
+        new("aspnetcore", defaultEnabled: true, () => new AspNetCorePlugin()),
     ];
 
     /// <summary>The ids that run under a default (<c>new KnipConfig()</c>) configuration.</summary>

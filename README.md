@@ -131,7 +131,8 @@ completion + validation). The JSON output (`--format json`, `formatVersion: 2`) 
   `[DataMember]`). It roots only a serialized type's own data members — never blanket-roots every
   property — so non-serialized types' plain members and unrelated dead types stay flagged. Optional
   `plugins.serialization.namespaces` glob list also roots the data members of types in matching
-  namespaces. **`aspnetcore` ships OFF** (opt-in via `plugins.aspnetcore.enabled: true`) — keeps alive
+  namespaces. **`aspnetcore` ships ON by default** (disable via `plugins.aspnetcore.enabled: false`) —
+  keeps alive
   ASP.NET Core convention-invoked members the framework dispatches by reflection: `app.UseMiddleware<T>()`
   keeps the type alive but its `Invoke`/`InvokeAsync(HttpContext)` is called reflectively, so the entry
   method + constructor + fields (`_next`/`_logger`) + private helpers would otherwise cascade to false
