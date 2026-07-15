@@ -127,7 +127,13 @@
     //   • MVC/Razor filters (IActionFilter/IAsyncActionFilter/IResultFilter/IAsyncResultFilter/
     //     IExceptionFilter/IAsyncExceptionFilter/IAuthorizationFilter/IAsyncAuthorizationFilter/
     //     IPageFilter/IAsyncPageFilter) → the type's implementations of those interface methods;
-    //   • IStartupFilter implementers → Configure.
+    //   • IStartupFilter implementers → Configure;
+    //   • authorization handlers (derive from AuthorizationHandler<T> or implement IAuthorizationHandler)
+    //     → HandleRequirementAsync + HandleAsync + instance ctors (policy evaluation dispatches these, so
+    //     the handler's fields — _logger, _authenticationStateProvider — and helpers would cascade dead);
+    //   • Blazor components (derive from ComponentBase) → the lifecycle methods (OnInitialized/…Async,
+    //     OnParametersSet/…Async, OnAfterRender/…Async, SetParametersAsync, BuildRenderTree, Dispose/…Async)
+    //     the renderer invokes by convention. ([Parameter] props are the separate blazorParameter plugin.)
     // Conservative: roots ONLY the convention entry members, never blanket-roots a middleware/filter's
     // world — an unrelated dead method the entry point never calls stays flagged. Enable it for ASP.NET
     // Core web projects:

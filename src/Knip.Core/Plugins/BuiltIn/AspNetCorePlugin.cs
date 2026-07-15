@@ -32,6 +32,17 @@ namespace Knip.Core.Plugins.BuiltIn;
 ///     IAsyncAuthorizationFilter / IPageFilter / IAsyncPageFilter → root the type's implementations of those
 ///     interface methods (so they, and the helpers they call, are reachable).
 ///   • Startup filters — types implementing <c>IStartupFilter</c> → root their <c>Configure</c> method.
+///   • Authorization handlers — types deriving from a base named <c>AuthorizationHandler</c>
+///     (<c>AuthorizationHandler&lt;TRequirement&gt;</c> / <c>&lt;TRequirement,TResource&gt;</c>) OR implementing
+///     <c>IAuthorizationHandler</c> → root <c>HandleRequirementAsync</c> and/or <c>HandleAsync</c> (whichever
+///     exist) plus instance constructors. Policy evaluation dispatches the handler's entry method reflectively,
+///     so its ctor/fields (<c>_logger</c>, <c>_authenticationStateProvider</c>) + helpers cascade dead without it.
+///   • Blazor components — types deriving from a base named <c>ComponentBase</c> → root the lifecycle methods
+///     when present (<c>OnInitialized</c>/<c>OnInitializedAsync</c>, <c>OnParametersSet</c>/<c>OnParametersSetAsync</c>,
+///     <c>OnAfterRender</c>/<c>OnAfterRenderAsync</c>, <c>SetParametersAsync</c>, <c>BuildRenderTree</c>,
+///     <c>Dispose</c>/<c>DisposeAsync</c>). The Blazor renderer invokes these by convention — never named in
+///     source — so the helpers they call cascade dead without rooting. (<c>[Parameter]</c> props are the separate
+///     <c>blazorParameter</c> plugin's job — this handles the lifecycle METHODS only.)
 ///
 /// OFF by default (opt-in via <c>plugins.aspnetcore.enabled: true</c>): a project not using ASP.NET Core
 /// should not pay for these name matches, and the recognized names are common enough that rooting them is a
@@ -63,6 +74,29 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         "IAsyncAuthorizationFilter",
         "IPageFilter",
         "IAsyncPageFilter",
+    };
+
+    // Authorization-handler entry method names — policy evaluation dispatches these reflectively. A handler
+    // overrides one (AuthorizationHandler<T>.HandleRequirementAsync) or implements IAuthorizationHandler.HandleAsync.
+    private static readonly HashSet<string> AuthorizationHandlerEntryMethodNames = new(StringComparer.Ordinal)
+    {
+        "HandleRequirementAsync",
+        "HandleAsync",
+    };
+
+    // Blazor ComponentBase lifecycle method names — invoked by the renderer by convention, never named in source.
+    private static readonly HashSet<string> BlazorLifecycleMethodNames = new(StringComparer.Ordinal)
+    {
+        "OnInitialized",
+        "OnInitializedAsync",
+        "OnParametersSet",
+        "OnParametersSetAsync",
+        "OnAfterRender",
+        "OnAfterRenderAsync",
+        "SetParametersAsync",
+        "BuildRenderTree",
+        "Dispose",
+        "DisposeAsync",
     };
 
     public void Contribute(PluginContext ctx, CancellationToken ct)
@@ -154,6 +188,11 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
     /// </summary>
     private static void RootFrameworkDispatchedMembers(INamedTypeSymbol type, IContributionSink sink)
     {
+        // IAuthorizationHandler declares no requirement-typed HandleRequirementAsync (that lives on the
+        // AuthorizationHandler<T> base), and its HandleAsync may be provided by the base too — so root the
+        // handler's entry methods by NAME on the type itself rather than only via interface-member impls.
+        var isAuthorizationHandler = false;
+
         foreach (var iface in type.AllInterfaces)
         {
             var name = iface.Name;
@@ -168,10 +207,54 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
                 // The startup pipeline invokes Configure to wrap the app builder.
                 RootInterfaceMethodImplementations(type, iface, sink);
             }
+            else if (name == "IAuthorizationHandler")
+            {
+                isAuthorizationHandler = true;
+            }
             else if (FilterInterfaceNames.Contains(name))
             {
                 // The MVC / Razor Pages filter pipeline invokes the filter interface methods reflectively.
                 RootInterfaceMethodImplementations(type, iface, sink);
+            }
+        }
+
+        // Base-class-shaped conventions: authorization handlers (AuthorizationHandler<T>) and Blazor
+        // components (ComponentBase). Matched by simple base NAME up the chain (offline, version-agnostic).
+        for (var b = type.BaseType; b is not null; b = b.BaseType)
+        {
+            if (b.Name == "AuthorizationHandler")
+                isAuthorizationHandler = true;
+            else if (b.Name == "ComponentBase")
+                RootMethodsByName(type, BlazorLifecycleMethodNames, sink, includeConstructors: false);
+        }
+
+        if (isAuthorizationHandler)
+        {
+            // Policy evaluation activates the handler and dispatches its HandleRequirementAsync/HandleAsync
+            // reflectively; root those entry methods + instance ctors so fields (_logger,
+            // _authenticationStateProvider) and helpers gain liveness via the walker's edges.
+            RootMethodsByName(type, AuthorizationHandlerEntryMethodNames, sink, includeConstructors: true);
+        }
+    }
+
+    /// <summary>
+    /// Root <paramref name="type"/>'s own ordinary methods whose simple name is in <paramref name="names"/>,
+    /// and optionally its instance constructors. Only these convention entry members are rooted — never the
+    /// whole type — so an unrelated dead method stays flagged (the over-rooting guard).
+    /// </summary>
+    private static void RootMethodsByName(
+        INamedTypeSymbol type, HashSet<string> names, IContributionSink sink, bool includeConstructors)
+    {
+        foreach (var member in type.GetMembers())
+        {
+            switch (member)
+            {
+                case IMethodSymbol { MethodKind: MethodKind.Ordinary } m when names.Contains(m.Name):
+                    sink.AddRoot(m);
+                    break;
+                case IMethodSymbol { MethodKind: MethodKind.Constructor, IsStatic: false } ctor when includeConstructors:
+                    sink.AddRoot(ctor);
+                    break;
             }
         }
     }
