@@ -24,8 +24,12 @@ namespace Knip.Core.Analysis;
 ///   <item>C3: project/package-reference findings → <see cref="Confidence.Medium"/>.</item>
 /// </list>
 /// A finding with no hazard in a healthy project stays <see cref="Confidence.High"/>.
-/// C4 (deleteCodeAndTests, WS7 OnlyUsedByTests) → <see cref="Confidence.Medium"/>, applied right after C1
-/// so the remediation shape dominates the publicApi hazard (test-only code is nearly always public).
+/// C4 (deleteCodeAndTests, WS7 OnlyUsedByTests) → <see cref="Confidence.Medium"/>, applied LAST — after
+/// C2/IVT/C3 (HUMAN DECISION 2026-07-15, §6). C2 (publicApi) now PRECEDES C4, so an unconfigured-public
+/// test-only finding lands <see cref="Confidence.Low"/> (the verify loop is structurally blind to an
+/// unknown external consumer — deleting the symbol + its tests goes green by construction); a
+/// configured-but-not-listed public test-only finding lands medium; an internal/private test-only finding
+/// (no publicApi hazard) falls through to C4 → medium.
 /// C5 (entry-point near-miss, DROPPED from v1) and serialization/config/DI hazard DETECTION (WS5) are
 /// DEFERRED — not applied here.
 /// </summary>
@@ -59,7 +63,7 @@ internal static class ConfidenceModel
         }
     }
 
-    /// <summary>First-match demotion: C1 → C4 → (PublicApi/C2) → InternalsVisibleTo → C3; else High.</summary>
+    /// <summary>First-match demotion: C1 → C2 (publicApi) → InternalsVisibleTo → C3 → C4; else High.</summary>
     private static Confidence Compute(
         Finding finding, bool apiPostureDeclared, bool globalDegradation, HashSet<string> failedProjects)
     {
@@ -68,15 +72,14 @@ internal static class ConfidenceModel
         if (globalDegradation || failedProjects.Contains(finding.Project))
             return Confidence.Low;
 
-        // C4 — deleteCodeAndTests (WS7 OnlyUsedByTests): the WS7 card pins this kind at MEDIUM regardless
-        // of accessibility (test-only production code is nearly always public — it exists to be called by
-        // a test). So the DeleteCodeAndTests remediation SHAPE dominates the publicApi hazard here: the
-        // finding is medium (propose in the PR; a human confirms the referrer set + classification). Below
-        // C1 so a degraded run still demotes it to low.
-        if (finding.Remediation is Remediation.DeleteCodeAndTests)
-            return Confidence.Medium;
-
         // C2 — publicApi (config-sensitive): declared posture → medium, unknown exposure → low.
+        // HUMAN DECISION 2026-07-15 (§6): C2 precedes C4. An unconfigured-public test-only finding lands
+        // LOW, not medium. The verify loop (delete → build → tests → re-run) is what licenses medium/high
+        // autonomy, and it is STRUCTURALLY BLIND here: deleting a public test-only symbol together with its
+        // tests makes the loop go green by construction (the only witnesses to its use are deleted with it);
+        // an external consumer — unknown, since no publicApi config — breaks at THEIR build, outside every
+        // gate we control (the same "survives our gates, breaks elsewhere" shape as category H, §3.8-sacred).
+        // A CONFIGURED-but-not-listed public test-only finding still lands medium (posture declared).
         if (finding.Hazards.Contains(Hazard.PublicApi))
             return apiPostureDeclared ? Confidence.Medium : Confidence.Low;
 
@@ -99,6 +102,14 @@ internal static class ConfidenceModel
 
         // C3 — project/package-reference findings are conservative by construction → medium.
         if (finding.Remediation is Remediation.RemoveProjectReference or Remediation.RemovePackageReference)
+            return Confidence.Medium;
+
+        // C4 — deleteCodeAndTests (WS7 OnlyUsedByTests), LAST (HUMAN DECISION 2026-07-15, §6). A test-only
+        // finding that reached here is NOT externally visible (public would have been graded by C2 above)
+        // and carries no other hazard: an internal/private test-only symbol whose only consumers live in
+        // the solution's own test projects. The verify loop CAN witness its use here, so the remediation
+        // shape licenses medium (propose in the PR; a human confirms the referrer set + classification).
+        if (finding.Remediation is Remediation.DeleteCodeAndTests)
             return Confidence.Medium;
 
         // C5 (entry-point near-miss) DROPPED from v1 — not applied here.

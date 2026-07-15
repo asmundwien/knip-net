@@ -258,13 +258,35 @@ A finding starts at **high** and is demoted by the first matching rule (most-sev
 |------|-----------|--------|-----------|
 | C0 | none of the below | **high** | private/internal symbol, no hazards, resolved graph — the safe-to-delete core case |
 | C1 | finding is in a project that loaded with `projectsFailed`/restore failure affecting it, OR `unresolvedTypeReferences > 0` touched this project | **low** | the graph under it is untrustworthy; §3.8 says don't act |
-| C2 | any hazard in `{ publicApi, serializationShaped, configBoundType, diPluginShaped }` present | **low** | these are the classic false-positive shapes; never auto-delete |
+| C2 | `publicApi` hazard present | **medium** if API posture declared (`publicApiProjects`/`treatAllPublicAsUsed`), else **low** | config-sensitive: an unknown external consumer of a public symbol; other hazards `{ serializationShaped, configBoundType, diPluginShaped }` → **low**. **Precedes C4** (DECISION 2026-07-15, §4.1.1). |
 | C3 | `remediation == "removeProjectReference"` (or `removePackageReference`, WS3) | **medium** | conservative by construction (invariant #8) but load-bearing refs exist (transitive restore, `InternalsVisibleTo`); worth a glance |
-| C4 | `remediation == "deleteCodeAndTests"` (WS7 `onlyUsedByTests`) | **medium** | correct only if production-mode classification is right; multi-file deletion; human should confirm the referrer set |
+| C4 | `remediation == "deleteCodeAndTests"` (WS7 `onlyUsedByTests`) — applied **LAST** | **medium** | reached only by a test-only symbol with NO `publicApi` hazard (internal/private); a public test-only symbol is graded by C2 above (DECISION 2026-07-15, §4.1.1). correct only if production-mode classification is right; multi-file deletion; human should confirm the referrer set |
 | C5 | `hazard == entryPointShaped` (name/attribute *near-misses* a configured entry-point convention but didn't match) | **medium** | plausible reflection/framework use the walker couldn't see |
 
 **Recommended autonomy line:** **agents may auto-delete `high` only.** `medium` = propose in the PR for
 human review; `low` = surface, never touch. WS8d (AGENTS.md) encodes exactly this.
+
+### 4.1.1 DECISION 2026-07-15 (human, §6) — **C2 (publicApi) precedes C4 (deleteCodeAndTests)**
+
+The first-match chain is now **C1 → C2 (publicApi, config-sensitive) → InternalsVisibleTo → C3
+(project/package-ref) → C4 (deleteCodeAndTests → medium, LAST)**. This resolves Open Question Q1 for the
+test-only case: a `public` test-only symbol is graded by C2, **not** C4.
+
+Consequences (the point of the reorder):
+- **Unconfigured-public test-only** (no `publicApiProjects` / `treatAllPublicAsUsed`) → C2 unconfigured →
+  **low** (was medium).
+- **Configured-but-not-listed public test-only** (`publicApiProjects` set, this project not matched) → C2
+  configured → **medium**.
+- **Internal/private test-only** → C2 doesn't apply → falls through to C4 → **medium**.
+
+**Rationale.** The verify loop (delete → build → tests → re-run) is what licenses `medium`/`high` autonomy,
+and this exact case is where it is **structurally blind**: deleting a public test-only symbol *together with
+its tests* makes the loop go green by construction — the only witnesses to its use are deleted with it. An
+external consumer (unknown, since no `publicApi` config) breaks at *their* build, outside every gate we
+control — the same "survives our gates, breaks elsewhere" shape as category H (§3.8-sacred). `low` is a
+**tier, not suppression**: the finding still emits with its `deleteCodeAndTests` remediation + hazards
+(recall over silence). Pinned by CatL row **L18** (all three branches on one production-mode fixture) and by
+CatK **K2** (public test-only → low; internal test-only stays medium).
 
 ### 4.2 Hazard set (closed enumeration, proposed)
 
