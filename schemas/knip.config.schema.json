@@ -11,6 +11,15 @@
       "type": "string",
       "description": "Path to the .sln/.slnx/.csproj to analyze. CLI --solution overrides this."
     },
+    "production": {
+      "type": "boolean",
+      "description": "WS7 production mode: flag production code reachable ONLY via tests as onlyUsedByTests. Off by default; also enabled by --production."
+    },
+    "testProjects": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "WS7: project-name globs that classify a project as a test project (highest-priority signal). Empty => auto-detect via referenced test-framework assembly, then name globs (*Tests/*.Test/*.Tests)."
+    },
     "entryPoints": {
       "type": "object",
       "additionalProperties": false,

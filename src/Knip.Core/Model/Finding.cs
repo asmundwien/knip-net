@@ -20,6 +20,15 @@ public enum FindingKind
     /// EMITTED (REVISED §3.8) with a hazard + low confidence, never dropped.
     /// </summary>
     UnusedPackageReference,
+
+    /// <summary>
+    /// (WS7 production mode) A production symbol reachable ONLY via test roots — dead once the tests are
+    /// removed. A distinct kind because the remediation differs: "delete the code AND its tests"
+    /// (<see cref="Remediation.DeleteCodeAndTests"/>). The referencing test symbols are carried in
+    /// <see cref="Finding.TestReferrers"/> so the deletion unit is visible (K3). Emitted only in
+    /// production mode (<c>--production</c> / <c>testProjects</c>); default mode keeps these alive (K1).
+    /// </summary>
+    OnlyUsedByTests,
 }
 
 /// <summary>
@@ -89,6 +98,13 @@ public enum Remediation
 public readonly record struct SourcePosition(int Line, int Column);
 
 /// <summary>
+/// (WS7) A test symbol that references a production symbol reported as
+/// <see cref="FindingKind.OnlyUsedByTests"/> — the "and its tests" half of the deletion unit (K3).
+/// Prose display name + <c>file:line</c>, never a graph key (invariant #1).
+/// </summary>
+public sealed record TestReferrer(string Symbol, string File, int Line);
+
+/// <summary>
 /// The DELETION UNIT for a finding (WS8 §3.3): the full span an agent removes to eliminate the finding,
 /// covering leading XML-doc/attribute trivia through the closing brace / terminating semicolon. 1-based.
 /// For project/package references it is the single &lt;ProjectReference/&gt; element in the project file.
@@ -136,4 +152,11 @@ public sealed record Finding(
     /// finding is directly unreferenced (no incoming edges, or all incoming edges are from live code).
     /// </summary>
     public string? RootCause { get; init; }
+
+    /// <summary>
+    /// (WS7) For <see cref="FindingKind.OnlyUsedByTests"/>: the test symbols that reference this
+    /// production symbol — the "delete the tests too" half of the remediation unit (K3). Empty for every
+    /// other kind. Serialized under <c>details.testReferrers</c> in the JSON output.
+    /// </summary>
+    public IReadOnlyList<TestReferrer> TestReferrers { get; init; } = [];
 }

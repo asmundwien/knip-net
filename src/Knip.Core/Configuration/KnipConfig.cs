@@ -20,6 +20,22 @@ public sealed class KnipConfig
     public OutputConfig Output { get; set; } = new();
 
     /// <summary>
+    /// (WS7) Production-mode analysis. When true, roots seeded from TEST projects are two-color-demoted:
+    /// production code reachable ONLY through test roots is reported as
+    /// <see cref="Model.FindingKind.OnlyUsedByTests"/> (the largest deletable unit — a dead feature and
+    /// its whole test suite). OFF by default (K1: default semantics keep test-only production code alive).
+    /// Enabled via <c>--production</c> on the CLI or this key in knip.json.
+    /// </summary>
+    public bool Production { get; set; }
+
+    /// <summary>
+    /// (WS7) Project-name globs that classify a project as a TEST project (highest-priority signal, K7:
+    /// first match wins). When set for a project, it overrides both the referenced-test-framework-assembly
+    /// signal and the name-glob fallback. Empty by default (auto-detection then applies).
+    /// </summary>
+    public List<string> TestProjects { get; set; } = [];
+
+    /// <summary>
     /// Built-in analysis plugins, keyed by camelCase plugin id (e.g. "reflection"). Each block sets
     /// <c>enabled</c> plus optional per-plugin settings. A plugin absent here uses its default-enabled
     /// state (see <see cref="PluginRegistry"/>). Unknown ids / unknown per-plugin keys produce a

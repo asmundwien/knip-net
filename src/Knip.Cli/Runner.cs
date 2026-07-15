@@ -54,6 +54,9 @@ internal static class Runner
             return 2;
         }
 
+        // WS7: production mode enables via the CLI flag OR the config key (flag never turns it OFF).
+        if (options.Production) config.Production = true;
+
         var format = options.Format ?? config.Output.Format;
         var verbose = options.Verbose;
 
@@ -67,6 +70,13 @@ internal static class Runner
         try
         {
             var result = await KnipEngine.RunAsync(config, Path.GetFullPath(target), progress, cts.Token);
+
+            // WS7: production-mode warnings (e.g. zero test projects detected) are LOUD on stderr
+            // regardless of -v — they change the meaning of the results. Machine output stays clean
+            // on stdout (J6); the same warnings are in reliability.productionModeWarnings for consumers.
+            foreach (var warning in result.Reliability.ProductionModeWarnings)
+                Console.Error.WriteLine($"warning: {warning}");
+
             ReporterFactory.Create(format).Report(result, Console.Out);
 
             if (result.Findings.Count > 0 && !options.NoFail)

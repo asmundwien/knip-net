@@ -24,8 +24,10 @@ namespace Knip.Core.Analysis;
 ///   <item>C3: project/package-reference findings → <see cref="Confidence.Medium"/>.</item>
 /// </list>
 /// A finding with no hazard in a healthy project stays <see cref="Confidence.High"/>.
-/// C4 (deleteCodeAndTests, WS7), C5 (entry-point near-miss, DROPPED from v1), and the
-/// serialization/config/DI hazard DETECTION (WS5) are DEFERRED — not applied here.
+/// C4 (deleteCodeAndTests, WS7 OnlyUsedByTests) → <see cref="Confidence.Medium"/>, applied right after C1
+/// so the remediation shape dominates the publicApi hazard (test-only code is nearly always public).
+/// C5 (entry-point near-miss, DROPPED from v1) and serialization/config/DI hazard DETECTION (WS5) are
+/// DEFERRED — not applied here.
 /// </summary>
 internal static class ConfidenceModel
 {
@@ -57,13 +59,22 @@ internal static class ConfidenceModel
         }
     }
 
-    /// <summary>First-match demotion: C1 → (PublicApi/C2) → InternalsVisibleTo → C3; else High.</summary>
+    /// <summary>First-match demotion: C1 → C4 → (PublicApi/C2) → InternalsVisibleTo → C3; else High.</summary>
     private static Confidence Compute(
         Finding finding, bool apiPostureDeclared, bool globalDegradation, HashSet<string> failedProjects)
     {
         // C1 — per-project reliability. Global degradation demotes all; otherwise only the affected project.
+        // (Takes precedence over C4: a degraded graph can't be trusted to classify test projects either.)
         if (globalDegradation || failedProjects.Contains(finding.Project))
             return Confidence.Low;
+
+        // C4 — deleteCodeAndTests (WS7 OnlyUsedByTests): the WS7 card pins this kind at MEDIUM regardless
+        // of accessibility (test-only production code is nearly always public — it exists to be called by
+        // a test). So the DeleteCodeAndTests remediation SHAPE dominates the publicApi hazard here: the
+        // finding is medium (propose in the PR; a human confirms the referrer set + classification). Below
+        // C1 so a degraded run still demotes it to low.
+        if (finding.Remediation is Remediation.DeleteCodeAndTests)
+            return Confidence.Medium;
 
         // C2 — publicApi (config-sensitive): declared posture → medium, unknown exposure → low.
         if (finding.Hazards.Contains(Hazard.PublicApi))
@@ -90,7 +101,7 @@ internal static class ConfidenceModel
         if (finding.Remediation is Remediation.RemoveProjectReference or Remediation.RemovePackageReference)
             return Confidence.Medium;
 
-        // C4 (deleteCodeAndTests, WS7) and C5 (entry-point near-miss, DROPPED) are not applied here.
+        // C5 (entry-point near-miss) DROPPED from v1 — not applied here.
         return Confidence.High;
     }
 

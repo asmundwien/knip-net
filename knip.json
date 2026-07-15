@@ -5,6 +5,21 @@
 
   // "solution": "path/to/Your.sln",   // or pass on the CLI: dotnet-knip Your.sln
 
+  // WS7 PRODUCTION MODE. Off by default (default mode keeps test-only production code alive — every
+  // [Fact]/[Theory] is a root). Turn it on (here, or with --production) to also flag production code
+  // reachable ONLY through tests as `onlyUsedByTests` (remediation `deleteCodeAndTests`) — a distinct
+  // finding kind because the deletion unit is the code AND its tests (the finding lists the referring
+  // test symbols under details.testReferrers). This is the largest deletable unit before a migration:
+  // a dead feature plus its whole test suite.
+  // "production": true,
+
+  // Test-project classification (K7), first match wins: (1) these `testProjects` globs override
+  // everything; (2) else a referenced test-framework assembly (MSTest.TestFramework / xunit.core /
+  // nunit.framework); (3) else name globs (*Tests / *.Test / *.Tests). Zero test projects detected in
+  // production mode → a LOUD warning (stderr + reliability.productionModeWarnings); never fails. Set
+  // this only when auto-detection misclassifies (e.g. a test project named "…Verification").
+  // "testProjects": ["*.IntegrationTests", "My.Test.Harness"],
+
   "entryPoints": {
     // Members the framework/runtime invokes without a by-name reference in your code.
     "symbolNames": ["Main", "ConfigureServices", "Configure"],
