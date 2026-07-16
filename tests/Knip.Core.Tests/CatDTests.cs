@@ -110,4 +110,28 @@ public sealed class CatDTests
         // reported (outermost-only), NOT kept alive. This proves FIX #5 introduces no false negative.
         AssertExactly(await FindingsIn("CatD.D9"), "CatD.D9.DeadModel");
     }
+
+    [Fact] // D10 (external-interface liveness): a REACHABLE type implementing an EXTERNAL interface
+           // (System.IDisposable) keeps the impl's private callee ALIVE via the type->impl edge; the
+           // impl itself is never reported (invariant #7); a private helper NOT reached stays flagged.
+    [Trait("status", "contract")]
+    public async Task D10_external_interface_impl_on_reachable_type_keeps_callee_alive()
+    {
+        // Disposer.Dispose() implements external IDisposable.Dispose(). The external interface member is
+        // not a graph node (#5), so the impl is reachable only via the type->impl edge — Disposer being
+        // reachable keeps the override's callee Release() alive. DeadHelper() is unreached -> flagged,
+        // proving the type is not wholesale-rooted.
+        AssertExactly(await FindingsIn("CatD.D10"), "CatD.D10.Disposer.DeadHelper()");
+    }
+
+    [Fact] // D11 (external-interface liveness, false-negative guard): a DEAD type implementing an
+           // external interface stays dead — the type->impl edge is type-reachability-gated, so an
+           // unreachable type's impl (and its callees) remain unreachable. Outermost-only reports once.
+    [Trait("status", "contract")]
+    public async Task D11_external_interface_impl_on_dead_type_stays_dead()
+    {
+        // DeadDisposer is never referenced, so the type->impl edge has an unreachable source: the whole
+        // type is reported (outermost-only), NOT kept alive. This proves the new edge adds no false negative.
+        AssertExactly(await FindingsIn("CatD.D11"), "CatD.D11.DeadDisposer");
+    }
 }
