@@ -225,12 +225,28 @@ public sealed class DeadCodeAnalyzer
             if (symbol is INamedTypeSymbol type && type.TypeKind is not TypeKind.Interface)
             {
                 foreach (var iface in type.AllInterfaces)
+                {
+                    // An EXTERNAL interface member (System.IDisposable.Dispose, ILogger.BeginScope) is not
+                    // a solution graph node (invariant #5), so the member->impl edge below has a source
+                    // that is permanently unreachable — the impl (and its private callees: a Dispose() that
+                    // news a helper, a BeginScope() that returns a nested scope) cascade to dead even though
+                    // the runtime/framework dispatches the impl whenever the type is live. Symmetric to
+                    // FIX #5 for external virtual OVERRIDES: add a TYPE->impl edge so the impl is reachable
+                    // WHEN ITS CONTAINING TYPE IS. A dead type's impl edge has an unreachable source, so it
+                    // stays dead (no false negative). Solution-internal interfaces keep the member->impl
+                    // edge below unchanged (the member is a node and carries liveness itself).
+                    var ifaceExternal =
+                        iface.OriginalDefinition.ContainingAssembly?.Name is { } ifaceAsm
+                        && !solutionAssemblies.Contains(ifaceAsm);
+
                     foreach (var member in iface.GetMembers())
                     {
                         var impl = type.FindImplementationForInterfaceMember(member);
-                        if (impl is not null && !impl.IsImplicitlyDeclared)
-                            Link(state, member, impl);
+                        if (impl is null || impl.IsImplicitlyDeclared) continue;
+                        Link(state, member, impl);
+                        if (ifaceExternal) Link(state, type, impl);
                     }
+                }
             }
         }
     }
