@@ -11,7 +11,7 @@ internal static class InitCommand
     private const string GeneratedConfig =
         """
         {
-          "$schema": "https://raw.githubusercontent.com/hdir/knip-net/main/schemas/knip.config.schema.json",
+          "$schema": "https://raw.githubusercontent.com/asmundwien/knip-net/main/schemas/knip.config.schema.json",
           "output": {
             "format": "json"
           }

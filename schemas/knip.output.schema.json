@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hdir/knip-net/main/schemas/knip.output.schema.json",
+  "$id": "https://raw.githubusercontent.com/asmundwien/knip-net/main/schemas/knip.output.schema.json",
   "title": "Knip.NET JSON output (formatVersion 2)",
   "description": "The machine-readable output of a Knip.NET run. THIS IS THE PRODUCT API (WS8 §1).",
   "type": "object",

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/hdir/knip-net/main/schemas/knip.config.schema.json",
+  "$id": "https://raw.githubusercontent.com/asmundwien/knip-net/main/schemas/knip.config.schema.json",
   "title": "Knip.NET configuration (knip.json)",
   "description": "Config-as-code for a Knip.NET run. All keys optional; defaults tuned for ASP.NET Core + xUnit/NUnit.",
   "type": "object",
