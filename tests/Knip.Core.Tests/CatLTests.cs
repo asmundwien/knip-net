@@ -383,11 +383,76 @@ public sealed class CatLTests
         Assert.True(failed.Reliability.Degraded, "A genuine project-load failure must STILL degrade (invariant #6).");
     }
 
-    // ── L15 left G-feat: serializationShaped/configBoundType/diPluginShaped hazard DETECTION needs
-    //    heuristics/plugins (WS5). The enum values + the low-tier demotion off them already exist in the
-    //    engine, but with no detector to attach them there is nothing to pin end-to-end yet. ───────────
-    [Fact(Skip = "G-feat: serialization/config/DI hazard DETECTION is WS5 (enum + low demotion exist; no detector yet)")]
-    public void L15_serialization_config_di_hazards() { }
+    // ── L15 (PROMOTED, RB-01 Task B): USAGE-shaped serialization detection. UserDto is alive (it is the
+    //    type argument of a recognized JsonConvert.DeserializeObject<T> call) but its data members are never
+    //    read in source — the field shape. Its dead data members carry the serializationShaped hazard and
+    //    demote to low; a dead METHOD on the same DTO is NOT tagged (methods aren't serialized), and a
+    //    never-serialized alive type's dead member is NOT tagged (the over-tag guard). Detection fires with
+    //    the serialization PLUGIN OFF (default) — hazards are advisory metadata, not reachability. ─────────
+    [Fact]
+    public async Task L15_usage_shaped_serialization_hazard_tags_data_members_low()
+    {
+        var result = await FixtureRunner_Run("HazardShapes"); // default config: serialization plugin OFF
+
+        // Data members of the deserialized type -> serializationShaped, demoted to low.
+        var name = Single(result, "CatL.HazardShapes.UserDto.Name");
+        Assert.Contains(Hazard.SerializationShaped, name.Hazards);
+        Assert.Equal(Confidence.Low, name.Confidence);
+        Assert.Contains(Hazard.SerializationShaped, Single(result, "CatL.HazardShapes.UserDto.Age").Hazards);
+
+        // Sibling 1 (methods aren't serialized): the dead METHOD on the same DTO is reported but NOT tagged.
+        Assert.DoesNotContain(
+            Hazard.SerializationShaped, Single(result, "CatL.HazardShapes.UserDto.Describe()").Hazards);
+
+        // Sibling 2 (over-tag guard): a never-serialized alive type's dead member carries NO serialization
+        // hazard — the detector tags a serialized type's members, not every alive type's.
+        Assert.DoesNotContain(
+            Hazard.SerializationShaped, Single(result, "CatL.HazardShapes.PlainPoco.Label").Hazards);
+    }
+
+    // ── L19 (RB-01 Task B): ATTRIBUTE-shaped serialization detection. A member wearing [JsonProperty], or
+    //    any data member of a type wearing [Serializable], is serializationShaped. Both proof members are
+    //    INTERNAL, so the serialization hazard — not publicApi — is the graded signal: it demotes to low
+    //    on its own. A plain internal sibling on the same (member-attributed) type is NOT tagged. ──────────
+    [Fact]
+    public async Task L19_attribute_shaped_serialization_hazard_tags_and_demotes_low()
+    {
+        var result = await FixtureRunner_Run("HazardShapes");
+
+        // Type-level [Serializable]: an INTERNAL field -> serializationShaped, and (being internal, no
+        // publicApi hazard) proves the serialization hazard ALONE drives the finding to low.
+        var version = Single(result, "CatL.HazardShapes.LegacyDto.Version");
+        Assert.Contains(Hazard.SerializationShaped, version.Hazards);
+        Assert.DoesNotContain(Hazard.PublicApi, version.Hazards); // isolation: serialization is the only hazard
+        Assert.Equal(Confidence.Low, version.Confidence);
+
+        // Member-level [JsonProperty]: the annotated member is serializationShaped and low.
+        var marked = Single(result, "CatL.HazardShapes.TaggedDto.Marked");
+        Assert.Contains(Hazard.SerializationShaped, marked.Hazards);
+        Assert.Equal(Confidence.Low, marked.Confidence);
+
+        // Within-type sibling: an un-annotated member of a type with no type-level attribute is NOT tagged.
+        Assert.DoesNotContain(
+            Hazard.SerializationShaped, Single(result, "CatL.HazardShapes.TaggedDto.Plain").Hazards);
+    }
+
+    // ── L20 (RB-01 Task B): CONFIG-bound detection. DbOptions is the type argument of a recognized
+    //    ConfigurationBinder.Get<T> call; its dead public properties carry configBoundType and demote to
+    //    low. An identical never-bound POCO's property carries no hazard (the over-tag guard). ─────────────
+    [Fact]
+    public async Task L20_config_bound_hazard_tags_properties_low()
+    {
+        var result = await FixtureRunner_Run("HazardShapes");
+
+        var conn = Single(result, "CatL.HazardShapes.DbOptions.ConnectionString");
+        Assert.Contains(Hazard.ConfigBoundType, conn.Hazards);
+        Assert.Equal(Confidence.Low, conn.Confidence);
+        Assert.Contains(Hazard.ConfigBoundType, Single(result, "CatL.HazardShapes.DbOptions.Timeout").Hazards);
+
+        // Over-tag guard: an identical POCO that is never bound carries no configBoundType hazard.
+        Assert.DoesNotContain(
+            Hazard.ConfigBoundType, Single(result, "CatL.HazardShapes.PlainSettings.Value").Hazards);
+    }
 
     // ══ L5 / L6 / L7 (WS8c) — the agent-facing CLI additions, exercised OUT-OF-PROCESS through the real
     //    process boundary (like CatJ/CatI): --why provenance, --print-config, all-config-key warnings. ══

@@ -139,6 +139,11 @@ public sealed class DeadCodeAnalyzer
                     $"plugin {descriptor.Id} on {project.Name}: +{sink.RootsAdded} root(s), " +
                     $"+{sink.EdgesAdded} edge(s) in {pluginWatch.Elapsed.TotalMilliseconds:0}ms");
             }
+
+            // (RB-01 Task B) Collect runtime-hazard SHAPES (serializer targets, config-bound types). This
+            // runs ALWAYS — independent of the opt-in serialization plugin — because hazards are advisory
+            // metadata (they demote confidence), not reachability. Attached to findings in ToFinding.
+            RuntimeHazardDetector.Collect(compilation, state, ct);
         }
 
         AddPolymorphismEdges(state, solutionAssemblies);
@@ -385,7 +390,7 @@ public sealed class DeadCodeAnalyzer
             if (!ShouldReport(id, symbol, suppressed, state)) continue;
             var finding = isTestOnly
                 ? ToTestOnlyFinding(symbol, ivtToNonSolution, testReferrers)
-                : ToFinding(symbol, ivtToNonSolution);
+                : ToFinding(symbol, ivtToNonSolution, state);
             if (finding is null) continue;
             reportedKeyToFindingId[id] = finding.Id;
             emitted.Add((id, symbol, result.Findings.Count));
@@ -738,7 +743,7 @@ public sealed class DeadCodeAnalyzer
         return false;
     }
 
-    private static Finding? ToFinding(ISymbol symbol, HashSet<string> ivtToNonSolution)
+    private static Finding? ToFinding(ISymbol symbol, HashSet<string> ivtToNonSolution, GraphState state)
     {
         var location = symbol.Locations.FirstOrDefault(l => l.IsInSource);
         if (location is null) return null;
@@ -774,9 +779,12 @@ public sealed class DeadCodeAnalyzer
             Id = FindingEnrichment.ComputeId(kind.Value, displayName, project, null),
             Span = FindingEnrichment.ComputeSpan(symbol),
             Remediation = FindingEnrichment.RemediationFor(kind.Value),
-            // WS8b-2: attach ADVISORY hazards (publicApi / internalsVisibleTo). Confidence is graded in a
-            // final pass (ConfidenceModel.Apply) once the reliability picture is complete.
-            Hazards = FindingEnrichment.ComputeHazards(symbol, hasIvt),
+            // WS8b-2: attach ADVISORY hazards (publicApi / internalsVisibleTo), plus (RB-01 Task B) the
+            // runtime-only serialization/config-bound shapes detected by RuntimeHazardDetector. Confidence
+            // is graded in a final pass (ConfidenceModel.Apply) once the reliability picture is complete.
+            Hazards = CombineHazards(
+                FindingEnrichment.ComputeHazards(symbol, hasIvt),
+                FindingEnrichment.ComputeRuntimeHazards(symbol, state.SerializationUsageTypes, state.ConfigBoundTypes)),
         };
     }
 
@@ -821,6 +829,18 @@ public sealed class DeadCodeAnalyzer
             Hazards = FindingEnrichment.ComputeHazards(symbol, hasIvt),
             TestReferrers = referrers,
         };
+    }
+
+    /// <summary>Concatenate the base + runtime hazard lists, preserving order and avoiding an alloc when empty.</summary>
+    private static IReadOnlyList<Model.Hazard> CombineHazards(
+        IReadOnlyList<Model.Hazard> baseHazards, IReadOnlyList<Model.Hazard> runtimeHazards)
+    {
+        if (runtimeHazards.Count == 0) return baseHazards;
+        if (baseHazards.Count == 0) return runtimeHazards;
+        var combined = new List<Model.Hazard>(baseHazards.Count + runtimeHazards.Count);
+        combined.AddRange(baseHazards);
+        combined.AddRange(runtimeHazards);
+        return combined;
     }
 
     private static string SymbolKindName(ISymbol symbol) => symbol switch

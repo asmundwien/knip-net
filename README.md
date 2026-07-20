@@ -70,6 +70,15 @@ The short autonomy contract that protocol encodes: run with `--format json`, ass
 **`medium` is proposed** for human review, **`low` is surfaced** and never touched. Delete by `span`,
 outermost-first (`rootCause == null`). See [`AGENTS.md`](./AGENTS.md) for the full recipe.
 
+Findings also carry advisory **`hazards`** — shapes that survive build + tests but can break at runtime.
+Alongside `publicApi`, `internalsVisibleTo`, and `buildOnlyPackage`, a dead data member read only by a
+JSON serializer (a DTO tagged `[JsonProperty]`/`[DataMember]`/`[Serializable]`, or one passed to
+`JsonConvert.DeserializeObject<T>` / `JsonSerializer.Deserialize<T>`) is tagged `serializationShaped`, and
+a public property of a config-bound type (`IConfiguration.Get<T>()` / `.Bind(...)` / `Configure<T>`) is
+tagged `configBoundType`. Both demote the finding to **low** — deleting them compiles and passes tests, so
+verify by hand. Detection is name-based and needs no NuGet reference; it fires regardless of the opt-in
+`serialization` plugin (hazards are advisory metadata, not reachability).
+
 ### Explain a finding (`--why`) and inspect config (`--print-config`)
 
 - `dotnet-knip --why <symbol-or-id>` traces one symbol and exits `0` (a query, never a gate). Pass a

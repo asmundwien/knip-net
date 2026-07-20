@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <NoWarn>CS0067;CS0169;CS0649;IDE0051;IDE0052</NoWarn>
+    <!-- WS5 runtime-hazard DETECTION: findings on serialization-shaped / config-bound data members carry
+         an advisory hazard and demote to low. Serializer/config APIs are local stand-ins (offline, matched
+         by name) so the fixture has ZERO external dependencies — no error-types, no reliability degradation.
+         Not part of Knip.slnx; compiled at runtime by MSBuildWorkspace. -->
+  </PropertyGroup>
+
+</Project>

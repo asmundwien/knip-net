@@ -94,6 +94,23 @@ internal sealed class GraphState
     /// </summary>
     public Dictionary<string, HashSet<string>> UsedExternalAssemblies { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// (RB-01 Task B) Types whose data members are USAGE-shaped for serialization: the type appears as the
+    /// resolved target of a recognized serializer call (<c>JsonConvert.DeserializeObject&lt;T&gt;</c>,
+    /// <c>JsonSerializer.Serialize/Deserialize&lt;T&gt;</c>, …). Keyed by <see cref="SymbolId"/> of the TYPE
+    /// (invariant #1). Advisory only — drives the <see cref="Model.Hazard.SerializationShaped"/> tag on the
+    /// type's dead data-member findings; never changes reachability. Populated by <see cref="RuntimeHazardDetector"/>.
+    /// </summary>
+    public HashSet<string> SerializationUsageTypes { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// (RB-01 Task B) Types bound from configuration: the type appears as the resolved target of a
+    /// recognized binder call (<c>IConfiguration.Get&lt;T&gt;()</c> / <c>.Bind(instance)</c> /
+    /// <c>Configure&lt;T&gt;</c>). Keyed by <see cref="SymbolId"/> of the TYPE. Advisory only — drives the
+    /// <see cref="Model.Hazard.ConfigBoundType"/> tag on the type's dead public-property findings.
+    /// </summary>
+    public HashSet<string> ConfigBoundTypes { get; } = new(StringComparer.Ordinal);
+
     public void AddEdge(string source, string target)
     {
         if (!Edges.TryGetValue(source, out var set))

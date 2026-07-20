@@ -89,6 +89,74 @@ internal static class FindingEnrichment
     private static bool IsExternallyVisible(Accessibility accessibility) => accessibility is
         Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal;
 
+    // Member attribute simple names (with or without the "Attribute" suffix) that mark a member serialized.
+    private static readonly HashSet<string> MemberSerializationAttributes = new(StringComparer.Ordinal)
+    {
+        "JsonPropertyName", // System.Text.Json.Serialization.JsonPropertyNameAttribute
+        "JsonProperty",     // Newtonsoft.Json.JsonPropertyAttribute
+        "DataMember",       // System.Runtime.Serialization.DataMemberAttribute
+    };
+
+    // Type-level attribute simple names that mark a whole type serialized (all its data members are shaped).
+    private static readonly HashSet<string> TypeSerializationAttributes = new(StringComparer.Ordinal)
+    {
+        "Serializable",  // System.SerializableAttribute
+        "DataContract",  // System.Runtime.Serialization.DataContractAttribute
+    };
+
+    /// <summary>
+    /// (RB-01 Task B) The advisory RUNTIME-only hazards for a symbol finding (invariant #8, the sacred
+    /// residual): a data member read only by a serializer, or a public property populated only by config
+    /// binding — deletions that compile and pass tests then break at runtime. Never changes the emitted
+    /// set; <see cref="ConfidenceModel"/> demotes off these to low. Detection is NAME/ATTRIBUTE-based and
+    /// conservative; false hazard positives are cheap, false negatives expensive — when in doubt, tag.
+    /// <list type="bullet">
+    ///   <item><see cref="Hazard.SerializationShaped"/> — a DATA MEMBER (non-indexer property / non-const
+    ///     field) that either wears a member serialization attribute, sits in a type wearing a type-level
+    ///     serialization attribute, or belongs to a type used as a serializer target
+    ///     (<paramref name="serializationUsageTypes"/>). Methods are never tagged (not serialized).</item>
+    ///   <item><see cref="Hazard.ConfigBoundType"/> — a PUBLIC PROPERTY of a type bound from configuration
+    ///     (<paramref name="configBoundTypes"/>).</item>
+    /// </list>
+    /// </summary>
+    public static IReadOnlyList<Hazard> ComputeRuntimeHazards(
+        ISymbol symbol, ISet<string> serializationUsageTypes, ISet<string> configBoundTypes)
+    {
+        // Only DATA members carry these runtime hazards — methods/events aren't serialized or bound.
+        var isDataMember = symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol { IsConst: false };
+        if (!isDataMember) return [];
+
+        var hazards = new List<Hazard>();
+        var containingTypeId = symbol.ContainingType is { } ct ? SymbolId.For(ct) : null;
+
+        var serializationShaped =
+            WearsAnySerializationAttribute(symbol, MemberSerializationAttributes)
+            || (symbol.ContainingType is { } type && WearsAnySerializationAttribute(type, TypeSerializationAttributes))
+            || (containingTypeId is not null && serializationUsageTypes.Contains(containingTypeId));
+        if (serializationShaped) hazards.Add(Hazard.SerializationShaped);
+
+        // Config binding populates public PROPERTIES of the bound type.
+        if (symbol is IPropertySymbol { IsIndexer: false, DeclaredAccessibility: Accessibility.Public }
+            && containingTypeId is not null && configBoundTypes.Contains(containingTypeId))
+            hazards.Add(Hazard.ConfigBoundType);
+
+        return hazards.Count == 0 ? [] : hazards;
+    }
+
+    private static bool WearsAnySerializationAttribute(ISymbol symbol, HashSet<string> names)
+    {
+        foreach (var attr in symbol.GetAttributes())
+        {
+            var name = attr.AttributeClass?.Name;
+            if (name is null) continue;
+            var trimmed = name.EndsWith("Attribute", StringComparison.Ordinal)
+                ? name[..^"Attribute".Length]
+                : name;
+            if (names.Contains(trimmed)) return true;
+        }
+        return false;
+    }
+
     /// <summary>
     /// True when the compilation's assembly carries an <c>[InternalsVisibleTo("X")]</c> whose target
     /// assembly <c>X</c> is NOT one of <paramref name="solutionAssemblies"/> — i.e. an INVISIBLE external
