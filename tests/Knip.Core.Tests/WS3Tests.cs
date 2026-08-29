@@ -5,26 +5,17 @@ using Xunit;
 namespace Knip.Core.Tests;
 
 /// <summary>
-/// WS3 — unused &lt;PackageReference&gt; detection. A package is UNUSED when none of the assemblies it
-/// delivers is touched by any symbol in the referencing project. Per REVISED §3.8 (recall over silence),
-/// build-only / analyzer / source-generator / PrivateAssets packages are EMITTED with a hazard + low
-/// confidence, never dropped — so this fixture asserts the TIER, not absence.
-///
-/// Fixture (tests/fixtures/WS3, one project, never in Knip.slnx):
-///   Newtonsoft.Json       : Program.Main serializes via JsonConvert (touches the assembly)    -> NOT flagged
-///   Swashbuckle.AspNetCore: METAPACKAGE — empty own compile; its SwaggerGen DEPENDENCY delivers
-///                           the SwaggerGenOptions assembly Program.Main touches (closure used)  -> NOT flagged
-///   Humanizer.Core        : declared, no symbol ever touches the Humanizer assembly            -> FLAGGED (medium)
-///   PolySharp             : analyzer / source-gen, PrivateAssets="all", no compile assembly    -> FLAGGED (low, hazard)
-///
-/// The Swashbuckle case is the metapackage regression guard: WS3 grades a declared package against its
-/// DEPENDENCY CLOSURE (itself + transitive deps), so a metapackage whose own compile set is empty but
-/// whose dependency packages deliver a used assembly is NOT reported unused nor mis-tagged build-only.
-///
-/// OFFLINE: WS3 reads obj/project.assets.json for the assembly→package map, so the fixture must be
-/// restored. <see cref="EnsureRestored"/> runs `dotnet restore` once (nuget.org-cached packages only —
-/// Newtonsoft.Json 13.0.3, Humanizer.Core 2.14.1, PolySharp 1.14.1, Swashbuckle.AspNetCore 7.2.0 + its
-/// SwaggerGen/Swagger/SwaggerUI deps, all offline-friendly).
+/// WS3 — unused &lt;PackageReference&gt; detection. Ordinary packages are graded against their own compile
+/// surface; only packages without one consult their dependency closure. The fixture covers:
+/// <list type="bullet">
+///   <item>an actually used ordinary package;</item>
+///   <item>a used metapackage whose dependency provides the referenced assembly;</item>
+///   <item>an unused ordinary package whose NETStandard dependency is used;</item>
+///   <item>an unused ordinary package with no dependencies;</item>
+///   <item>a build-only package and a source generator, both emitted at low confidence;</item>
+///   <item>a used transitive-only package, which is never reported as a direct reference.</item>
+/// </list>
+/// The fixture is restored on demand because package attribution reads <c>project.assets.json</c>.
 /// </summary>
 [Collection(MsBuildCollection.Name)]
 public sealed class WS3Tests
@@ -61,12 +52,32 @@ public sealed class WS3Tests
         Assert.EndsWith("WS3.App.csproj", unused.Span!.File);
     }
 
+    [Fact]
+    public async Task Unused_ordinary_package_is_reported_when_only_its_netstandard_dependency_is_used()
+    {
+        var findings = await PackageReferenceFindingsAsync();
+
+        var unused = Assert.Single(
+            findings,
+            f => f.Symbol == "Swashbuckle.AspNetCore.Swagger");
+        Assert.Equal(Confidence.Medium, unused.Confidence);
+        Assert.DoesNotContain(Hazard.BuildOnlyPackage, unused.Hazards);
+    }
+
     [Fact] // The package whose assembly Program.Main actually touches is NOT reported (false-positive guard).
     public async Task Used_package_reference_is_not_reported()
     {
         var findings = await PackageReferenceFindingsAsync();
 
         Assert.DoesNotContain(findings, f => f.Symbol == "Newtonsoft.Json");
+    }
+
+    [Fact]
+    public async Task Transitive_only_package_is_not_reported_as_a_direct_reference()
+    {
+        var findings = await PackageReferenceFindingsAsync();
+
+        Assert.DoesNotContain(findings, f => f.Symbol == "Microsoft.OpenApi");
     }
 
     [Fact] // METAPACKAGE regression guard: a package with an EMPTY own compile set whose DEPENDENCY delivers
@@ -79,9 +90,22 @@ public sealed class WS3Tests
         Assert.DoesNotContain(findings, f => f.Symbol == "Swashbuckle.AspNetCore");
     }
 
-    [Fact] // HAZARD: analyzer / source-gen / PrivateAssets package is EMITTED with hazard + LOW confidence
-    // (assert the tier, not absence — REVISED §3.8: never silently dropped).
+    [Fact]
     public async Task Build_only_package_is_emitted_with_hazard_and_low_confidence()
+    {
+        var findings = await PackageReferenceFindingsAsync();
+
+        var buildOnly = Assert.Single(
+            findings,
+            f => f.Symbol == "Microsoft.Extensions.ApiDescription.Server");
+        Assert.Equal(Remediation.RemovePackageReference, buildOnly.Remediation);
+        Assert.Contains(Hazard.BuildOnlyPackage, buildOnly.Hazards);
+        Assert.Equal(Confidence.Low, buildOnly.Confidence);
+    }
+
+    [Fact] // HAZARD: source-generator / PrivateAssets package is EMITTED with hazard + LOW confidence
+    // (assert the tier, not absence — REVISED §3.8: never silently dropped).
+    public async Task Source_generator_is_emitted_with_hazard_and_low_confidence()
     {
         var findings = await PackageReferenceFindingsAsync();
 
@@ -91,13 +115,19 @@ public sealed class WS3Tests
         Assert.Equal(Confidence.Low, buildOnly.Confidence);
     }
 
-    [Fact] // The complete package-reference finding set for the fixture is exactly {Humanizer.Core, PolySharp}.
+    [Fact]
     public async Task Exactly_the_unused_and_build_only_packages_are_flagged()
     {
         var findings = await PackageReferenceFindingsAsync();
 
         Assert.Equal(
-            new[] { "Humanizer.Core", "PolySharp" },
+            new[]
+            {
+                "Humanizer.Core",
+                "Microsoft.Extensions.ApiDescription.Server",
+                "PolySharp",
+                "Swashbuckle.AspNetCore.Swagger",
+            },
             findings.Select(f => f.Symbol).OrderBy(s => s, StringComparer.Ordinal).ToArray());
     }
 

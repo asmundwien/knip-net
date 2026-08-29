@@ -8,19 +8,14 @@ namespace Knip.Core.Analysis;
 /// &lt;PackageReference&gt; is touched (any of its assemblies appears in the project's external-assembly
 /// use set) or unused.
 ///
-/// <para>Preferred source: the restore graph <c>obj/project.assets.json</c> — its
-/// <c>targets[tfm][id/version].compile</c> (and <c>runtime</c>) entries are the authoritative list of
-/// referenceable DLLs per package, and an EMPTY <c>compile</c> set is the reliable signal for an
-/// analyzer / source-generator / build-only package (no referenceable assembly at all).</para>
+/// <para>Preferred source: the restore graph <c>obj/project.assets.json</c>. Its
+/// <c>targets[tfm][id/version].compile</c> and <c>runtime</c> entries identify each package's own
+/// referenceable assemblies. Ordinary packages are graded against that own surface; dependency assemblies
+/// cannot make them appear used.</para>
 ///
-/// <para>METAPACKAGES: some packages (e.g. <c>Swashbuckle.AspNetCore</c>) declare an EMPTY own
-/// <c>compile</c> set yet ARE used — the functionality is delivered by their DEPENDENCY packages
-/// (<c>Swashbuckle.AspNetCore.SwaggerGen</c> etc.). To avoid flagging a used metapackage as unused (and
-/// mis-tagging it build-only), the assets file's per-library <c>dependencies</c> map is retained, and WS3
-/// grades a declared package against its full DEPENDENCY CLOSURE: the package itself plus every package it
-/// transitively pulls. A package is USED if ANY assembly in that closure is touched; it is BUILD-ONLY only
-/// when the WHOLE closure delivers no referenceable compile assembly (a genuine analyzer / build-target
-/// package such as StyleCop.Analyzers or coverlet.msbuild).</para>
+/// <para>The assets dependency graph is retained for packages with no own compile surface. Their closure
+/// distinguishes a genuine metapackage whose dependencies provide its API from an analyzer, source
+/// generator, or build-only package whose closure is compile-less.</para>
 ///
 /// <para>Fallback (no assets file): the Roslyn <see cref="Project.MetadataReferences"/> paths, where a
 /// NuGet assembly lives under <c>…/packages/&lt;id&gt;/&lt;version&gt;/lib/…/X.dll</c> — the path segment

@@ -598,21 +598,18 @@ public sealed class DeadCodeAnalyzer
     /// dropping them, invariant #5).
     /// </summary>
     /// <remarks>
-    /// A declared package is graded against its full DEPENDENCY CLOSURE (the package plus every package it
-    /// transitively pulls, per the assets <c>dependencies</c> graph), NOT its own assemblies alone. This is
-    /// what keeps a used METAPACKAGE off the list: a package like <c>Swashbuckle.AspNetCore</c> declares an
-    /// empty own <c>compile</c> set but its DEPENDENCY packages deliver the used assemblies
-    /// (<c>…SwaggerGen.dll</c> etc.) — the closure sees those, so the reference is USED and neither flagged
-    /// nor mis-tagged build-only.
+    /// A declared package with its own compile surface is graded only against assemblies delivered by that
+    /// package. Including its dependency closure would let any commonly used transitive dependency hide an
+    /// otherwise unused ordinary reference. Only a package without an own compile surface consults its
+    /// dependency closure, which preserves genuine metapackages whose dependencies provide the API.
     /// <para>Per REVISED §3.8 (recall over silence): known-hazard packages are EMITTED, not dropped:</para>
     /// <list type="bullet">
-    ///   <item>analyzer / source-generator / build-only packages deliver NO referenceable compile
-    ///     assembly ANYWHERE in their closure, so their effect (codegen, targets, roslyn analysis) is
-    ///     invisible to symbol edges — tagged <see cref="Hazard.BuildOnlyPackage"/> and demoted to low
-    ///     confidence. A metapackage that IS used is NOT build-only: a used assembly lives in its closure;</item>
+    ///   <item>analyzer / source-generator / build-only packages whose closure has no referenceable compile
+    ///     assembly are tagged <see cref="Hazard.BuildOnlyPackage"/> and demoted to low confidence;</item>
     ///   <item><c>PrivateAssets="all"</c> references are build/dev-only by intent — same tag/tier;</item>
-    ///   <item>a package used only via a TRANSITIVE type, or an implicit <c>Using</c>, still shows up as
-    ///     unused when nothing in its closure is touched — emitted at C3 medium (package-ref) so the agent
+    ///   <item>a genuine metapackage is used when one of its dependency assemblies is touched;</item>
+    ///   <item>a package used only via a transitive type, or an implicit <c>Using</c>, still shows up as
+    ///     unused when its applicable surface is untouched — emitted at C3 medium (package-ref) so the agent
     ///     triages it through the verify loop.</item>
     /// </list>
     /// Requires restore data: <c>obj/project.assets.json</c> (preferred) or resolved metadata-reference
@@ -635,24 +632,33 @@ public sealed class DeadCodeAnalyzer
 
             foreach (var package in declared)
             {
-                // No mapping for this id (e.g. an analyzer package absent from the metadata-ref fallback,
-                // or a framework/meta package): we have no delivered-assembly evidence, so we cannot make
-                // an honest verdict — leave it alone (conservative, invariant #8 safe direction).
-                var closure = PackageAssemblyMap.Closure(packageAssemblies, package.Id);
-                if (closure is null) continue;
+                // No mapping for this id (for example, an analyzer absent from the metadata-ref fallback):
+                // without delivered-assembly evidence we cannot make an honest verdict.
+                if (!packageAssemblies.TryGetValue(package.Id, out var own)) continue;
 
-                // Grade against the DEPENDENCY CLOSURE (package + transitive deps), so a METAPACKAGE whose
-                // own compile set is empty but whose dependency packages deliver the used assemblies is
-                // seen as USED — not flagged, not mis-tagged build-only. A package is exercised iff any
-                // assembly in its closure is touched.
-                var usedInClosure = closure.Assemblies.Any(a => used.Contains(a));
-                if (usedInClosure) continue;
+                IReadOnlyCollection<string> usageAssemblies;
+                var deliversCompileAssembly = own.DeliversCompileAssembly;
+                if (deliversCompileAssembly)
+                {
+                    // Ordinary packages own a compile surface. Grade only that surface: a used dependency
+                    // must not hide an unused direct package reference.
+                    usageAssemblies = own.Assemblies;
+                }
+                else
+                {
+                    // A package without an own compile surface may be a metapackage whose dependencies
+                    // deliver its API. Build-only packages reach the same closure with no compile surface.
+                    var closure = PackageAssemblyMap.Closure(packageAssemblies, package.Id);
+                    if (closure is null) continue;
+                    usageAssemblies = closure.Assemblies;
+                    deliversCompileAssembly = closure.DeliversCompileAssembly;
+                }
 
-                // Build-only / analyzer / PrivateAssets: NO referenceable compile assembly ANYWHERE in the
-                // closure OR explicitly dev-only. Its effect is invisible to symbol edges → EMIT with the
-                // BuildOnlyPackage hazard + (via ConfidenceModel) low confidence. A used metapackage never
-                // lands here (it was already continued above). Never dropped (REVISED §3.8).
-                var buildOnly = !closure.DeliversCompileAssembly || package.PrivateAssetsAll;
+                if (usageAssemblies.Any(a => used.Contains(a))) continue;
+
+                // Effects from a compile-less closure or an explicitly dev-only reference are invisible to
+                // symbol edges. Emit the finding with a hazard rather than suppressing it.
+                var buildOnly = !deliversCompileAssembly || package.PrivateAssetsAll;
 
                 var csproj = project.FilePath ?? project.Name;
                 result.Findings.Add(new Finding(

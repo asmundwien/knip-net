@@ -26,10 +26,18 @@
          DEPENDENCY-CLOSURE assembly set is exercised -> NOT flagged (regression guard: a used
          metapackage must not be reported unused nor mis-tagged buildOnlyPackage). -->
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+    <!-- UNUSED ORDINARY PACKAGE: its own Swagger assembly is untouched, while Program.Main uses
+         Microsoft.OpenApi from this package's NETStandard dependency. Dependency usage must not make
+         this ordinary package appear used. -->
+    <PackageReference Include="Swashbuckle.AspNetCore.Swagger" Version="7.2.0" />
 
     <!-- UNUSED: declared but no symbol in this project ever touches the Humanizer assembly it delivers
          -> FLAGGED as UnusedPackageReference (remediation removePackageReference), medium confidence. -->
     <PackageReference Include="Humanizer.Core" Version="2.14.1" />
+
+    <!-- BUILD-ONLY: contributes MSBuild props/targets but no compile assembly or package dependencies.
+         Its effect is invisible to symbol edges, so it remains a low-confidence hazardous finding. -->
+    <PackageReference Include="Microsoft.Extensions.ApiDescription.Server" Version="6.0.5" />
 
     <!-- HAZARD (analyzer / source-generator, PrivateAssets="all"): delivers NO referenceable compile
          assembly, so its effect (polyfill codegen) is invisible to symbol edges. Per REVISED §3.8 it is
