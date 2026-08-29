@@ -4,5 +4,5 @@ namespace WS2.UsedLib;
 // Consumer -> WS2.UsedLib. The <ProjectReference> to this project must therefore NOT be flagged.
 public static class Greeter
 {
-    public static string Hello() => "hi";
+    public static string Hello() => WS2.TransitiveLib.Message.Value;
 }

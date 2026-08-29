@@ -140,13 +140,14 @@ public sealed class DeadCodeAnalyzer
                     $"+{sink.EdgesAdded} edge(s) in {pluginWatch.Elapsed.TotalMilliseconds:0}ms");
             }
 
-            // (RB-01 Task B) Collect runtime-hazard SHAPES (serializer targets, config-bound types). This
-            // runs ALWAYS — independent of the opt-in serialization plugin — because hazards are advisory
-            // metadata (they demote confidence), not reachability. Attached to findings in ToFinding.
+            // Collect runtime-hazard shapes independently of optional keep-alive plugins. Hazards are
+            // advisory metadata, not reachability; uncertain DI constructor closures are completed after
+            // every project's edges and global polymorphism edges exist.
             RuntimeHazardDetector.Collect(compilation, state, ct);
         }
 
         AddPolymorphismEdges(state, solutionAssemblies);
+        RuntimeHazardDetector.CompleteDiPluginClosures(state);
 
         result.SymbolsAnalyzed = state.Declared.Count;
         result.RootCount = state.Roots.Count;
@@ -397,28 +398,33 @@ public sealed class DeadCodeAnalyzer
             result.Findings.Add(finding);
         }
 
-        // Reverse edges over the DEAD set only: target key → dead source keys that reference it. A dead
-        // referrer whose deletion would remove an incoming edge to this finding is its rootCause (L10).
-        var incoming = BuildDeadIncomingEdges(state, dead);
+        // Root causes stay within one reachability class. A dead finding is covered only by another dead
+        // finding; a test-only finding is covered only by another test-only finding. Mixing the sets can
+        // incorrectly hide an independently actionable finding behind an unrelated incoming edge.
+        var deadIncoming = BuildIncomingEdges(state, dead);
+        var testOnlyIncoming = BuildIncomingEdges(state, testOnly);
 
         foreach (var (key, symbol, index) in emitted)
         {
-            var rootCause = ResolveRootCause(key, symbol, incoming, dead, state, reportedKeyToFindingId);
+            var unreachable = testOnly.Contains(key) ? testOnly : dead;
+            var incoming = testOnly.Contains(key) ? testOnlyIncoming : deadIncoming;
+            var rootCause = ResolveRootCause(key, symbol, incoming, unreachable, state, reportedKeyToFindingId);
             if (rootCause is not null)
                 result.Findings[index] = result.Findings[index] with { RootCause = rootCause };
         }
     }
 
-    /// <summary>target key → the set of DEAD source keys with an edge into it (incoming edges over dead).</summary>
-    private static Dictionary<string, HashSet<string>> BuildDeadIncomingEdges(GraphState state, HashSet<string> dead)
+    /// <summary>target key → source keys in the same unreachable set that reference it.</summary>
+    private static Dictionary<string, HashSet<string>> BuildIncomingEdges(
+        GraphState state, HashSet<string> unreachable)
     {
         var incoming = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var (source, targets) in state.Edges)
         {
-            if (!dead.Contains(source)) continue;
+            if (!unreachable.Contains(source)) continue;
             foreach (var target in targets)
             {
-                if (!dead.Contains(target)) continue;
+                if (!unreachable.Contains(target)) continue;
                 if (!incoming.TryGetValue(target, out var set))
                     incoming[target] = set = new HashSet<string>(StringComparer.Ordinal);
                 set.Add(source);
@@ -477,29 +483,27 @@ public sealed class DeadCodeAnalyzer
     }
 
     /// <summary>
-    /// The <see cref="Finding.Id"/> of the nearest DEAD symbol keeping this one dead (WS8 §L10): prefer the
-    /// finding's own dead containing type; else a dead referrer (incoming edge) resolved to its reported
-    /// ancestor. Null when directly unreferenced (no dead incoming edges and no dead containing type).
+    /// The <see cref="Finding.Id"/> of the nearest symbol in the same unreachable set keeping this one
+    /// unreachable: prefer the finding's own unreachable containing type; else an unreachable referrer
+    /// resolved to its reported ancestor. Null when directly unreferenced in that set.
     /// </summary>
     private static string? ResolveRootCause(
         string key,
         ISymbol symbol,
         Dictionary<string, HashSet<string>> incoming,
-        HashSet<string> dead,
+        HashSet<string> unreachable,
         GraphState state,
         Dictionary<string, string> reportedKeyToFindingId)
     {
-        // Prefer the containing type when it is itself dead (the deletion of the type removes this symbol).
-        // NB: when the containing type is dead this member is NOT emitted (ShouldReport skips it), so this
-        // branch only fires for reported members whose *type* is live but an enclosing scope is dead — rare;
-        // kept for completeness per L10's "prefer the containing type".
+        // Prefer the containing type when it is itself unreachable (deleting the type removes this symbol).
+        // NB: such a member is normally suppressed by ShouldReport; keep this for nested edge cases.
         for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)
-            if (SymbolId.For(container) is { } cId && dead.Contains(cId)
+            if (SymbolId.For(container) is { } cId && unreachable.Contains(cId)
                 && reportedKeyToFindingId.TryGetValue(cId, out var containerFindingId))
                 return containerFindingId;
 
-        // Otherwise the nearest dead referrer whose deletion severs an incoming edge. Resolve each dead
-        // source to its REPORTED finding (walk up to a reported ancestor); pick a deterministic one.
+        // Otherwise use the nearest same-set referrer whose deletion severs an incoming edge. Resolve each
+        // source to its reported finding (walking up to a reported ancestor); pick deterministically.
         if (incoming.TryGetValue(key, out var sources))
         {
             var ownFindingId = reportedKeyToFindingId.TryGetValue(key, out var own) ? own : null;
@@ -562,9 +566,11 @@ public sealed class DeadCodeAnalyzer
                 if (used.Contains(referenced.AssemblyName)) continue; // reference IS exercised
 
                 var csproj = project.FilePath ?? project.Name;
-                // The deletion unit is the <ProjectReference/> element; `location` stays at 0/0 (the
-                // finding points at the .csproj as a whole — the element position lives in `span`).
+                // An evaluated reference may be imported or redundant with a transitive reference.
+                // Without a local <ProjectReference/> element there is no JSON v2 deletion unit, so
+                // conservatively omit it rather than advertise an action the consumer cannot perform.
                 var refSpan = ProjectFileSpan.ForProjectReference(csproj, referenced);
+                if (refSpan is null) continue;
                 result.Findings.Add(new Finding(
                     FindingKind.UnusedProjectReference,
                     referenced.Name,
@@ -784,14 +790,16 @@ public sealed class DeadCodeAnalyzer
             // is graded in a final pass (ConfidenceModel.Apply) once the reliability picture is complete.
             Hazards = CombineHazards(
                 FindingEnrichment.ComputeHazards(symbol, hasIvt),
-                FindingEnrichment.ComputeRuntimeHazards(symbol, state.SerializationUsageTypes, state.ConfigBoundTypes)),
+                FindingEnrichment.ComputeRuntimeHazards(
+                    symbol, state.SerializationUsageTypes, state.ConfigBoundTypes, state.DiPluginShapedSymbols)),
         };
     }
 
     /// <summary>
     /// (WS7) An OnlyUsedByTests finding for a production symbol reachable only via test roots. Same span /
-    /// location / hazards as an ordinary finding, but a distinct kind + DeleteCodeAndTests remediation, and
-    /// it carries the referencing test symbols (K3) so the deletion unit — code AND its tests — is visible.
+    /// location / hazards as an ordinary finding, but a distinct kind + DeleteCodeAndTests remediation.
+    /// Directly test-referenced findings carry their test symbols; transitive findings link to that
+    /// boundary through RootCause during the common post-pass.
     /// </summary>
     private static Finding? ToTestOnlyFinding(
         ISymbol symbol,

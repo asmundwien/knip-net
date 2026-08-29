@@ -13,6 +13,8 @@ public sealed class Loader
         // Only reference to Plugin is this string literal — no IdentifierName node names the type.
         var t = Type.GetType("CatH.H2.Plugin");
         _ = t;
+        var internalType = Type.GetType("CatH.H2.InternalPlugin");
+        _ = internalType;
     }
 }
 
@@ -27,6 +29,11 @@ public sealed class Plugin
 // GetTypeByMetadataName; a blanket "root every Plugin-ish type" plugin would wrongly keep this alive.
 // The H2 ALIVE-with-plugin test (and the WS5 over-rooting guard) assert it stays flagged.
 public sealed class UnusedPlugin
+{
+    public void Run() { }
+}
+
+internal sealed class InternalPlugin
 {
     public void Run() { }
 }

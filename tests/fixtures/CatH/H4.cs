@@ -37,6 +37,12 @@ public sealed class MyHandler : IRequestHandler
     public void Handle() { }
 }
 
+internal sealed class InternalHandler : IRequestHandler
+{
+    public void Handle() { }
+    public void UnusedPublicSibling() { }
+}
+
 // DEAD SIBLING / OVER-ROOTING DECOY (honest): does NOT implement the scanned interface, never
 // referenced -> flagged today AND with the scanningDi plugin ON. A blanket plugin that rooted every
 // type near a scan call would wrongly keep this alive; the H4 ALIVE-with-plugin test (and the WS5

@@ -29,18 +29,22 @@ and stop.
 `hazards[]` is advisory: it means "verify harder", never "auto-safe". Its absence never upgrades
 autonomy. `confidence` is the only field that gates action.
 
-`--production` / `onlyUsedByTests` findings are human-review only (`medium`), never autonomous
-deletion — the deletion unit is the production code AND its tests.
+`--production` / `onlyUsedByTests` findings are human-review only (`medium`) unless another rule
+demotes them; never delete them autonomously. Their deletion unit is the production code AND its tests.
 
 ## 4. Delete by `span`, never by `location`
 
-`span` is the complete deletion unit (leading XML-doc comments and attribute lists through the
-closing `}` / terminating `;`). `location` is only the jump-to line for humans — never reconstruct a
-range from it.
+`span` is the complete, safe single-file deletion unit (leading XML-doc comments and attribute lists
+through the closing `}` / terminating `;`). `location` is only the jump-to line for humans — never
+reconstruct a range from it.
 
-- Never auto-delete a finding whose `span == null`; surface it.
-- Delete only `rootCause == null` findings in the current pass. A finding with a non-null `rootCause`
-  is already covered by deleting its parent; cascades are handled by re-running (§6).
+- An omitted `span` means no complete independently removable declaration can be represented (for example,
+  multiple symbol declarations or sibling field/event declarators). Never auto-delete it; surface it.
+- Delete only eligible `rootCause == null` findings in the current pass. A finding with a non-null
+  `rootCause` is covered by deleting its parent; cascades are handled by re-running (§6).
+- For `onlyUsedByTests`, follow `rootCause` to the direct test boundary carrying
+  `details.testReferrers`. That boundary's confidence governs the whole unit; never bypass a `low` or
+  `medium` parent to delete its child.
 
 ## 5. Library posture — set this first if the repo ships a library
 

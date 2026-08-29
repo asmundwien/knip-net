@@ -1,4 +1,5 @@
 using Knip.Core.Configuration;
+using Knip.Core.Analysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -9,26 +10,26 @@ namespace Knip.Core.Plugins.BuiltIn;
 /// properties/fields — a member the walker never sees named in source (no <c>dto.Name</c> read), so it
 /// is falsely flagged dead even when the DTO type itself is alive (it was passed to Serialize). Promotes H5.
 ///
-/// Conservative (§3.8): roots ONLY the public data members of types that are DEMONSTRABLY serialized
-/// (a resolvable serialize/deserialize target) or a member EXPLICITLY serialization-annotated — NEVER
-/// blanket-roots every property in the solution. A non-serialized DTO's plain members, and unrelated dead
-/// symbols, stay flagged (the over-rooting guard).
+/// Conservative (§3.8): roots ONLY the public data members of types that are DEMONSTRABLY serialized,
+/// their collection element types, or a member EXPLICITLY serialization-annotated. It never blanket-roots
+/// every property in the solution. A non-serialized DTO's plain members and unrelated collaborators stay
+/// flagged (the over-rooting guard).
 ///
 /// Recognizes, matched by simple NAME (offline — no NuGet reference; fixtures use a local stand-in
 /// serializer so the plugin ships with ZERO framework dependencies and is version-agnostic, invariant #9):
-///   • A serialize/deserialize call whose target type <c>T</c> resolves — root T's public get/set
-///     PROPERTIES and public FIELDS. T is taken from the invocation's type argument
-///     (<c>Serialize&lt;T&gt;</c> / <c>Deserialize&lt;T&gt;</c> / <c>DeserializeObject&lt;T&gt;</c>) or,
-///     failing that, from the type of the serialized argument (<c>Serialize(dto)</c>). Method names
-///     matched: Serialize / Deserialize (System.Text.Json.JsonSerializer),
-///     SerializeObject / DeserializeObject (Newtonsoft.Json.JsonConvert).
+///   • A serialize/deserialize call whose target type <c>T</c> resolves — root public get/set PROPERTIES
+///     and public FIELDS on T and its collection element types. T is taken from the invocation's type
+///     argument (<c>Serialize&lt;T&gt;</c> / <c>Deserialize&lt;T&gt;</c> /
+///     <c>DeserializeObject&lt;T&gt;</c>) or, failing that, from the type of the serialized argument
+///     (<c>Serialize(dto)</c>). Method names matched: Serialize / Deserialize
+///     (System.Text.Json.JsonSerializer), SerializeObject / DeserializeObject (Newtonsoft.Json.JsonConvert).
 ///   • A property/field wearing an attribute named <c>JsonPropertyName</c> / <c>JsonProperty</c> /
 ///     <c>DataMember</c> — a member explicitly marked for serialization — root that member.
 ///
 /// OFF by default (opt-in via <c>plugins.serialization.enabled: true</c>): serialize/deserialize method
 /// names are common enough that rooting every serialized type's members everywhere is not safe as a
-/// default. When on, over-rooting here is a false negative at worst, scoped to a serialized type's own
-/// data members (never its collaborators).
+/// default. When on, over-rooting here is a false negative at worst, scoped to a serialized type and its
+/// collection elements, never unrelated collaborators.
 ///
 /// Optional setting <c>plugins.serialization.namespaces</c> (glob list): also root the public data members
 /// of types whose namespace matches — a project-wide "these are DTOs" escape hatch for serialization the
@@ -69,13 +70,15 @@ internal sealed class SerializationPlugin : IKnipPlugin
             var model = compilation.GetSemanticModel(tree);
             var root = tree.GetRoot(ct);
 
-            // (1) Serialize/deserialize calls: resolve the serialized type and root its data members.
+            // (1) Serialize/deserialize calls: resolve the serialized target and root its own data members
+            // plus data members of collection elements represented by that target.
             foreach (var inv in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
                 if (model.GetSymbolInfo(inv, ct).Symbol is not IMethodSymbol method) continue;
                 if (!SerializerMethodNames.Contains(method.Name)) continue;
 
-                if (SerializedType(model, inv, method, ct) is { } type)
+                foreach (var type in SerializedTypeTraversal.SelfAndCollectionElements(
+                    SerializedType(model, inv, method, ct)))
                     RootDataMembers(type, sink);
             }
 

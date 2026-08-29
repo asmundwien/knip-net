@@ -4,19 +4,15 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Knip.Core.Analysis;
 
 /// <summary>
-/// (RB-01 Task B) Collects the runtime-only hazard SHAPES that make a dead-code finding risky to
-/// auto-delete because the deletion survives build + tests but breaks at RUNTIME (invariant #8, the
-/// sacred residual): a DTO property read only by a JSON serializer, or a POCO property populated only by
-/// configuration binding. It records, per solution TYPE, whether that type is a serializer target or a
-/// config-binding target; <see cref="FindingEnrichment"/> turns those into advisory hazards on the type's
-/// dead data-member findings, and <see cref="ConfidenceModel"/> demotes them to low.
+/// Collects runtime-only hazard shapes that make a finding unsafe to auto-delete because deletion can
+/// survive build + tests and fail at runtime: serializer-reflected data, configuration-bound properties,
+/// and activation dependencies of DI registrations whose overload does not prove container construction.
+/// <see cref="FindingEnrichment"/> turns those shapes into advisory hazards and
+/// <see cref="ConfidenceModel"/> demotes them to low.
 /// <para>
-/// This is DETECTION, not reachability: it runs in the analysis layer independently of the opt-in
-/// <c>serialization</c> plugin (which ADDS ROOTS to keep members alive). Hazards must be attached even when
-/// that plugin is disabled — they are advisory metadata, not keep-alive edges. Recognition is NAME-BASED and
-/// conservative (well-known method + containing-type simple names), so it needs no NuGet reference by Knip
-/// itself (invariant #9). False hazard positives are cheap (they never change the emitted set); false hazard
-/// negatives are the expensive direction — when in doubt, tag.
+/// This is detection, not reachability. It runs independently of optional keep-alive plugins because
+/// hazards must survive a disabled plugin. Recognition is deliberately conservative: false hazard positives
+/// only reduce autonomy; false negatives can authorize unsafe deletion.
 /// </para>
 /// </summary>
 internal static class RuntimeHazardDetector
@@ -45,12 +41,14 @@ internal static class RuntimeHazardDetector
     };
 
     /// <summary>
-    /// Walk one project's syntax trees for recognized serializer / config-binding calls and record the
-    /// resolved target TYPE (by <see cref="SymbolId"/>) into the shared graph state. Additive across
-    /// projects; never mutates reachability.
+    /// Walk one project's syntax trees for serializer, config-binding, and DI registration shapes. Records
+    /// type targets plus uncertain DI activation roots; activation closures are completed after the full
+    /// solution graph exists. Additive across projects; never mutates reachability.
     /// </summary>
     public static void Collect(Compilation compilation, GraphState state, CancellationToken ct)
     {
+        var genericConfigHelpers = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
+
         foreach (var tree in compilation.SyntaxTrees)
         {
             ct.ThrowIfCancellationRequested();
@@ -59,14 +57,20 @@ internal static class RuntimeHazardDetector
             foreach (var inv in tree.GetRoot(ct).DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
                 if (model.GetSymbolInfo(inv, ct).Symbol is not IMethodSymbol method) continue;
+
+                if (DependencyInjectionRegistration.TryResolve(model, inv, method, ct, out var registration)
+                    && !registration.ActivatesConstructors)
+                    RecordActivationRoots(registration.ImplementationType, state);
                 var containingName = method.ContainingType?.Name;
                 if (containingName is null) continue;
 
-                // Serialization USAGE: a recognized serialize/deserialize call → its target type.
+                // Serialization USAGE: a recognized call → its target and collection element types.
                 if (SerializerMethodNames.Contains(method.Name)
                     && SerializerContainingTypeNames.Contains(containingName))
                 {
-                    Record(TargetType(model, inv, method, ct), state.SerializationUsageTypes);
+                    foreach (var type in SerializedTypeTraversal.SelfAndCollectionElements(
+                        TargetType(model, inv, method, ct)))
+                        Record(type, state.SerializationUsageTypes);
                     continue;
                 }
 
@@ -76,14 +80,107 @@ internal static class RuntimeHazardDetector
                 switch (method.Name)
                 {
                     case "Get" or "Configure":
-                        Record(TargetType(model, inv, method, ct), state.ConfigBoundTypes);
-                        break;
+                        {
+                            var target = TargetType(model, inv, method, ct);
+                            RecordConfigBoundType(target, state.ConfigBoundTypes);
+                            RecordGenericHelper(target, genericConfigHelpers);
+                            break;
+                        }
                     case "Bind":
-                        Record(LastArgumentType(model, inv, ct), state.ConfigBoundTypes);
+                        RecordConfigBoundType(LastArgumentType(model, inv, ct), state.ConfigBoundTypes);
                         break;
                 }
             }
         }
+
+        if (genericConfigHelpers.Count == 0) return;
+
+        // A binder call inside Helper<T> resolves only to the method type parameter in that syntax tree.
+        // Resolve each closed Helper<Concrete> call site so the concrete binding target receives the hazard.
+        foreach (var tree in compilation.SyntaxTrees)
+        {
+            ct.ThrowIfCancellationRequested();
+            var model = compilation.GetSemanticModel(tree);
+
+            foreach (var inv in tree.GetRoot(ct).DescendantNodes().OfType<InvocationExpressionSyntax>())
+            {
+                if (model.GetSymbolInfo(inv, ct).Symbol is not IMethodSymbol method
+                    || SymbolId.For(method) is not { } methodId
+                    || !genericConfigHelpers.TryGetValue(methodId, out var parameterOrdinals))
+                    continue;
+
+                foreach (var ordinal in parameterOrdinals)
+                    if (ordinal < method.TypeArguments.Length)
+                        RecordConfigBoundType(method.TypeArguments[ordinal], state.ConfigBoundTypes);
+            }
+        }
+    }
+
+    private static void RecordActivationRoots(INamedTypeSymbol type, GraphState state)
+    {
+        foreach (var entryPoint in RuntimeActivation.EntryPoints(type))
+        {
+            if (SymbolId.For(entryPoint) is not { } entryPointId)
+                continue;
+
+            state.DiPluginActivationRoots.Add(entryPointId);
+            if (RuntimeActivation.HasInstanceInitializer(entryPoint))
+                state.DiPluginShapedSymbols.Add(entryPointId);
+        }
+
+        foreach (var activatedType in RuntimeActivation.TypeChain(type))
+            if (SymbolId.For(activatedType) is { } typeId)
+                state.DiPluginActivationTypes.Add(typeId);
+    }
+
+    public static void CompleteDiPluginClosures(GraphState state)
+    {
+        RuntimeActivation.CompleteRoots(state);
+        foreach (var typeId in state.DiPluginActivationTypes)
+        {
+            if (!state.RuntimeInitializersByType.TryGetValue(typeId, out var initializers))
+                continue;
+
+            state.DiPluginActivationRoots.UnionWith(initializers);
+            state.DiPluginShapedSymbols.UnionWith(initializers);
+        }
+
+        var pending = new Stack<string>();
+        foreach (var activationRoot in state.DiPluginActivationRoots)
+            if (state.Edges.TryGetValue(activationRoot, out var targets))
+                foreach (var target in targets)
+                    pending.Push(target);
+
+        while (pending.Count > 0)
+        {
+            var symbol = pending.Pop();
+            if (!state.DiPluginShapedSymbols.Add(symbol)
+                || !state.Edges.TryGetValue(symbol, out var targets))
+                continue;
+
+            foreach (var target in targets)
+                pending.Push(target);
+        }
+    }
+
+    private static void RecordGenericHelper(
+        ITypeSymbol? target, Dictionary<string, HashSet<int>> genericConfigHelpers)
+    {
+        if (target is not ITypeParameterSymbol
+            {
+                TypeParameterKind: TypeParameterKind.Method,
+                ContainingSymbol: IMethodSymbol helper,
+            } parameter
+            || SymbolId.For(helper) is not { } helperId)
+            return;
+
+        if (!genericConfigHelpers.TryGetValue(helperId, out var ordinals))
+        {
+            ordinals = [];
+            genericConfigHelpers.Add(helperId, ordinals);
+        }
+
+        ordinals.Add(parameter.Ordinal);
     }
 
     /// <summary>
@@ -113,6 +210,16 @@ internal static class RuntimeHazardDetector
         return model.GetTypeInfo(args[^1].Expression, ct).Type is { TypeKind: not TypeKind.Error } type
             ? type
             : null;
+    }
+
+    private static void RecordConfigBoundType(ITypeSymbol? type, HashSet<string> set)
+    {
+        Record(type, set);
+
+        for (var baseType = (type as INamedTypeSymbol)?.BaseType;
+             baseType is not null && baseType.SpecialType != SpecialType.System_Object;
+             baseType = baseType.BaseType)
+            Record(baseType, set);
     }
 
     private static void Record(ITypeSymbol? type, HashSet<string> set)

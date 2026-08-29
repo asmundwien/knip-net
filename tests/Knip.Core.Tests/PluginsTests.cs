@@ -1,5 +1,6 @@
 using Knip.Core.Configuration;
 using Knip.Core.Plugins;
+using Knip.Core.Model;
 using Xunit;
 
 namespace Knip.Core.Tests;
@@ -79,6 +80,8 @@ public sealed class PluginsTests
         Assert.DoesNotContain("CatH.H2.Plugin", on);
         // …but the unrelated dead type STAYS FLAGGED (plugin resolves EXACTLY the string it sees).
         Assert.Contains("CatH.H2.UnusedPlugin", on);
+        Assert.DoesNotContain("CatH.H2.Plugin.Run()", on);
+        Assert.Contains("CatH.H2.InternalPlugin.Run()", on);
     }
 
     // ── scanningDi differential + over-rooting guard: H4 (MediatR IRequestHandler shape) ──────
@@ -95,6 +98,7 @@ public sealed class PluginsTests
         // …but the unrelated dead type STAYS FLAGGED (over-rooting guard: UnrelatedType implements no
         // scanned marker interface, so the shape test does not root it).
         Assert.Contains("CatH.H4.UnrelatedType", on);
+        Assert.Contains("CatH.H4.InternalHandler.UnusedPublicSibling()", on);
     }
 
     // ── scanningDi differential + over-rooting guard: H12 (MassTransit IConsumer<> shape) ──────
@@ -110,6 +114,170 @@ public sealed class PluginsTests
         Assert.DoesNotContain("CatH.H12.OrderConsumer", on);
         // …but the non-consumer STAYS FLAGGED (over-rooting guard: implements no scanned marker).
         Assert.Contains("CatH.H12.UnrelatedService", on);
+    }
+
+    [Fact]
+    public async Task ScanningDi_registration_roots_implementation_constructor_closure()
+    {
+        const string ns = "CatH.DiConstructorActivation";
+
+        var findings = await FindingsIn(ns, WithScanningDi(true));
+
+        Assert.DoesNotContain(ns + ".RegisteredService._state", findings);
+        Assert.DoesNotContain(ns + ".RegisteredService.BuildState()", findings);
+        Assert.DoesNotContain(ns + ".RegisteredService._initializedState", findings);
+        Assert.DoesNotContain(ns + ".RegisteredService.BuildInitializedState()", findings);
+        Assert.Contains(ns + ".RegisteredService.NeverCalled()", findings);
+    }
+
+    [Fact]
+    public async Task ScanningDi_type_registration_roots_implementation_constructor_closure()
+    {
+        const string ns = "CatH.DiConstructorActivation";
+
+        var findings = await FindingsIn(ns, WithScanningDi(true));
+
+        Assert.DoesNotContain(ns + ".TypeRegisteredService._state", findings);
+        Assert.DoesNotContain(ns + ".TypeRegisteredService.BuildState()", findings);
+        Assert.Contains(ns + ".TypeRegisteredService.NeverCalled()", findings);
+    }
+
+    [Fact]
+    public async Task ScanningDi_single_type_registration_roots_implicit_activation_closure()
+    {
+        const string ns = "CatH.DiConstructorActivation";
+
+        var findings = await FindingsIn(ns, WithScanningDi(true));
+
+        Assert.DoesNotContain(ns + ".SingleTypeRegisteredService._state", findings);
+        Assert.DoesNotContain(ns + ".SingleTypeRegisteredService.BuildState()", findings);
+        Assert.Contains(ns + ".SingleTypeRegisteredService.NeverCalled()", findings);
+    }
+
+    [Fact]
+    public async Task ScanningDi_try_add_single_type_registration_roots_activation_closure()
+    {
+        const string ns = "CatH.DiConstructorActivation";
+
+        var findings = await FindingsIn(ns, WithScanningDi(true));
+
+        Assert.DoesNotContain(ns + ".TryAddRegisteredService._state", findings);
+        Assert.DoesNotContain(ns + ".TryAddRegisteredService.BuildState()", findings);
+        Assert.Contains(ns + ".TryAddRegisteredService.NeverCalled()", findings);
+    }
+
+    [Fact]
+    public async Task ScanningDi_metadata_registration_roots_source_initializer_closure()
+    {
+        const string ns = "CatH.DiConstructorActivation.Metadata";
+
+        var findings = await FindingsIn(ns, WithScanningDi(true));
+
+        Assert.DoesNotContain(ns + ".MetadataRegisteredService._state", findings);
+        Assert.DoesNotContain(ns + ".MetadataRegisteredService.BuildState()", findings);
+        Assert.Contains(ns + ".MetadataRegisteredService.NeverCalled()", findings);
+    }
+
+    [Fact]
+    public async Task ScanningDi_static_extension_invocation_roots_activation_closure()
+    {
+        const string ns = "CatH.DiConstructorActivation";
+
+        var findings = await FindingsIn(ns, WithScanningDi(true));
+
+        Assert.DoesNotContain(ns + ".StaticRegisteredService._state", findings);
+        Assert.DoesNotContain(ns + ".StaticRegisteredService.BuildState()", findings);
+        Assert.Contains(ns + ".StaticRegisteredService.NeverCalled()", findings);
+    }
+
+    [Fact]
+    public async Task ScanningDi_activation_preserves_base_constructor_and_initializer_closures()
+    {
+        const string ns = "CatH.DiConstructorActivation";
+
+        var findings = await FindingsIn(ns, WithScanningDi(true));
+
+        Assert.DoesNotContain(ns + ".RegisteredServiceBase._constructedState", findings);
+        Assert.DoesNotContain(ns + ".RegisteredServiceBase.BuildConstructedState()", findings);
+        Assert.DoesNotContain(ns + ".RegisteredServiceBase._initializedState", findings);
+        Assert.DoesNotContain(ns + ".RegisteredServiceBase.BuildInitializedState()", findings);
+        Assert.Contains(ns + ".RegisteredServiceBase.NeverCalled()", findings);
+    }
+
+    [Fact]
+    public async Task ScanningDi_uncertain_factory_activation_marks_activation_closure_as_hazardous()
+    {
+        const string ns = "CatH.DiConstructorActivation";
+        var result = await FixtureRunner.RunAsync(Category, WithScanningDi(false));
+
+        var field = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".FactoryRegisteredService._state");
+        Assert.Contains(Hazard.DiPluginShaped, field.Hazards);
+        Assert.Equal(Confidence.Low, field.Confidence);
+
+        var helper = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".FactoryRegisteredService.BuildState()");
+        Assert.Contains(Hazard.DiPluginShaped, helper.Hazards);
+        Assert.Equal(Confidence.Low, helper.Confidence);
+
+        var unrelated = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".FactoryRegisteredService.NeverCalled()");
+        Assert.DoesNotContain(Hazard.DiPluginShaped, unrelated.Hazards);
+        Assert.Equal(Confidence.High, unrelated.Confidence);
+    }
+
+    [Fact]
+    public async Task ScanningDi_try_add_type_factory_marks_only_activation_closure_as_hazardous()
+    {
+        const string ns = "CatH.DiConstructorActivation";
+        var result = await FixtureRunner.RunAsync(Category, WithScanningDi(false));
+
+        var field = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".TryAddFactoryRegisteredService._state");
+        Assert.Contains(Hazard.DiPluginShaped, field.Hazards);
+        Assert.Equal(Confidence.Low, field.Confidence);
+
+        var helper = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".TryAddFactoryRegisteredService.BuildState()");
+        Assert.Contains(Hazard.DiPluginShaped, helper.Hazards);
+        Assert.Equal(Confidence.Low, helper.Confidence);
+
+        var unrelated = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".TryAddFactoryRegisteredService.NeverCalled()");
+        Assert.DoesNotContain(Hazard.DiPluginShaped, unrelated.Hazards);
+        Assert.Equal(Confidence.High, unrelated.Confidence);
+    }
+
+    [Fact]
+    public async Task ScanningDi_metadata_type_factory_marks_source_initializer_closure_as_hazardous()
+    {
+        const string ns = "CatH.DiConstructorActivation.Metadata";
+        var result = await FixtureRunner.RunAsync(Category, WithScanningDi(false));
+
+        var field = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".MetadataFactoryRegisteredService._state");
+        Assert.Contains(Hazard.DiPluginShaped, field.Hazards);
+        Assert.Equal(Confidence.Low, field.Confidence);
+
+        var helper = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".MetadataFactoryRegisteredService.BuildState()");
+        Assert.Contains(Hazard.DiPluginShaped, helper.Hazards);
+        Assert.Equal(Confidence.Low, helper.Confidence);
+
+        var unrelated = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".MetadataFactoryRegisteredService.NeverCalled()");
+        Assert.DoesNotContain(Hazard.DiPluginShaped, unrelated.Hazards);
+        Assert.Equal(Confidence.High, unrelated.Confidence);
+    }
+
+    [Fact]
+    public async Task ScanningDi_uncertain_instance_activation_marks_constructor_closure_as_hazardous()
+    {
+        const string ns = "CatH.DiConstructorActivation";
+        var result = await FixtureRunner.RunAsync(Category, WithScanningDi(false));
+
+        var field = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".InstanceRegisteredService._state");
+        Assert.Contains(Hazard.DiPluginShaped, field.Hazards);
+        Assert.Equal(Confidence.Low, field.Confidence);
+
+        var helper = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".InstanceRegisteredService.BuildState()");
+        Assert.Contains(Hazard.DiPluginShaped, helper.Hazards);
+        Assert.Equal(Confidence.Low, helper.Confidence);
+
+        var unrelated = Assert.Single(result.Findings, finding => finding.Symbol == ns + ".InstanceRegisteredService.NeverCalled()");
+        Assert.DoesNotContain(Hazard.DiPluginShaped, unrelated.Hazards);
+        Assert.Equal(Confidence.High, unrelated.Confidence);
     }
 
     // ── blazorParameter differential + over-rooting guard: H6 ([Parameter]/[CascadingParameter]/[Inject]) ──
@@ -163,6 +331,47 @@ public sealed class PluginsTests
         Assert.Contains("CatH.H5.NonDto.PlainDead", on);  // plain member on a NON-serialized type
         Assert.Contains("CatH.H5.UnrelatedType", on);     // unrelated dead type
     }
+    [Fact]
+    public async Task Serialization_collection_element_members_are_hazard_shaped_H20()
+    {
+        var result = await FixtureRunner.RunAsync(Category, WithSerialization(false));
+        var collectionTarget = Assert.Single(
+            result.Findings,
+            finding => finding.Symbol == "CatH.H20.SerializedItems.BatchName");
+        Assert.Contains(Hazard.SerializationShaped, collectionTarget.Hazards);
+
+
+        var element = Assert.Single(
+            result.Findings,
+            finding => finding.Symbol == "CatH.H20.SerializedItem.Value");
+        Assert.Contains(Hazard.SerializationShaped, element.Hazards);
+        Assert.Equal(Confidence.Low, element.Confidence);
+
+        var arrayElement = Assert.Single(
+            result.Findings,
+            finding => finding.Symbol == "CatH.H20.ArrayItem.Value");
+        Assert.Contains(Hazard.SerializationShaped, arrayElement.Hazards);
+
+        var unrelated = Assert.Single(
+            result.Findings,
+            finding => finding.Symbol == "CatH.H20.UnrelatedCollaborator.DeadValue");
+        Assert.DoesNotContain(Hazard.SerializationShaped, unrelated.Hazards);
+    }
+    [Fact]
+    public async Task Serialization_roots_collection_element_members_only_H20()
+    {
+        var off = await FindingsIn("CatH.H20", WithSerialization(false));
+        Assert.Contains("CatH.H20.SerializedItem.Value", off);
+        Assert.Contains("CatH.H20.ArrayItem.Value", off);
+
+        var on = await FindingsIn("CatH.H20", WithSerialization(true));
+        Assert.DoesNotContain("CatH.H20.SerializedItem.Value", on);
+        Assert.DoesNotContain("CatH.H20.ArrayItem.Value", on);
+        Assert.Contains("CatH.H20.SerializedItem.Describe()", on);
+        Assert.Contains("CatH.H20.UnrelatedCollaborator.DeadValue", on);
+    }
+
+
 
     // serialization is OFF by default (opt-in): a default config leaves the serialized property flagged.
     [Fact]
@@ -236,14 +445,39 @@ public sealed class PluginsTests
         // the helper, which is exactly the FP class this plugin kills.)
         var off = await FindingsIn(ns, WithAspNetCore(false));
         Assert.Contains(helper, off);
+        Assert.Contains(ns + ".AuditFilter._state", off);
+        Assert.Contains(ns + ".AuditFilter.BuildState()", off);
 
         // Plugin ON: the plugin roots the filter's implementation of the interface methods → the helper it
         // calls gains liveness → NOT reported…
         var on = await FindingsIn(ns, WithAspNetCore(true));
         Assert.DoesNotContain(helper, on);
+        Assert.DoesNotContain(ns + ".AuditFilter._state", on);
+        Assert.DoesNotContain(ns + ".AuditFilter.BuildState()", on);
         // …but the unrelated dead method STAYS FLAGGED (over-rooting guard: only the interface-method
         // implementations are rooted, not the whole type).
         Assert.Contains(ns + ".AuditFilter.NeverDispatched()", on);
+    }
+
+    [Fact]
+    public async Task AspNetCore_factory_middleware_and_startup_filter_constructor_closures_stay_alive()
+    {
+        const string ns = "CatH.AspNetFrameworkActivation";
+
+        var off = await FixtureRunner.FindingSymbolsInAsync(
+            Category, ns, WithAspNetCore(false), includeSyntheticGlobalRoots: false);
+        Assert.Contains(ns + ".FactoryMiddleware._state", off);
+        Assert.Contains(ns + ".FactoryMiddleware.BuildState()", off);
+        Assert.Contains(ns + ".RequestPipelineFilter._state", off);
+        Assert.Contains(ns + ".RequestPipelineFilter.BuildState()", off);
+
+        var on = await FixtureRunner.FindingSymbolsInAsync(
+            Category, ns, WithAspNetCore(true), includeSyntheticGlobalRoots: false);
+        Assert.DoesNotContain(ns + ".FactoryMiddleware._state", on);
+        Assert.DoesNotContain(ns + ".FactoryMiddleware.BuildState()", on);
+        Assert.DoesNotContain(ns + ".RequestPipelineFilter._state", on);
+        Assert.DoesNotContain(ns + ".RequestPipelineFilter.BuildState()", on);
+        Assert.Contains(ns + ".RequestPipelineFilter.NeverConfigured()", on);
     }
 
     // ── aspnetcore differential + over-rooting guard: authorization handler entry method (H15) ──────
@@ -285,11 +519,15 @@ public sealed class PluginsTests
         // private helper it calls CASCADES to a false positive → flagged.
         var off = await FindingsIn(ns, WithAspNetCore(false));
         Assert.Contains(helper, off);
+        Assert.Contains(ns + ".MyPage._state", off);
+        Assert.Contains(ns + ".MyPage.BuildState()", off);
 
         // Plugin ON: the plugin roots the ComponentBase lifecycle methods → the helper OnInitialized calls
         // gains liveness → NOT reported…
         var on = await FindingsIn(ns, WithAspNetCore(true));
         Assert.DoesNotContain(helper, on);
+        Assert.DoesNotContain(ns + ".MyPage._state", on);
+        Assert.DoesNotContain(ns + ".MyPage.BuildState()", on);
         // …but the unrelated dead method STAYS FLAGGED (over-rooting guard: only the lifecycle methods are
         // rooted, not the whole component).
         Assert.Contains(ns + ".MyPage.NeverRendered()", on);

@@ -1,4 +1,7 @@
 {
+  "entryPoints": {
+    "symbolNames": [ "ConfigureServices" ]
+  },
   "ignore": {
     "symbols": [ "CatI.I5.OnlySample.OnlyDead()" ]
   }

@@ -84,21 +84,24 @@ that was live is a regression — revert.
 
 ## 3. Delete by `span`, not by line
 
-`span` is the **complete deletion unit** — it covers leading XML-doc comments and attribute lists
-through the closing `}` / terminating `;`. Delete exactly `span` (`span.start` through `span.end`,
-1-based, inclusive). Do NOT reconstruct a deletion range from `location` + a line count — `location` is
-only the jump-to identifier line for humans/editors; `span` is what you remove.
+`span` is the **complete, safe single-file deletion unit** — it covers leading XML-doc comments and
+attribute lists through the closing `}` / terminating `;`. Delete exactly `span` (`span.start` through
+`span.end`, 1-based, inclusive). Do NOT reconstruct a deletion range from `location` + a line count —
+`location` is only the jump-to identifier line for humans/editors; `span` is what you remove.
 
 - For `removeProjectReference` (and, when it lands, `removePackageReference`), `span` is the single
   `<ProjectReference/>` / `<PackageReference/>` element in the `.csproj`.
-- `span` may be `null` if a declaring syntax node could not be located — do not auto-delete a finding
-  with a `null` span; surface it.
+- `span` is omitted when Knip cannot represent the finding as one complete, independently removable
+  declaration: no syntax node is available, the symbol has multiple declarations, or a field/event
+  declaration has sibling declarators. Do not auto-delete it; surface it.
 
-**Use `rootCause` to delete OUTERMOST-FIRST.** `rootCause` is the `id` of the nearest dead symbol
-keeping this one dead (`null` = directly unreferenced). A finding whose `rootCause` is non-null is
-**already covered** by deleting its parent — do not delete it independently. Delete the `rootCause == null`
-(outermost) findings; the re-run reveals the next layer (the cascade in §1). This is why exhaustive
-cleanup is iterative (§7), not a single pass.
+**Use `rootCause` to delete OUTERMOST-FIRST.** `rootCause` is the `id` of the nearest reported finding
+in the same unreachable class whose deletion covers this one (`null` = outermost). A finding whose
+`rootCause` is non-null is **already covered** by deleting its parent — do not delete it independently.
+For `onlyUsedByTests`, follow `rootCause` to the direct test boundary; that outermost finding's
+confidence governs the whole unit. Never bypass a `low` or `medium` parent to delete its child. Delete
+eligible `rootCause == null` findings; the re-run reveals the next layer (the cascade in §1). This is
+why exhaustive cleanup is iterative (§7), not a single pass.
 
 ---
 
@@ -306,8 +309,9 @@ Knip in CI is a **converging gate**, not a linter that replaces build/test:
 ## 8. Production mode (`--production`)
 
 `--production` reports production code reachable only through tests as `onlyUsedByTests`
-(remediation `deleteCodeAndTests`) — a symbol whose only referrers are test roots. It lands at
-`medium` confidence: **propose in a PR, do not auto-delete.** `details.testReferrers[]` lists the
-referring test symbols (`{ symbol, file, line }`); the deletion unit is the code AND its tests, so
-delete both, then build + run tests. Zero test projects detected in production mode adds a
+(remediation `deleteCodeAndTests`). It lands at `medium` confidence unless another rule demotes it:
+**propose in a PR, do not auto-delete.** A finding directly referenced by tests lists those symbols in
+`details.testReferrers[]` (`{ symbol, file, line }`). Transitive findings point through `rootCause` to
+that direct boundary. The boundary's confidence governs the complete code-and-tests deletion unit;
+delete the approved unit, then build + run tests. Zero test projects detected in production mode adds a
 `reliability.productionModeWarnings` entry (it does not set `degraded`).

@@ -9,4 +9,8 @@
     <!-- Not part of Knip.slnx; only ever compiled at runtime by MSBuildWorkspace. -->
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\TransitiveLib\WS2.TransitiveLib.csproj" />
+  </ItemGroup>
+
 </Project>

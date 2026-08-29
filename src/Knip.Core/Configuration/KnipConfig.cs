@@ -117,16 +117,23 @@ public sealed class KnipConfig
             ["testProjects"] = null,
             ["entryPoints"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["symbolNames"] = null, ["attributes"] = null, ["baseTypes"] = null,
-                ["implementedInterfaces"] = null, ["namePatterns"] = null,
+                ["symbolNames"] = null,
+                ["attributes"] = null,
+                ["baseTypes"] = null,
+                ["implementedInterfaces"] = null,
+                ["namePatterns"] = null,
             },
             ["roots"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["treatAllPublicAsUsed"] = null, ["publicApiProjects"] = null,
+                ["treatAllPublicAsUsed"] = null,
+                ["publicApiProjects"] = null,
             },
             ["ignore"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
-                ["files"] = null, ["symbols"] = null, ["namespaces"] = null, ["projects"] = null,
+                ["files"] = null,
+                ["symbols"] = null,
+                ["namespaces"] = null,
+                ["projects"] = null,
             },
             ["output"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
@@ -232,8 +239,8 @@ public sealed class KnipConfig
 /// </summary>
 public sealed class EntryPointConfig
 {
-    /// <summary>Method/type names that are always roots (e.g. Main, Startup conventions).</summary>
-    public List<string> SymbolNames { get; set; } = ["Main", "ConfigureServices", "Configure", "ConfigureContainer"];
+    /// <summary>Explicit method/type names that are always roots.</summary>
+    public List<string> SymbolNames { get; set; } = [];
 
     /// <summary>Attribute names (with or without the "Attribute" suffix) that mark a member as an entry point.</summary>
     public List<string> Attributes { get; set; } =

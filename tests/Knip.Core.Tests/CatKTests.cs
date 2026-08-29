@@ -1,6 +1,8 @@
+using System.Text.Json;
 using Knip.Core;
 using Knip.Core.Configuration;
 using Knip.Core.Model;
+using Knip.Core.Reporting;
 using Xunit;
 
 namespace Knip.Core.Tests;
@@ -152,21 +154,42 @@ public sealed class CatKTests
         });
     }
 
-    // ---- K5: Contract — transitive test-only chain flags BOTH links --------------------------
+    // ---- K5: Contract — transitive test-only chain exposes one coherent deletion unit --------
 
     [Trait("status", "contract")]
     [Fact]
-    public async Task K5_production_mode_flags_transitive_test_only_chain()
+    public async Task K5_production_mode_links_transitive_findings_to_the_direct_test_boundary()
     {
-        var findings = await FindingObjectsIn("CatK.K5", Production());
+        var result = await FixtureRunner.RunAsync(Category, Production());
+        var findings = result.Findings
+            .Where(f => f.Symbol.StartsWith("CatK.K5.", StringComparison.Ordinal))
+            .ToList();
 
         var a = findings.Single(f => f.Symbol == "CatK.K5.Chain.A()");
         var b = findings.Single(f => f.Symbol == "CatK.K5.Chain.B()");
-        Assert.Equal(FindingKind.OnlyUsedByTests, a.Kind); // transitively test-only (A <- B <- test)
-        Assert.Equal(FindingKind.OnlyUsedByTests, b.Kind); // directly test-only (B <- test)
+        Assert.Equal(FindingKind.OnlyUsedByTests, a.Kind);
+        Assert.Equal(FindingKind.OnlyUsedByTests, b.Kind);
 
-        // KeepAlive (production caller) keeps the TYPE alive and is never flagged.
-        Assert.DoesNotContain(findings, f => f.Symbol == "CatK.K5.Chain.KeepAlive()");
+        Assert.Equal(Confidence.Medium, a.Confidence);
+        Assert.Equal(Confidence.Low, b.Confidence);
+        Assert.Equal(b.Id, a.RootCause);
+        Assert.Null(b.RootCause);
+
+        Assert.Empty(a.TestReferrers);
+        Assert.Equal(new[] { "CatK.K5.ChainTests.Exercises_B()" }, b.TestReferrers.Select(r => r.Symbol));
+
+        using var writer = new StringWriter();
+        new JsonReporter().Report(result, writer);
+        using var document = JsonDocument.Parse(writer.ToString());
+        var jsonFindings = document.RootElement.GetProperty("findings").EnumerateArray().ToList();
+        var aJson = jsonFindings.Single(f => f.GetProperty("symbol").GetString() == a.Symbol);
+        var bJson = jsonFindings.Single(f => f.GetProperty("symbol").GetString() == b.Symbol);
+        Assert.Equal(b.Id, aJson.GetProperty("rootCause").GetString());
+        Assert.False(bJson.TryGetProperty("rootCause", out _));
+        Assert.False(aJson.GetProperty("details").TryGetProperty("testReferrers", out _));
+        Assert.Equal(
+            "CatK.K5.ChainTests.Exercises_B()",
+            bJson.GetProperty("details").GetProperty("testReferrers")[0].GetProperty("symbol").GetString());
     }
 
     // ---- K6: Contract — code used by production AND tests is never OnlyUsedByTests -----------

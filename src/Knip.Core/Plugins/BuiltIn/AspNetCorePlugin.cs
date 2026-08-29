@@ -1,3 +1,4 @@
+using Knip.Core.Analysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -193,27 +194,17 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
 
     /// <summary>
     /// Root a convention middleware's reflectively-invoked entry methods (<c>Invoke</c>/<c>InvokeAsync</c>)
-    /// and its instance constructors. The framework activates the type and calls the entry method per
-    /// request; rooting the entry method makes it reachable so its fields/helpers gain liveness via the
-    /// core walker's edges. Over-rooting is scoped to THIS type's convention members (a false negative at
-    /// worst, §3.8) — never its unrelated methods.
+    /// and runtime-activation entry points. The framework activates the type and calls the entry method per
+    /// request; unrelated methods remain unrooted.
     /// </summary>
     private static void RootConventionMiddleware(INamedTypeSymbol type, IContributionSink sink)
     {
         foreach (var member in type.GetMembers())
-        {
-            switch (member)
-            {
-                case IMethodSymbol { MethodKind: MethodKind.Ordinary } m when MiddlewareEntryMethodNames.Contains(m.Name):
-                    sink.AddRoot(m);
-                    break;
-                // The RequestDelegate factory news the middleware up, injecting the next delegate (+ DI):
-                // its instance ctors are entry points too, keeping the fields they assign (_next/_logger) alive.
-                case IMethodSymbol { MethodKind: MethodKind.Constructor, IsStatic: false } ctor:
-                    sink.AddRoot(ctor);
-                    break;
-            }
-        }
+            if (member is IMethodSymbol { MethodKind: MethodKind.Ordinary } method
+                && MiddlewareEntryMethodNames.Contains(method.Name))
+                sink.AddRoot(method);
+
+        RuntimeActivation.AddRoots(type, sink);
     }
 
     /// <summary>
@@ -233,6 +224,7 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         var isTelemetryInitializer = false;
         var isHealthCheck = false;
         var isPolicyProvider = false;
+        var isFrameworkActivated = false;
 
         foreach (var iface in type.AllInterfaces)
         {
@@ -241,36 +233,44 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
             if (name == "IMiddleware")
             {
                 // Factory-activated middleware: the framework resolves it from DI and calls InvokeAsync.
+                isFrameworkActivated = true;
                 RootInterfaceMethodImplementations(type, iface, sink);
             }
             else if (name == "IStartupFilter")
             {
                 // The startup pipeline invokes Configure to wrap the app builder.
+                isFrameworkActivated = true;
                 RootInterfaceMethodImplementations(type, iface, sink);
             }
             else if (name == "IAuthorizationHandler")
             {
                 isAuthorizationHandler = true;
+                isFrameworkActivated = true;
             }
             else if (name == "ITelemetryProcessor")
             {
                 isTelemetryProcessor = true;
+                isFrameworkActivated = true;
             }
             else if (name == "ITelemetryInitializer")
             {
                 isTelemetryInitializer = true;
+                isFrameworkActivated = true;
             }
             else if (name == "IHealthCheck")
             {
                 isHealthCheck = true;
+                isFrameworkActivated = true;
             }
             else if (name == "IAuthorizationPolicyProvider")
             {
                 isPolicyProvider = true;
+                isFrameworkActivated = true;
             }
             else if (FilterInterfaceNames.Contains(name))
             {
                 // The MVC / Razor Pages filter pipeline invokes the filter interface methods reflectively.
+                isFrameworkActivated = true;
                 RootInterfaceMethodImplementations(type, iface, sink);
             }
         }
@@ -281,11 +281,20 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         for (var b = type.BaseType; b is not null; b = b.BaseType)
         {
             if (b.Name == "AuthorizationHandler")
+            {
                 isAuthorizationHandler = true;
+                isFrameworkActivated = true;
+            }
             else if (b.Name == "ComponentBase")
-                RootMethodsByName(type, BlazorLifecycleMethodNames, sink, includeConstructors: false);
+            {
+                RootMethodsByName(type, BlazorLifecycleMethodNames, sink);
+                isFrameworkActivated = true;
+            }
             else if (b.Name == "DefaultAuthorizationPolicyProvider")
+            {
                 isPolicyProvider = true;
+                isFrameworkActivated = true;
+            }
         }
 
         if (isAuthorizationHandler)
@@ -293,57 +302,51 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
             // Policy evaluation activates the handler and dispatches its HandleRequirementAsync/HandleAsync
             // reflectively; root those entry methods + instance ctors so fields (_logger,
             // _authenticationStateProvider) and helpers gain liveness via the walker's edges.
-            RootMethodsByName(type, AuthorizationHandlerEntryMethodNames, sink, includeConstructors: true);
+            RootMethodsByName(type, AuthorizationHandlerEntryMethodNames, sink);
         }
 
         if (isTelemetryProcessor)
         {
             // The telemetry pipeline dispatches Process(ITelemetry); root it + instance ctors so the
             // ctor-assigned _next and the private helpers Process calls gain liveness via the walker's edges.
-            RootMethodsByName(type, TelemetryProcessorEntryMethodNames, sink, includeConstructors: true);
+            RootMethodsByName(type, TelemetryProcessorEntryMethodNames, sink);
         }
 
         if (isTelemetryInitializer)
         {
             // The telemetry pipeline dispatches Initialize(ITelemetry); root it + instance ctors.
-            RootMethodsByName(type, TelemetryInitializerEntryMethodNames, sink, includeConstructors: true);
+            RootMethodsByName(type, TelemetryInitializerEntryMethodNames, sink);
         }
 
         if (isHealthCheck)
         {
             // The health-check middleware dispatches CheckHealthAsync; root it + instance ctors so the
             // helpers it calls gain liveness via the walker's edges.
-            RootMethodsByName(type, HealthCheckEntryMethodNames, sink, includeConstructors: true);
+            RootMethodsByName(type, HealthCheckEntryMethodNames, sink);
         }
 
         if (isPolicyProvider)
         {
             // The authorization middleware dispatches GetPolicyAsync/GetDefaultPolicyAsync/GetFallbackPolicyAsync;
             // root them + instance ctors so the provider's policy-building helpers gain liveness.
-            RootMethodsByName(type, PolicyProviderEntryMethodNames, sink, includeConstructors: true);
+            RootMethodsByName(type, PolicyProviderEntryMethodNames, sink);
         }
+
+        if (isFrameworkActivated)
+            RuntimeActivation.AddRoots(type, sink);
     }
 
     /// <summary>
-    /// Root <paramref name="type"/>'s own ordinary methods whose simple name is in <paramref name="names"/>,
-    /// and optionally its instance constructors. Only these convention entry members are rooted — never the
-    /// whole type — so an unrelated dead method stays flagged (the over-rooting guard).
+    /// Root <paramref name="type"/>'s own ordinary methods whose simple name is in <paramref name="names"/>.
+    /// Only these convention entry members are rooted — never the whole type — so an unrelated dead method
+    /// stays flagged (the over-rooting guard).
     /// </summary>
     private static void RootMethodsByName(
-        INamedTypeSymbol type, HashSet<string> names, IContributionSink sink, bool includeConstructors)
+        INamedTypeSymbol type, HashSet<string> names, IContributionSink sink)
     {
         foreach (var member in type.GetMembers())
-        {
-            switch (member)
-            {
-                case IMethodSymbol { MethodKind: MethodKind.Ordinary } m when names.Contains(m.Name):
-                    sink.AddRoot(m);
-                    break;
-                case IMethodSymbol { MethodKind: MethodKind.Constructor, IsStatic: false } ctor when includeConstructors:
-                    sink.AddRoot(ctor);
-                    break;
-            }
-        }
+            if (member is IMethodSymbol { MethodKind: MethodKind.Ordinary } method && names.Contains(method.Name))
+                sink.AddRoot(method);
     }
 
     /// <summary>

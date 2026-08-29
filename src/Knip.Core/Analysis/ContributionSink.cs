@@ -41,6 +41,13 @@ internal sealed class ContributionSink : IContributionSink
             RootsAdded++;
     }
 
+    internal void RequestRuntimeActivation(INamedTypeSymbol type)
+    {
+        foreach (var activatedType in RuntimeActivation.TypeChain(type))
+            if (IsSolutionDefined(activatedType) && SymbolId.For(activatedType) is { } typeId)
+                _state.RuntimeActivationRootTypes.Add(typeId);
+    }
+
     public void AddEdge(ISymbol from, ISymbol to)
     {
         if (!IsSolutionDefined(to)) return;                // invariant #5 (same rule as ReferenceWalker.AddEdge)

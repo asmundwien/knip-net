@@ -65,29 +65,28 @@ internal static class FindingEnrichment
     /// The ADVISORY hazards (WS8 §4.2) for a symbol finding — never changes the emitted set, only tags
     /// risk (the demotion of confidence off these tags is <see cref="ConfidenceModel"/>). Detected here:
     /// <list type="bullet">
-    ///   <item><see cref="Hazard.PublicApi"/> — the symbol is externally visible
-    ///     (public / protected / protected-internal): a consumer outside the solution may bind it.</item>
-    ///   <item><see cref="Hazard.InternalsVisibleTo"/> — the symbol is INTERNAL and its declaring project
-    ///     carries an <c>[InternalsVisibleTo]</c> naming an assembly NOT in the solution (an invisible
-    ///     friend consumer), signalled by <paramref name="declaringProjectHasIvtToNonSolution"/>.</item>
+    ///   <item><see cref="Hazard.PublicApi"/> — the symbol and its complete containing-type chain are
+    ///     externally visible: a consumer outside the solution may bind it.</item>
+    ///   <item><see cref="Hazard.InternalsVisibleTo"/> — the symbol and its complete containing-type
+    ///     chain are visible to a friend assembly, but not to an ordinary external consumer, and its
+    ///     declaring project carries an <c>[InternalsVisibleTo]</c> naming an assembly NOT in the solution
+    ///     (an invisible friend consumer), signalled by
+    ///     <paramref name="declaringProjectHasIvtToNonSolution"/>.</item>
     /// </list>
-    /// SerializationShaped / ConfigBoundType / DiPluginShaped detection is DEFERRED (WS5) — not set here.
+    /// Runtime-only hazards are computed separately by <see cref="ComputeRuntimeHazards"/>.
     /// </summary>
     public static IReadOnlyList<Hazard> ComputeHazards(ISymbol symbol, bool declaringProjectHasIvtToNonSolution)
     {
         var hazards = new List<Hazard>();
 
-        if (IsExternallyVisible(symbol.DeclaredAccessibility))
+        if (SymbolVisibility.IsExternallyVisible(symbol))
             hazards.Add(Hazard.PublicApi);
-        else if (declaringProjectHasIvtToNonSolution && symbol.DeclaredAccessibility == Accessibility.Internal)
+        else if (declaringProjectHasIvtToNonSolution && SymbolVisibility.IsVisibleToFriendAssembly(symbol))
             hazards.Add(Hazard.InternalsVisibleTo);
 
         return hazards.Count == 0 ? [] : hazards;
     }
 
-    /// <summary>public / protected / protected-internal are visible to code OUTSIDE the assembly.</summary>
-    private static bool IsExternallyVisible(Accessibility accessibility) => accessibility is
-        Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal;
 
     // Member attribute simple names (with or without the "Attribute" suffix) that mark a member serialized.
     private static readonly HashSet<string> MemberSerializationAttributes = new(StringComparer.Ordinal)
@@ -105,40 +104,48 @@ internal static class FindingEnrichment
     };
 
     /// <summary>
-    /// (RB-01 Task B) The advisory RUNTIME-only hazards for a symbol finding (invariant #8, the sacred
-    /// residual): a data member read only by a serializer, or a public property populated only by config
-    /// binding — deletions that compile and pass tests then break at runtime. Never changes the emitted
-    /// set; <see cref="ConfidenceModel"/> demotes off these to low. Detection is NAME/ATTRIBUTE-based and
-    /// conservative; false hazard positives are cheap, false negatives expensive — when in doubt, tag.
+    /// Runtime-only advisory hazards for deletions that can compile and pass tests but fail at runtime.
+    /// Never changes the emitted set; <see cref="ConfidenceModel"/> demotes these findings to low.
+    /// Detection is conservative: false hazard positives reduce autonomy, while false negatives can make
+    /// an unsafe deletion appear eligible.
     /// <list type="bullet">
     ///   <item><see cref="Hazard.SerializationShaped"/> — a DATA MEMBER (non-indexer property / non-const
     ///     field) that either wears a member serialization attribute, sits in a type wearing a type-level
-    ///     serialization attribute, or belongs to a type used as a serializer target
-    ///     (<paramref name="serializationUsageTypes"/>). Methods are never tagged (not serialized).</item>
+    ///     serialization attribute, or belongs to a recognized serializer target or one of its collection
+    ///     element types (<paramref name="serializationUsageTypes"/>). Methods are never tagged.</item>
     ///   <item><see cref="Hazard.ConfigBoundType"/> — a PUBLIC PROPERTY of a type bound from configuration
     ///     (<paramref name="configBoundTypes"/>).</item>
+    ///   <item><see cref="Hazard.DiPluginShaped"/> — a symbol in the constructor dependency closure of a
+    ///     recognized DI registration whose factory or instance overload does not prove activation.</item>
     /// </list>
     /// </summary>
     public static IReadOnlyList<Hazard> ComputeRuntimeHazards(
-        ISymbol symbol, ISet<string> serializationUsageTypes, ISet<string> configBoundTypes)
+        ISymbol symbol,
+        ISet<string> serializationUsageTypes,
+        ISet<string> configBoundTypes,
+        ISet<string> diPluginShapedSymbols)
     {
-        // Only DATA members carry these runtime hazards — methods/events aren't serialized or bound.
-        var isDataMember = symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol { IsConst: false };
-        if (!isDataMember) return [];
-
         var hazards = new List<Hazard>();
+        var symbolId = SymbolId.For(symbol);
         var containingTypeId = symbol.ContainingType is { } ct ? SymbolId.For(ct) : null;
 
-        var serializationShaped =
-            WearsAnySerializationAttribute(symbol, MemberSerializationAttributes)
-            || (symbol.ContainingType is { } type && WearsAnySerializationAttribute(type, TypeSerializationAttributes))
-            || (containingTypeId is not null && serializationUsageTypes.Contains(containingTypeId));
-        if (serializationShaped) hazards.Add(Hazard.SerializationShaped);
+        var isDataMember = symbol is IPropertySymbol { IsIndexer: false } or IFieldSymbol { IsConst: false };
+        if (isDataMember)
+        {
+            var serializationShaped =
+                WearsAnySerializationAttribute(symbol, MemberSerializationAttributes)
+                || (symbol.ContainingType is { } type && WearsAnySerializationAttribute(type, TypeSerializationAttributes))
+                || (containingTypeId is not null && serializationUsageTypes.Contains(containingTypeId));
+            if (serializationShaped) hazards.Add(Hazard.SerializationShaped);
 
-        // Config binding populates public PROPERTIES of the bound type.
-        if (symbol is IPropertySymbol { IsIndexer: false, DeclaredAccessibility: Accessibility.Public }
-            && containingTypeId is not null && configBoundTypes.Contains(containingTypeId))
-            hazards.Add(Hazard.ConfigBoundType);
+            // Config binding populates public PROPERTIES of the bound type.
+            if (symbol is IPropertySymbol { IsIndexer: false, DeclaredAccessibility: Accessibility.Public }
+                && containingTypeId is not null && configBoundTypes.Contains(containingTypeId))
+                hazards.Add(Hazard.ConfigBoundType);
+        }
+
+        if (symbolId is not null && diPluginShapedSymbols.Contains(symbolId))
+            hazards.Add(Hazard.DiPluginShaped);
 
         return hazards.Count == 0 ? [] : hazards;
     }
@@ -183,20 +190,31 @@ internal static class FindingEnrichment
     }
 
     /// <summary>
-    /// The deletion unit (WS8 §3.3) for a symbol: from the earliest leading XML-doc / attribute trivia
-    /// through the declaration's closing brace / terminating semicolon. Field/event declarations report
-    /// the whole field-declaration statement (the variable's declarator sits inside it). Returns null
-    /// when no declaring C# syntax node can be located.
+    /// The single-file deletion unit (WS8 §3.3) for a symbol: from the earliest leading XML-doc /
+    /// attribute trivia through the declaration's closing brace / terminating semicolon. Returns null
+    /// when the symbol has no complete, independently removable source declaration: none is available,
+    /// it spans multiple declarations, or it shares a field/event declaration with another declarator.
     /// </summary>
     public static SourceSpan? ComputeSpan(ISymbol symbol)
     {
-        var reference = symbol.DeclaringSyntaxReferences.FirstOrDefault();
-        if (reference is null) return null;
+        var references = symbol.DeclaringSyntaxReferences;
+        if (references.Length != 1) return null;
 
-        var node = reference.GetSyntax();
+        // Roslyn exposes partial method definition and implementation parts as paired method symbols;
+        // each part may itself report one syntax reference, but neither is a complete deletion unit.
+        if (symbol is IMethodSymbol { PartialDefinitionPart: not null }
+            or IMethodSymbol { PartialImplementationPart: not null })
+            return null;
 
-        // Fields/events declare a VariableDeclarator; the deletion unit is the enclosing
-        // (Base)FieldDeclaration which owns the attributes/modifiers and terminating ';'.
+        var node = references[0].GetSyntax();
+
+        // One field/event statement owns every declarator. Reporting a span for one symbol would instruct
+        // consumers to delete any live siblings, so this finding intentionally has no single-symbol action.
+        if (node is VariableDeclaratorSyntax { Parent: VariableDeclarationSyntax declaration }
+            && declaration.Variables.Count != 1)
+            return null;
+
+        // Fields/events declare a VariableDeclarator; its single-declarator owning statement is the unit.
         if (node is VariableDeclaratorSyntax or VariableDeclarationSyntax)
         {
             var owner = node.FirstAncestorOrSelf<BaseFieldDeclarationSyntax>();

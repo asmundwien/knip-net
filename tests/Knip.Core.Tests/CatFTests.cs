@@ -17,7 +17,7 @@ public sealed class CatFTests
     private const string Category = "CatF";
 
     private static Task<IReadOnlySet<string>> FindingsIn(string ns, KnipConfig? config = null) =>
-        FixtureRunner.FindingSymbolsInAsync(Category, ns, config);
+        FixtureRunner.FindingSymbolsInAsync(Category, ns, config ?? new KnipConfig(), includeSyntheticGlobalRoots: false);
 
     [Fact] // F1: [Fact]/[Theory] method + containing type ALIVE (default Attributes include Fact/Theory);
            // non-test sibling flagged (dead-sibling).
@@ -101,10 +101,10 @@ public sealed class CatFTests
             new HashSet<string> { "CatF.F6.Orphan" },
             scoped);
 
-        // Whole-set: the synthesized entry point / host type is rooted, so nothing named Program or the
-        // synthesized <Main>$ (also filtered as compiler-generated) may appear anywhere in the findings.
-        var all = await FixtureRunner.FindingSymbolsAsync(Category);
-        Assert.DoesNotContain(all, s => s.Contains("Program") || s.Contains("Main"));
+        // Whole-set: the synthesized entry point stays an internal semantic root and is never reported.
+        var all = await FixtureRunner.FindingSymbolsAsync(Category, new KnipConfig(), includeSyntheticGlobalRoots: false);
+        Assert.DoesNotContain(all, s => s.Contains("<Main>$", StringComparison.Ordinal));
+
     }
 
     [Fact] // F7: a configured SymbolName ("CustomEntryPoint", non-default) roots the method + its type;
@@ -200,4 +200,38 @@ public sealed class CatFTests
             new HashSet<string> { "CatF.F13.WidgetController._unusedField" },
             findings);
     }
+
+    [Fact] // F14: built-in host conventions are semantic, not global simple-name roots. The actual
+           // top-level Main and Startup methods stay alive; same-name ordinary methods remain dead.
+    public async Task F14_conventional_names_are_scoped_to_semantic_hosts()
+    {
+        var findings = await FindingsIn("CatF.F14");
+        Assert.Equal(
+            new HashSet<string>
+            {
+                "CatF.F14.Startup.Other()",
+                "CatF.F14.Startup.Configure(string)",
+                "CatF.F14.OrdinaryHost.Main()",
+                "CatF.F14.OrdinaryHost.Main(string[])",
+                "CatF.F14.OrdinaryHost.Configure()",
+                "CatF.F14.OrdinaryHost.ConfigureServices()",
+                "CatF.F14.OrdinaryHost.ConfigureContainer()",
+            },
+            findings);
+    }
+
+    [Fact] // F15: Roslyn's selected ordinary Main is the root. Other valid Main overloads on an alive
+           // ordinary type remain reportable even when StartupObject resolves compiler ambiguity.
+    public async Task F15_only_the_selected_compilation_entry_point_is_rooted()
+    {
+        var findings = await FindingsIn("CatF.F15");
+        Assert.Equal(
+            new HashSet<string>
+            {
+                "CatF.F15.OrdinaryHost.Main()",
+                "CatF.F15.OrdinaryHost.Main(string[])",
+            },
+            findings);
+    }
+
 }

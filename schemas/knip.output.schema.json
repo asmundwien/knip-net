@@ -197,7 +197,11 @@
           }
         },
         "referencedProject": { "type": ["string", "null"] },
-        "rootCause": { "type": ["string", "null"], "pattern": "^k1_[0-9a-f]{10}$" },
+        "rootCause": {
+          "type": ["string", "null"],
+          "pattern": "^k1_[0-9a-f]{10}$",
+          "description": "Nearest reported finding in the same unreachable class whose deletion covers this finding. For transitive onlyUsedByTests findings, follow this chain to the direct test boundary carrying details.testReferrers."
+        },
         "details": {
           "type": "object",
           "description": "Kind-specific extras. For onlyUsedByTests: testReferrers[] (WS7 K3).",

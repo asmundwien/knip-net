@@ -11,5 +11,8 @@
     <NoWarn>CS0067;CS0169;CS0649;IDE0051;IDE0052</NoWarn>
     <!-- Not part of Knip.slnx; only ever compiled at runtime by MSBuildWorkspace. -->
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="RegularEntry/**/*.cs" />
+  </ItemGroup>
 
 </Project>

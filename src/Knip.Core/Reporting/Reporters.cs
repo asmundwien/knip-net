@@ -197,8 +197,8 @@ public sealed class JsonReporter : IReporter
         },
         referencedProject = f.ReferencedProject,
         rootCause = f.RootCause,
-        // WS7: OnlyUsedByTests carries its referencing test symbols under details.testReferrers (K3), so
-        // the deletion unit — code AND its tests — is visible. Empty object for every other kind.
+        // A directly test-referenced OnlyUsedByTests finding carries details.testReferrers; transitive
+        // findings leave details empty and link to that direct boundary through rootCause.
         details = f.TestReferrers.Count == 0
             ? (object)new { }
             : new { testReferrers = f.TestReferrers.Select(r => new { symbol = r.Symbol, file = r.File, line = r.Line }).ToList() },

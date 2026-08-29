@@ -8,9 +8,9 @@ public sealed class Duplicate
     public void Collide() { }
 }
 
-public sealed class XStartup
+public sealed class Startup
 {
-    // Rooted (ConfigureServices). Reaches THIS project's Duplicate.Collide, marking the shared node live.
+    // Rooted by the Startup ConfigureServices convention. Reaches THIS project's Duplicate.Collide,
     public void ConfigureServices()
     {
         new Duplicate().Collide();

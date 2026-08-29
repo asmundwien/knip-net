@@ -14,6 +14,8 @@
     <ProjectReference Include="..\UsedLib\WS2.UsedLib.csproj" />
     <!-- UNUSED: no Consumer symbol ever touches a WS2.UnusedLib type -> flagged. -->
     <ProjectReference Include="..\UnusedLib\WS2.UnusedLib.csproj" />
+    <!-- IMPORT-ONLY: deleting this reference alone would leave Program.cs with an unresolved using. -->
+    <ProjectReference Include="..\ImportOnlyLib\WS2.ImportOnlyLib.csproj" />
     <!-- HAZARD: Consumer touches an INTERNAL type of WS2.HazardLib exposed via [InternalsVisibleTo].
          This produces a genuine cross-assembly symbol edge, so the reference is (correctly) NOT
          flagged. Documents that internals-visible usage is still real usage. -->

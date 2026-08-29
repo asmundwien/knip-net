@@ -182,11 +182,59 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         {
             EvaluateRoots(symbol, id);
             AddSignatureReferences(symbol, id);
+            AddInstanceInitializerEdges(symbol, id);
         }
         return id;
     }
 
+    private void AddInstanceInitializerEdges(ISymbol member, string memberId)
+    {
+        if (!RuntimeActivation.HasInstanceInitializer(member) || member.ContainingType is not { } type)
+            return;
+
+        if (SymbolId.For(type) is { } typeId)
+            _state.RecordRuntimeInitializer(typeId, memberId);
+
+        foreach (var constructor in type.InstanceConstructors)
+            if (!constructor.IsImplicitlyDeclared && SymbolId.For(constructor) is { } constructorId)
+                _state.AddEdge(constructorId, memberId);
+    }
+
     // ---- references: edges from the current member to what it uses -------------------------
+
+    public override void VisitUsingDirective(UsingDirectiveSyntax node)
+    {
+        RecordImportedAssemblyUse(node);
+        base.VisitUsingDirective(node);
+    }
+
+    private void RecordImportedAssemblyUse(UsingDirectiveSyntax node)
+    {
+        if (node.Name is null) return;
+
+        var symbol = _model.GetSymbolInfo(node.Name).Symbol;
+        if (symbol is INamespaceSymbol @namespace)
+        {
+            foreach (var constituent in @namespace.ConstituentNamespaces)
+                RecordImportedAssemblyUse(constituent.ContainingAssembly?.Name);
+            return;
+        }
+
+        RecordImportedAssemblyUse(symbol?.ContainingAssembly?.Name);
+    }
+
+    private void RecordImportedAssemblyUse(string? assembly)
+    {
+        if (_ownAssembly is null
+            || assembly is null
+            || !_solutionAssemblies.Contains(assembly)
+            || string.Equals(assembly, _ownAssembly, StringComparison.Ordinal))
+            return;
+
+        // A namespace/static/alias import is compile-load-bearing even when no member uses a type from
+        // the target assembly. Removing only the project reference would leave the import unresolved.
+        _state.RecordAssemblyUse(_ownAssembly, assembly);
+    }
 
     public override void VisitIdentifierName(IdentifierNameSyntax node)
     {
@@ -198,6 +246,34 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     {
         RecordReference(node);
         base.VisitGenericName(node);
+    }
+
+    public override void VisitAttribute(AttributeSyntax node)
+    {
+        if (_context.Count > 0)
+        {
+            var source = _context.Peek();
+            SetSite(node);
+            var info = _model.GetSymbolInfo(node);
+            if (info.Symbol is { } symbol)
+                AddAttributeTypeEdge(source, symbol);
+            else
+                foreach (var candidate in info.CandidateSymbols)
+                    AddAttributeTypeEdge(source, candidate);
+        }
+
+        // Attribute arguments can contain ordinary type/member references and must still be walked.
+        base.VisitAttribute(node);
+    }
+
+    private void AddAttributeTypeEdge(string source, ISymbol symbol)
+    {
+        // Roslyn binds an attribute application to its constructor. Reachability belongs to the
+        // attribute class: implicit constructors are not source declarations and cannot keep it alive.
+        if (symbol is IMethodSymbol { MethodKind: MethodKind.Constructor, ContainingType: { } type })
+            AddEdge(source, type);
+        else if (symbol is INamedTypeSymbol namedType)
+            AddEdge(source, namedType);
     }
 
     public override void VisitObjectCreationExpression(ObjectCreationExpressionSyntax node)
@@ -621,14 +697,15 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         var hasTestAttribute =
             symbol.GetAttributes().Any(a => MatchesTestAttribute(a));
 
-        var isRoot = ep.SymbolNames.Contains(symbol.Name)
+        var isRoot = IsStartupConvention(symbol)
+            || ep.SymbolNames.Contains(symbol.Name)
             || symbol.GetAttributes().Any(a => MatchesAttribute(a, ep.Attributes))
-            || ((_publicApiProject || _config.Roots.TreatAllPublicAsUsed) && IsExternallyVisible(symbol));
+            || ((_publicApiProject || _config.Roots.TreatAllPublicAsUsed) && SymbolVisibility.IsExternallyVisible(symbol));
 
         if (isRoot)
         {
             // TEST origin when the whole project is a test project OR this specific root fired on a test
-            // attribute. Everything else (Main, publicApi surface, ASP.NET routing) is a PRODUCTION root.
+            // attribute. Startup conventions, public API, and ASP.NET routing are production roots.
             var asTest = _testProject || hasTestAttribute;
             AddRoot(id, asTest);
             // A framework-invoked member implies its declaring type is instantiated/used. The type chain
@@ -636,14 +713,12 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
             for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)
                 if (SymbolId.For(container) is { } containerId) AddRoot(containerId, asTest);
 
-            // (FIX #4) Framework-invoked INSTANCE members require the framework to CONSTRUCT the instance
-            // first (xUnit news the test class per [Fact]; a controller is DI-constructed to invoke an
-            // action). So the containing type's instance constructors are used — root them with the SAME
-            // origin as the member (a [Fact] → test-origin ctor, so production-mode OnlyUsedByTests still
-            // works). Static members carry no instance construction. Fields/helpers used only from the
-            // ctor (test-setup mocks, SetupCommonMocks()) then gain liveness via normal edges from the ctor.
+            // Framework-invoked INSTANCE members require runtime activation first (xUnit constructs the
+            // test class per [Fact]; DI constructs a controller before invoking an action). Root the full
+            // activation entry set with the SAME origin, including instance initializers when the constructor
+            // is implicit, so initializer-only fields/helpers retain their normal graph closure.
             if (!symbol.IsStatic)
-                RootInstanceConstructors(symbol.ContainingType, asTest);
+                RootRuntimeActivation(symbol.ContainingType, asTest);
         }
 
         if (symbol is INamedTypeSymbol type && IsEntryType(type, ep))
@@ -651,27 +726,49 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
             // Entry types (Controller, IHostedService, …) are production entry points; in a test project
             // they still take the project's test origin.
             AddRoot(id, _testProject);
-            // (FIX #4) The framework constructs the entry type to invoke its members — root its instance
-            // constructors so a ctor-injected field/helper used only from the ctor stays alive.
-            RootInstanceConstructors(type, _testProject);
+            // The framework activates an entry type before invoking it. Preserve constructors and instance
+            // initializer closures, including types whose only constructor is implicit.
+            RootRuntimeActivation(type, _testProject);
             foreach (var member in type.GetMembers())
-                if (!member.IsImplicitlyDeclared && IsExternallyVisible(member) && SymbolId.For(member) is { } memberId)
+                if (!member.IsImplicitlyDeclared
+                    && SymbolVisibility.IsExternallyVisible(member)
+                    && SymbolId.For(member) is { } memberId)
                     AddRoot(memberId, _testProject);
         }
     }
 
+    private static bool IsStartupConvention(ISymbol symbol)
+    {
+        if (symbol is not IMethodSymbol
+            {
+                MethodKind: MethodKind.Ordinary,
+                DeclaredAccessibility: Accessibility.Public,
+                ContainingType: { } type,
+            } method)
+            return false;
+
+        // ASP.NET Core convention discovery looks for Startup or Startup{Environment}. Explicit custom
+        // startup types remain coverable through entryPoints.symbolNames without restoring global defaults.
+        if (!type.Name.StartsWith("Startup", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return method.Name.Equals("Configure", StringComparison.OrdinalIgnoreCase)
+            || method.Name.Equals("ConfigureServices", StringComparison.OrdinalIgnoreCase)
+            || method.Name.Equals("ConfigureContainer", StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>
-    /// (FIX #4) Root the INSTANCE constructors of <paramref name="type"/> (never the static ctor) with the
-    /// given origin. Called only when the type has a framework-invoked instance member or is an entry type —
-    /// the framework must construct the instance to invoke it, so its ctor(s) are used. A type with no such
-    /// member is NOT passed here, so a dead type's ctor stays dead (no false negative).
+    /// Root every source entry point executed when <paramref name="type"/> is activated, preserving the
+    /// supplied root origin for two-color reachability.
     /// </summary>
-    private void RootInstanceConstructors(INamedTypeSymbol? type, bool asTest)
+    private void RootRuntimeActivation(INamedTypeSymbol? type, bool asTest)
     {
         if (type is null) return;
-        foreach (var ctor in type.InstanceConstructors)
-            if (!ctor.IsImplicitlyDeclared && SymbolId.For(ctor) is { } ctorId)
-                AddRoot(ctorId, asTest);
+        foreach (var entryPoint in RuntimeActivation.EntryPoints(type))
+            if (entryPoint.OriginalDefinition.ContainingAssembly?.Name is { } assembly
+                && _solutionAssemblies.Contains(assembly)
+                && SymbolId.For(entryPoint) is { } entryPointId)
+                AddRoot(entryPointId, asTest);
     }
 
     /// <summary>
@@ -724,6 +821,4 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         return false;
     }
 
-    private static bool IsExternallyVisible(ISymbol symbol) =>
-        symbol.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal;
 }

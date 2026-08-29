@@ -14,3 +14,16 @@ public sealed class Contract
     // public surface, not "everything in a matching project".
     private void UnusedPrivate() { }
 }
+
+public sealed class RootedHost
+{
+    public void ConfigureServices() => _ = new InternalContainer.PublicNested();
+}
+
+internal static class InternalContainer
+{
+    public sealed class PublicNested
+    {
+        public void PublicButContained() { }
+    }
+}

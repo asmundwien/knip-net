@@ -8,8 +8,8 @@ namespace CatL.Main
     {
         public static void Main() => new Program().Used();
 
-        // ALIVE: reached from the root.
-        public void Used() { }
+        // ALIVE: reaches sibling declarators in a shared field/event declaration.
+        public void Used() => new SharedDeclarations().UseSiblings();
     }
 
     /// <summary>

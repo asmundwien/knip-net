@@ -33,6 +33,15 @@ public sealed class ComponentRegistration
 // gains liveness via the walker's edge.
 public sealed class MyPage : ComponentBase
 {
+    private readonly string _state;
+
+    public MyPage()
+    {
+        _state = BuildState();
+    }
+
+    private static string BuildState() => "ready";
+
     // ALIVE (plugin ON): the convention lifecycle entry point; calls the private helper below.
     protected override void OnInitialized()
     {
@@ -45,5 +54,5 @@ public sealed class MyPage : ComponentBase
     // DEAD SIBLING / OVER-ROOTING DECOY (honest): a public method the component NEVER calls and no source
     // names -> flagged today AND with the plugin ON. A blanket plugin that rooted the component's whole world
     // would wrongly keep this alive; the H16 over-rooting guard asserts it stays flagged.
-    public void NeverRendered() { }
+    public void NeverRendered() => System.Console.WriteLine(_state);
 }

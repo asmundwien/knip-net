@@ -105,9 +105,10 @@ public readonly record struct SourcePosition(int Line, int Column);
 public sealed record TestReferrer(string Symbol, string File, int Line);
 
 /// <summary>
-/// The DELETION UNIT for a finding (WS8 §3.3): the full span an agent removes to eliminate the finding,
-/// covering leading XML-doc/attribute trivia through the closing brace / terminating semicolon. 1-based.
-/// For project/package references it is the single &lt;ProjectReference/&gt; element in the project file.
+/// The safe single-file DELETION UNIT for a finding (WS8 §3.3): the full span an agent removes to
+/// eliminate that symbol without removing a sibling, covering leading XML-doc/attribute trivia through
+/// the closing brace / terminating semicolon. For project/package references it is the single element
+/// in the project file. Findings without one complete independently removable declaration use null.
 /// </summary>
 public sealed record SourceSpan(string File, SourcePosition Start, SourcePosition End);
 
@@ -135,7 +136,7 @@ public sealed record Finding(
     /// </summary>
     public string Id { get; init; } = "";
 
-    /// <summary>The deletion unit (WS8 §3.3). Null only when a declaring syntax node can't be located.</summary>
+    /// <summary>The safe single-file deletion unit, or null when one cannot be represented.</summary>
     public SourceSpan? Span { get; init; }
 
     /// <summary>How safe autonomous deletion is. Always <see cref="Model.Confidence.High"/> in WS8b-1.</summary>
@@ -148,15 +149,17 @@ public sealed record Finding(
     public Remediation Remediation { get; init; } = Remediation.DeleteSymbol;
 
     /// <summary>
-    /// The <see cref="Id"/> of the nearest DEAD symbol keeping this one dead (WS8 §L10). Null when the
-    /// finding is directly unreferenced (no incoming edges, or all incoming edges are from live code).
+    /// The <see cref="Id"/> of the nearest reported finding in the same unreachable set whose deletion
+    /// covers this finding. Null for an outermost finding. For transitive
+    /// <see cref="FindingKind.OnlyUsedByTests"/> findings, the chain terminates at the direct test boundary.
     /// </summary>
     public string? RootCause { get; init; }
 
     /// <summary>
-    /// (WS7) For <see cref="FindingKind.OnlyUsedByTests"/>: the test symbols that reference this
-    /// production symbol — the "delete the tests too" half of the remediation unit (K3). Empty for every
-    /// other kind. Serialized under <c>details.testReferrers</c> in the JSON output.
+    /// (WS7) For a directly test-referenced <see cref="FindingKind.OnlyUsedByTests"/> finding: the test
+    /// symbols forming the "delete the tests too" half of the unit (K3). A transitive finding has no direct
+    /// referrers and links to the boundary through <see cref="RootCause"/>. Empty for every other kind.
+    /// Serialized under <c>details.testReferrers</c> in the JSON output.
     /// </summary>
     public IReadOnlyList<TestReferrer> TestReferrers { get; init; } = [];
 }

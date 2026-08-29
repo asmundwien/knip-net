@@ -10,4 +10,8 @@
     <!-- Not part of Knip.slnx; only ever compiled at runtime by MSBuildWorkspace. -->
   </PropertyGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="H21.Metadata\CatH.H21.Metadata.csproj" />
+  </ItemGroup>
+
 </Project>

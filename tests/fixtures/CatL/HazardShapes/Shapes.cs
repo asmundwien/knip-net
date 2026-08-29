@@ -61,6 +61,27 @@ public sealed class DbOptions
     public int Timeout { get; set; }                     // DEAD -> configBoundType
 }
 
+// Binding through a generic helper must retain the concrete target type at its closed call site.
+public sealed class HelperBoundOptions
+{
+    public string Endpoint { get; set; } = "";  // DEAD -> configBoundType
+}
+
+public static class OptionsFactory
+{
+    public static T Read<T>(IConfiguration config) => config.Get<T>();
+}
+
+public class SharedOptions
+{
+    public string Region { get; set; } = "";  // DEAD -> configBoundType through bound derived type
+}
+
+public sealed class DerivedBoundOptions : SharedOptions
+{
+    public string Service { get; set; } = "";  // DEAD -> configBoundType
+}
+
 // ── OVER-TAG GUARD (config): PlainSettings is alive but NEVER bound — no configBoundType hazard. ──────────
 public sealed class PlainSettings
 {
@@ -77,6 +98,8 @@ public sealed class Startup
 
         IConfiguration config = null!;
         System.Console.WriteLine(config.Get<DbOptions>());
+        System.Console.WriteLine(OptionsFactory.Read<HelperBoundOptions>(config));
+        System.Console.WriteLine(config.Get<DerivedBoundOptions>());
 
         System.Console.WriteLine(new LegacyDto());
         System.Console.WriteLine(new TaggedDto());

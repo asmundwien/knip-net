@@ -11,10 +11,10 @@
 
   // WS7 PRODUCTION MODE. Off by default (default mode keeps test-only production code alive — every
   // [Fact]/[Theory] is a root). Turn it on (here, or with --production) to also flag production code
-  // reachable ONLY through tests as `onlyUsedByTests` (remediation `deleteCodeAndTests`) — a distinct
-  // finding kind because the deletion unit is the code AND its tests (the finding lists the referring
-  // test symbols under details.testReferrers). This is the largest deletable unit before a migration:
-  // a dead feature plus its whole test suite.
+  // reachable ONLY through tests as `onlyUsedByTests` (remediation `deleteCodeAndTests`). Directly
+  // test-referenced findings list tests under details.testReferrers; transitive findings point through
+  // rootCause to that direct boundary. The boundary's confidence governs the whole deletion unit: a dead
+  // feature plus its test suite.
   // "production": true,
 
   // Test-project classification (K7), first match wins: (1) these `testProjects` globs override
@@ -25,8 +25,9 @@
   // "testProjects": ["*.IntegrationTests", "My.Test.Harness"],
 
   "entryPoints": {
-    // Members the framework/runtime invokes without a by-name reference in your code.
-    "symbolNames": ["Main", "ConfigureServices", "Configure"],
+    // Explicit custom members the framework/runtime invokes without a by-name reference in source.
+    "symbolNames": [],
+
     // Test frameworks (incl. MSTest/NUnit lifecycle hooks the runner invokes) + ASP.NET routing.
     "attributes": [
       "Fact", "Theory",
@@ -83,14 +84,14 @@
     // Conservative: only contributes when it can resolve the target symbol from the string/typeof.
     "reflection": { "enabled": true },
 
-    // scanningDi — ON by default. Keeps alive types registered by ASSEMBLY-SCANNING DI, which name the
-    // concrete type nowhere in source (the scan finds it reflectively). Roots types by SHAPE:
+    // scanningDi — ON by default. Roots constructor dependency closures for Microsoft DI Add/TryAdd
+    // Singleton, Scoped, and Transient registrations when the overload proves container activation.
+    // Factory/instance overloads retain findings but attach diPluginShaped to unresolved constructor
+    // dependencies. Also keeps alive assembly-scanned types by framework marker shape:
     //   • MediatR handlers    — implement IRequestHandler / INotificationHandler / IStreamRequestHandler
     //   • MassTransit         — implement IConsumer / IConsumer<T>
     //   • AutoMapper profiles — derive from a base named Profile
-    // Framework types are matched by NAME (offline, no NuGet needed). Conservative: it roots ONLY types
-    // wearing one of these framework markers (and the marker interface they satisfy) — it does NOT
-    // blanket-root every interface implementer, so unrelated dead types stay flagged.
+    // It never blanket-roots every interface implementer or unrelated member.
     "scanningDi": { "enabled": true },
 
     // blazorParameter — OFF by default (opt-in). Keeps alive Blazor component members set from .razor
@@ -122,6 +123,7 @@
     // MVC/Razor filter's interface method is framework-dispatched, so its private helpers cascade dead.
     // Roots the convention ENTRY members (making them reachable so their fields/ctors/helpers gain
     // liveness via normal edges), matched by framework-type NAME offline:
+    // Every recognized framework-activated type's explicit instance constructors are rooted as well.
     //   • for each UseMiddleware<T>() / UseMiddleware(typeof(T)) → T's Invoke + InvokeAsync + instance ctors;
     //   • IMiddleware implementers → InvokeAsync;
     //   • MVC/Razor filters (IActionFilter/IAsyncActionFilter/IResultFilter/IAsyncResultFilter/

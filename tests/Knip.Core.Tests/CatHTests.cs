@@ -43,8 +43,10 @@ public sealed class CatHTests
     [Trait("status", "contract")]
     public async Task H2_string_named_type_alive()
     {
-        // FUTURE: Plugin ALIVE (named only in the "CatH.H2.Plugin" string); UnusedPlugin flagged.
-        AssertExactly(await FindingsIn("CatH.H2"), "CatH.H2.UnusedPlugin");
+        // The external Plugin surface remains alive; the public member of the internal reflected type does not.
+        AssertExactly(await FindingsIn("CatH.H2"),
+            "CatH.H2.InternalPlugin.Run()",
+            "CatH.H2.UnusedPlugin");
     }
 
     // H3 — CONTRACT (must be GREEN). VERIFIED: Foo is NOT flagged — typeof(Foo) yields a real
@@ -66,9 +68,11 @@ public sealed class CatHTests
     [Trait("status", "contract")]
     public async Task H4_assembly_scanned_handler_alive()
     {
-        // MyHandler ALIVE (root via implemented IRequestHandler shape -> IRequestHandler alive too);
-        // UnrelatedType (not a handler) is the over-rooting DECOY -> still flagged.
-        AssertExactly(await FindingsIn("CatH.H4"), "CatH.H4.UnrelatedType");
+        // MyHandler ALIVE (root via implemented IRequestHandler shape -> IRequestHandler alive too).
+        // The internal handler's unrelated public sibling and the non-handler decoy remain flagged.
+        AssertExactly(await FindingsIn("CatH.H4"),
+            "CatH.H4.InternalHandler.UnusedPublicSibling()",
+            "CatH.H4.UnrelatedType");
     }
 
     // H5 — PROMOTED (WS5 serialization plugin, opt-in): PersonDto is passed to Serialize -> the plugin

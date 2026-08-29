@@ -96,9 +96,9 @@ By default every `[Fact]`/`[Theory]` is a root, so production code called **only
 is reachable and never flagged (a deliberate false negative). Pass `--production` (or set
 `"production": true` in `knip.json`) to run **two-color reachability**: code reachable only via test
 roots is reported as `onlyUsedByTests` — a distinct kind whose remediation is *delete the code **and**
-its tests* (`deleteCodeAndTests`). Each such finding lists the referring test symbols
-(`details.testReferrers` in JSON) so the whole deletion unit — a dead feature plus its test suite — is
-visible. This is the biggest deletable unit there is before a migration.
+its tests* (`deleteCodeAndTests`). Findings directly referenced by tests list those symbols in
+`details.testReferrers`; transitive findings point through `rootCause` to that direct boundary. The
+boundary's confidence governs the complete deletion unit — a dead feature plus its test suite.
 
 Projects are classified test vs production by, first match wins: (1) `testProjects` globs in
 `knip.json`; (2) a referenced test-framework assembly (`MSTest.TestFramework`/`xunit.core`/
@@ -129,7 +129,10 @@ See [`knip.json`](./knip.json) for a fully-annotated example (it references
 completion + validation). The JSON output (`--format json`, `formatVersion: 2`) is described by
 [`schemas/knip.output.schema.json`](./schemas/knip.output.schema.json). Key knobs:
 
-- `entryPoints` — attributes / base types / name patterns / symbol names that seed reachability.
+- `entryPoints` — attributes / base types / name patterns / explicit custom symbol names that seed
+  reachability. The compiler-selected `Main` and public `Configure`, `ConfigureServices`, and
+  `ConfigureContainer` methods on `Startup`/`Startup{Environment}` hosts are semantic built-in roots;
+  same-name methods on ordinary types remain reportable.
 - `roots.treatAllPublicAsUsed` — for **library solutions** consumed by other repos, treats the
   public surface as used so you only see internally-dead code. `roots.publicApiProjects` scopes this
   to specific projects.
@@ -144,11 +147,12 @@ completion + validation). The JSON output (`--format json`, `formatVersion: 2`) 
   positive (keep code alive) but can never mark live code dead. **`reflection` ships ON**
   (`Type.GetType("Ns.Foo")`, `Activator.CreateInstance`, `typeof(T).GetMethod("X")`/
   `x.GetType().GetMethod("X")` and friends → keep the named type/member alive). **`scanningDi` ships
-  ON** — keeps alive types registered by assembly-scanning DI that name the concrete type nowhere in
-  source: MediatR handlers (`IRequestHandler`/`INotificationHandler`), MassTransit consumers
-  (`IConsumer<T>`), and AutoMapper `Profile` subclasses, matched by framework-type NAME (offline, no
-  NuGet needed). It roots only types wearing one of those markers — it does not blanket-root every
-  interface implementer, so unrelated dead types stay flagged. **`blazorParameter` ships OFF**
+  ON** — roots constructor dependency closures for Microsoft DI `Add`/`TryAdd` Singleton, Scoped, and
+  Transient registrations when the selected overload proves container activation. Factory/instance
+  overloads instead attach `diPluginShaped` to unresolved constructor dependencies. It also keeps alive
+  assembly-scanned MediatR handlers (`IRequestHandler`/`INotificationHandler`), MassTransit consumers
+  (`IConsumer<T>`), and AutoMapper `Profile` subclasses. Unrelated types and members remain reportable.
+  **`blazorParameter` ships OFF**
   (opt-in via `plugins.blazorParameter.enabled: true`) — keeps alive Blazor component members set from
   `.razor` markup or the DI container: properties carrying `[Parameter]`, `[CascadingParameter]`,
   `[SupplyParameterFromQuery]`, `[EditorRequired]`, or `[Inject]`, matched by attribute NAME (offline).
@@ -180,7 +184,8 @@ completion + validation). The JSON output (`--format json`, `formatVersion: 2`) 
   check's `CheckHealthAsync` (`IHealthCheck`) + constructors; and an authorization policy provider's
   `GetPolicyAsync`/`GetDefaultPolicyAsync`/`GetFallbackPolicyAsync` + constructors (implement
   `IAuthorizationPolicyProvider` or derive from `DefaultAuthorizationPolicyProvider`) — matched by framework-type NAME
-  (offline, no NuGet needed), so their fields and helpers gain liveness via normal edges. It roots only the
+  (offline, no NuGet needed), so their fields and helpers gain liveness via normal edges. Every recognized
+  framework-activated type's explicit instance constructors are rooted as well. The plugin roots only the
   convention entry members — never blanket-roots a middleware/filter's world — so an unrelated dead method
   the entry point never calls stays flagged. Unknown plugin ids
   and unknown per-plugin keys print a **visible warning** rather than silently no-opping, so a typo
@@ -211,10 +216,9 @@ against both Roslyn 4.x and 5.x; only build/loading glue differs per framework.
 
 ## Known limitations (prototype)
 
-- **Invisible usage** beyond the built-in heuristics — reflection (`Activator.CreateInstance`,
-  `Type.GetType`), non-generic DI (`AddScoped(typeof(Foo))` / assembly scanning), and data-bound
-  Razor/Blazor/XAML members — needs `ignore`/`entryPoints` config. This is the moat the paid tools
-  charge for; framework-aware "plugins" are the path to closing it.
+- **Invisible usage** beyond the built-in heuristics — unrecognized reflection, open-ended assembly scanning,
+  and data-bound Razor/Blazor/XAML members — needs `ignore`/`entryPoints` config. Framework-aware plugins
+  deliberately prefer narrow false negatives over blanket rooting.
 - Enum members and constructors are not reported.
 - Whole-solution `MSBuildWorkspace` load is the main cost; fine for the solutions tested (~2s for 10
   projects), but very large solutions will want a persisted index.

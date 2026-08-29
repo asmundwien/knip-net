@@ -2,18 +2,18 @@ using CatK;
 
 namespace CatK.K5;
 
-// K5 (PRODUCTION mode, TRANSITIVE): A is used only by B; B is used only by a [Fact] test. Under
-// production mode the test root is demoted, so B is test-only AND A (reachable only through B) is
-// TRANSITIVELY test-only -> BOTH flagged OnlyUsedByTests.
+// K5 (PRODUCTION mode, TRANSITIVE): internal A is used only by public B; B is used only by a [Fact]
+// test. Both are test-only, but B is the low-confidence public boundary. The deletion chain must point
+// from A to B so a consumer does not treat A as an independently actionable medium-confidence unit.
 //
 // The TYPE is kept alive by a production caller (Entry.Main -> KeepAlive) so the two findings land at
 // MEMBER granularity (Chain.A, Chain.B) rather than collapsing to the whole type.
 public sealed class Chain
 {
-    // test-only, TRANSITIVELY (only caller is B, itself only called by a test).
-    public void A() { }
+    // Transitively test-only and internal: medium confidence, but covered by deleting B.
+    internal void A() { }
 
-    // test-only, DIRECTLY (only caller is the [Fact] below).
+    // Directly test-only and public: low-confidence public boundary with the test referrer.
     public void B() => A();
 
     // Keeps the Chain TYPE alive in every mode.

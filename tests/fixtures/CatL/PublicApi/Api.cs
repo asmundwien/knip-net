@@ -22,4 +22,17 @@ namespace CatL.PublicApi
     {
         internal void Unused() { }
     }
+
+    public sealed class Startup
+    {
+        public void ConfigureServices() => _ = new InternalContainer.PublicNested();
+    }
+
+    internal static class InternalContainer
+    {
+        public sealed class PublicNested
+        {
+            public void PublicButContained() { }
+        }
+    }
 }

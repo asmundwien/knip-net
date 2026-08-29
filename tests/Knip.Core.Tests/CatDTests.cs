@@ -134,4 +134,48 @@ public sealed class CatDTests
         // type is reported (outermost-only), NOT kept alive. This proves the new edge adds no false negative.
         AssertExactly(await FindingsIn("CatD.D11"), "CatD.D11.DeadDisposer");
     }
+
+    [Fact] // D12: a parameter attribute on a reachable method keeps its source-defined type alive.
+    [Trait("status", "contract")]
+    public async Task D12_parameter_attribute_keeps_attribute_type_alive()
+    {
+        AssertExactly(await FindingsIn("CatD.D12"), "CatD.D12.UnusedParameterAttribute");
+    }
+
+    [Fact] // D13: a return attribute on a reachable method keeps its source-defined type alive.
+    [Trait("status", "contract")]
+    public async Task D13_return_attribute_keeps_attribute_type_alive()
+    {
+        AssertExactly(await FindingsIn("CatD.D13"), "CatD.D13.UnusedReturnAttribute");
+    }
+
+    [Fact] // D14: a method type-parameter attribute keeps its source-defined type alive.
+    [Trait("status", "contract")]
+    public async Task D14_type_parameter_attribute_keeps_attribute_type_alive()
+    {
+        AssertExactly(await FindingsIn("CatD.D14"), "CatD.D14.UnusedTypeParameterAttribute");
+    }
+
+    [Fact] // D15: an accessor attribute on a reachable property keeps its source-defined type alive.
+    [Trait("status", "contract")]
+    public async Task D15_accessor_attribute_keeps_attribute_type_alive()
+    {
+        AssertExactly(await FindingsIn("CatD.D15"), "CatD.D15.UnusedAccessorAttribute");
+    }
+
+    [Fact] // D16: remaining declaration-owned positions keep each distinct attribute type alive.
+    [Trait("status", "contract")]
+    public async Task D16_other_declaration_attributes_keep_attribute_types_alive()
+    {
+        AssertExactly(
+            await FindingsIn("CatD.D16"),
+            "CatD.D16.UnusedNamedTypeParameterAttribute",
+            "CatD.D16.UnusedDelegateTypeParameterAttribute",
+            "CatD.D16.UnusedDelegateReturnAttribute",
+            "CatD.D16.UnusedDelegateParameterAttribute",
+            "CatD.D16.UnusedPrimaryParameterAttribute",
+            "CatD.D16.UnusedIndexerParameterAttribute",
+            "CatD.D16.UnusedBackingFieldAttribute",
+            "CatD.D16.UnusedEventAccessorAttribute");
+    }
 }

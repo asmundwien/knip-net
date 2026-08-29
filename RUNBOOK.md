@@ -193,7 +193,8 @@ runtime-only-hazard plugins and detectors):
   confidence, not dropped).
 - **Unused enum members** (member-level, outermost-only).
 - **Production mode** (`--production`): two-color reachability flags production code reachable only
-  via tests as `onlyUsedByTests` (`deleteCodeAndTests`), listing the referring test symbols.
+  via tests as `onlyUsedByTests` (`deleteCodeAndTests`); direct findings list test referrers and
+  transitive findings link to that boundary through `rootCause`.
 - **JSON v2 output** + `reliability` block + `summary`, described by `schemas/knip.output.schema.json`;
   `knip.json` described by `schemas/knip.config.schema.json`.
 - **Confidence/hazard model** (`ConfidenceModel`): start `high`, first-match demotion

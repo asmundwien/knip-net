@@ -1,0 +1,7 @@
+<Project>
+  <ItemGroup Condition="'$(MSBuildProjectName)' == 'WS2.Consumer'">
+    <!-- Redundant effective reference: Consumer already receives TransitiveLib through UsedLib. The
+         project file has no local <ProjectReference> element, so there is no single deletion unit. -->
+    <ProjectReference Include="$(MSBuildThisFileDirectory)TransitiveLib/WS2.TransitiveLib.csproj" />
+  </ItemGroup>
+</Project>

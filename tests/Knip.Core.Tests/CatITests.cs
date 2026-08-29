@@ -226,7 +226,8 @@ public sealed class CatITests
         Path.Combine(RepoRoot(), "tests", "fixtures", "CatI", folder, "Fixture.slnx");
 
     private static Task<AnalysisResult> RunSolution(string solution, KnipConfig config) =>
-        KnipEngine.RunAsync(config, solution);
+        KnipEngine.RunAsync(FixtureRunner.AddSyntheticGlobalRoots(config), solution);
+
 
     private static async Task<IReadOnlySet<string>> FindingsIn(
         string solution, string scenarioNamespace, KnipConfig config)

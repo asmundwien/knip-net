@@ -3,4 +3,6 @@
   <Project Path="UsedLib/WS2.UsedLib.csproj" />
   <Project Path="UnusedLib/WS2.UnusedLib.csproj" />
   <Project Path="HazardLib/WS2.HazardLib.csproj" />
+  <Project Path="TransitiveLib/WS2.TransitiveLib.csproj" />
+  <Project Path="ImportOnlyLib/WS2.ImportOnlyLib.csproj" />
 </Solution>

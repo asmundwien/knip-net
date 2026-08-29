@@ -1,4 +1,6 @@
+using Knip.Core.Plugins;
 using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 
 namespace Knip.Core.Analysis;
 
@@ -95,11 +97,12 @@ internal sealed class GraphState
     public Dictionary<string, HashSet<string>> UsedExternalAssemblies { get; } = new(StringComparer.Ordinal);
 
     /// <summary>
-    /// (RB-01 Task B) Types whose data members are USAGE-shaped for serialization: the type appears as the
-    /// resolved target of a recognized serializer call (<c>JsonConvert.DeserializeObject&lt;T&gt;</c>,
-    /// <c>JsonSerializer.Serialize/Deserialize&lt;T&gt;</c>, …). Keyed by <see cref="SymbolId"/> of the TYPE
-    /// (invariant #1). Advisory only — drives the <see cref="Model.Hazard.SerializationShaped"/> tag on the
-    /// type's dead data-member findings; never changes reachability. Populated by <see cref="RuntimeHazardDetector"/>.
+    /// (RB-01 Task B) Types whose data members are USAGE-shaped for serialization: each resolved target
+    /// of a recognized serializer call (<c>JsonConvert.DeserializeObject&lt;T&gt;</c>,
+    /// <c>JsonSerializer.Serialize/Deserialize&lt;T&gt;</c>, …), plus its collection element types. Keyed by
+    /// <see cref="SymbolId"/> of the TYPE (invariant #1). Advisory only — drives the
+    /// <see cref="Model.Hazard.SerializationShaped"/> tag on dead data-member findings; never changes
+    /// reachability. Populated by <see cref="RuntimeHazardDetector"/>.
     /// </summary>
     public HashSet<string> SerializationUsageTypes { get; } = new(StringComparer.Ordinal);
 
@@ -111,11 +114,36 @@ internal sealed class GraphState
     /// </summary>
     public HashSet<string> ConfigBoundTypes { get; } = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Symbols reachable only through runtime activation of DI-registered types whose activation is not
+    /// statically proven. Advisory only; findings in this closure carry DiPluginShaped.
+    /// </summary>
+    public HashSet<string> DiPluginShapedSymbols { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Source field/event-field initializers keyed by their containing type's stable symbol id.</summary>
+    public Dictionary<string, HashSet<string>> RuntimeInitializersByType { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Types proven runtime-activated before all source declarations may be available.</summary>
+    public HashSet<string> RuntimeActivationRootTypes { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Types with uncertain DI activation whose source initializer closures need hazard tags.</summary>
+    public HashSet<string> DiPluginActivationTypes { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Runtime-activation roots whose uncertain DI closures are finalized after graph build.</summary>
+    public HashSet<string> DiPluginActivationRoots { get; } = new(StringComparer.Ordinal);
+
     public void AddEdge(string source, string target)
     {
         if (!Edges.TryGetValue(source, out var set))
             Edges[source] = set = new HashSet<string>(StringComparer.Ordinal);
         set.Add(target);
+    }
+
+    public void RecordRuntimeInitializer(string type, string initializer)
+    {
+        if (!RuntimeInitializersByType.TryGetValue(type, out var entries))
+            RuntimeInitializersByType[type] = entries = new HashSet<string>(StringComparer.Ordinal);
+        entries.Add(initializer);
     }
 
     /// <summary>Record that <paramref name="sourceAssembly"/>'s code references a symbol in <paramref name="targetAssembly"/>.</summary>
@@ -137,5 +165,64 @@ internal sealed class GraphState
         if (!UsedExternalAssemblies.TryGetValue(sourceAssembly, out var set))
             UsedExternalAssemblies[sourceAssembly] = set = new HashSet<string>(StringComparer.Ordinal);
         set.Add(externalAssembly);
+    }
+}
+
+/// <summary>
+/// Defines the source entry points executed when a runtime creates an instance: every explicit instance
+/// constructor and every instance field/event-field initializer on the concrete type and its applicable
+/// base-type chain. Initializers remain activation roots when a constructor is implicit and therefore has no
+/// source declaration of its own. <see cref="object"/> is never an analysis root.
+/// </summary>
+internal static class RuntimeActivation
+{
+    public static IEnumerable<INamedTypeSymbol> TypeChain(INamedTypeSymbol type)
+    {
+        for (var current = type;
+             current is not null && current.SpecialType != SpecialType.System_Object;
+             current = current.BaseType)
+            yield return current;
+    }
+
+    public static IEnumerable<ISymbol> EntryPoints(INamedTypeSymbol type)
+    {
+        foreach (var current in TypeChain(type))
+        {
+            foreach (var constructor in current.InstanceConstructors)
+                if (!constructor.IsImplicitlyDeclared)
+                    yield return constructor;
+
+            foreach (var member in current.GetMembers())
+                if (HasInstanceInitializer(member))
+                    yield return member;
+        }
+    }
+
+    public static void AddRoots(INamedTypeSymbol type, IContributionSink sink)
+    {
+        foreach (var entryPoint in EntryPoints(type))
+            sink.AddRoot(entryPoint);
+
+        if (sink is ContributionSink contributionSink)
+            contributionSink.RequestRuntimeActivation(type);
+    }
+
+    public static void CompleteRoots(GraphState state)
+    {
+        foreach (var typeId in state.RuntimeActivationRootTypes)
+            if (state.RuntimeInitializersByType.TryGetValue(typeId, out var initializers))
+                state.Roots.UnionWith(initializers);
+    }
+
+    public static bool HasInstanceInitializer(ISymbol member)
+    {
+        if (member.IsStatic || member is not (IFieldSymbol or IEventSymbol))
+            return false;
+
+        foreach (var syntaxReference in member.DeclaringSyntaxReferences)
+            if (syntaxReference.GetSyntax() is VariableDeclaratorSyntax { Initializer: not null })
+                return true;
+
+        return false;
     }
 }

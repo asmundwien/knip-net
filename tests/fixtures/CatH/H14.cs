@@ -27,7 +27,7 @@ public sealed class FilterRegistration
     public void Configure()
     {
         // Referencing the type keeps it alive; the interface method is still framework-dispatched.
-        _ = new AuditFilter();
+        _ = typeof(AuditFilter);
     }
 }
 
@@ -36,6 +36,15 @@ public sealed class FilterRegistration
 // implementation is rooted → LeggTilTjenestenavn (called by it) gains liveness via the walker's edge.
 public sealed class AuditFilter : IAsyncActionFilter
 {
+    private readonly string _state;
+
+    public AuditFilter()
+    {
+        _state = BuildState();
+    }
+
+    private static string BuildState() => "ready";
+
     // ALIVE (plugin ON): the reflectively-dispatched filter entry point; calls the private helper below.
     public Task OnActionExecutingAsync(ActionExecutingContext context, ActionExecutionDelegate next)
     {
@@ -49,5 +58,5 @@ public sealed class AuditFilter : IAsyncActionFilter
     // DEAD SIBLING / OVER-ROOTING DECOY (honest): a public method the filter NEVER calls and no source
     // names -> flagged today AND with the plugin ON. A blanket plugin that rooted the filter's whole world
     // would wrongly keep this alive; the H14 over-rooting guard asserts it stays flagged.
-    public void NeverDispatched() { }
+    public void NeverDispatched() => System.Console.WriteLine(_state);
 }

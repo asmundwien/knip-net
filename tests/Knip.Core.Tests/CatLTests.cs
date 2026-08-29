@@ -6,7 +6,8 @@ using Knip.Core.Configuration;
 using Knip.Core.Model;
 using Knip.Core.Reporting;
 using Microsoft.CodeAnalysis;
-using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.MSBuild;
+using Microsoft.CodeAnalysis.Text;
 using Xunit;
 
 namespace Knip.Core.Tests;
@@ -78,54 +79,73 @@ public sealed class CatLTests
         Assert.Empty(clean.Reliability.RestoreFailures);
     }
 
-    // ── L4: delete every finding strictly by its reported span → the fixture compiles green ───
+    // ── L4: every published span is independently removable from the full compilation ─────────
     [Fact]
     public async Task L4_spans_are_complete_deletion_units()
     {
         var result = await FixtureRunner_Run("Main");
+        var spans = result.Findings
+            .Where(f => f.Span is not null && f.RootCause is null)
+            .Select(f => (f.Symbol, Span: f.Span!))
+            .ToList();
 
-        // Group findings-with-spans by file; delete each span bottom-up so earlier edits don't shift
-        // the offsets of later ones. Spans are 1-based inclusive line/column deletion units.
-        var byFile = result.Findings
-            .Where(f => f.Span is not null)
-            .GroupBy(f => f.Span!.File, StringComparer.Ordinal);
+        Assert.NotEmpty(spans);
 
-        Assert.NotEmpty(byFile);
-        var deletedSomething = false;
+        using var workspace = MSBuildWorkspace.Create();
+        var solution = await workspace.OpenSolutionAsync(FixtureSolution("Main"));
 
-        foreach (var group in byFile)
+        foreach (var (symbol, span) in spans)
         {
-            var original = await File.ReadAllTextAsync(group.Key);
-            var edited = original;
+            var document = solution.Projects
+                .SelectMany(project => project.Documents)
+                .Single(document => string.Equals(document.FilePath, span.File, StringComparison.Ordinal));
+            var text = await document.GetTextAsync();
+            var start = text.Lines.GetPosition(new LinePosition(span.Start.Line - 1, span.Start.Column - 1));
+            var end = text.Lines.GetPosition(new LinePosition(span.End.Line - 1, span.End.Column - 1));
+            Assert.True(end >= start, $"span end precedes start for {symbol}");
 
-            // Sort spans by start offset DESCENDING so we delete tail-first.
-            var spans = group
-                .Select(f => f.Span!)
-                .OrderByDescending(s => (s.Start.Line, s.Start.Column))
+            var mutated = solution.WithDocumentText(
+                document.Id,
+                text.WithChanges(new TextChange(new TextSpan(start, end - start), string.Empty)));
+            var compilation = await mutated.GetProject(document.Project.Id)!.GetCompilationAsync();
+            var errors = compilation!.GetDiagnostics()
+                .Where(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error)
                 .ToList();
 
-            foreach (var span in spans)
-            {
-                var start = OffsetOf(edited, span.Start.Line, span.Start.Column);
-                var end = OffsetOf(edited, span.End.Line, span.End.Column);
-                Assert.True(end >= start, $"span end precedes start in {group.Key}");
-                edited = edited.Remove(start, end - start);
-                deletedSomething = true;
-            }
-
-            // The file with every reported deletion unit removed must still parse without errors.
-            var tree = CSharpSyntaxTree.ParseText(edited);
-            var diagnostics = tree.GetDiagnostics()
-                .Where(d => d.Severity == DiagnosticSeverity.Error)
-                .ToList();
             Assert.True(
-                diagnostics.Count == 0,
-                $"deleting reported spans left {group.Key} un-parseable:\n" +
-                string.Join("\n", diagnostics.Select(d => "  " + d.GetMessage())) +
-                "\n--- edited source ---\n" + edited);
+                errors.Count == 0,
+                $"deleting {symbol} strictly by its reported span left the project uncompilable:\n" +
+                string.Join("\n", errors.Select(diagnostic => "  " + diagnostic)));
         }
+    }
 
-        Assert.True(deletedSomething, "L4 fixture produced no span-bearing findings to delete.");
+    // A field/event declaration with multiple declarators also owns its live siblings, while a partial
+    // method has multiple source declarations. Neither shape has one complete, safe deletion span.
+    [Fact]
+    public async Task L19_shared_or_partial_declarations_have_no_single_file_deletion_span()
+    {
+        var result = await FixtureRunner_Run("Main");
+
+        var symbols = new[]
+        {
+            "CatL.Main.SharedDeclarations._deadField",
+            "CatL.Main.SharedDeclarations._deadEvent",
+            "CatL.Main.SharedDeclarations.DeadPartialMethod()",
+        };
+
+        Assert.All(symbols, symbol => Assert.Null(Single(result, symbol).Span));
+
+        Assert.DoesNotContain(
+            result.Findings,
+            finding => finding.Symbol == "CatL.Main.SharedDeclarations.GeneratedPartialMethod()");
+
+        using var doc = JsonDocument.Parse(await RunJson("Main"));
+        foreach (var symbol in symbols)
+        {
+            var finding = doc.RootElement.GetProperty("findings").EnumerateArray()
+                .Single(finding => finding.GetProperty("symbol").GetString() == symbol);
+            Assert.False(finding.TryGetProperty("span", out _));
+        }
     }
 
     // ── L8: summary counts (byKind / byConfidence / byProject) equal the findings array exactly ─
@@ -231,6 +251,10 @@ public sealed class CatLTests
 
         // Anti-vacuous: the no-hazard internal sibling stays HIGH — only the publicApi finding is graded.
         Assert.Equal(Confidence.High, Single(result, "CatL.PublicApi.DeadInternalPlain").Confidence);
+
+        var contained = Single(result, "CatL.PublicApi.InternalContainer.PublicNested.PublicButContained()");
+        Assert.DoesNotContain(Hazard.PublicApi, contained.Hazards);
+        Assert.Equal(Confidence.High, contained.Confidence);
     }
 
     // ── L14: publicApi-hazard finding, NEITHER key set → low (C2 unconfigured branch). ────────────────
@@ -245,6 +269,10 @@ public sealed class CatLTests
 
         // Anti-vacuous: the no-hazard internal sibling stays HIGH.
         Assert.Equal(Confidence.High, Single(result, "CatL.PublicApi.DeadInternalPlain").Confidence);
+
+        var contained = Single(result, "CatL.PublicApi.InternalContainer.PublicNested.PublicButContained()");
+        Assert.DoesNotContain(Hazard.PublicApi, contained.Hazards);
+        Assert.Equal(Confidence.High, contained.Confidence);
     }
 
     // ── L16 (C3 half): an UnusedProjectReference finding → medium. C4 (deleteCodeAndTests) is DEFERRED
@@ -260,10 +288,10 @@ public sealed class CatLTests
         Assert.Equal(Confidence.Medium, projectRef.Confidence);
     }
 
-    // ── L17: [InternalsVisibleTo] names a NON-solution assembly → this project's INTERNAL findings low
-    //    (new internalsVisibleTo hazard). Private findings are unaffected (invisible even to friends). ─
+    // ── L17: [InternalsVisibleTo] names a NON-solution assembly → friend-visible findings that are not
+    //    general public API are low. Private findings remain unaffected (invisible even to friends). ──
     [Fact]
-    public async Task L17_internals_visible_to_non_solution_demotes_internal_to_low()
+    public async Task L17_internals_visible_to_non_solution_demotes_friend_visible_symbols_to_low()
     {
         var result = await FixtureRunner_Run("InternalsVisibleTo");
 
@@ -271,8 +299,24 @@ public sealed class CatLTests
         Assert.Contains(Hazard.InternalsVisibleTo, @internal.Hazards);
         Assert.Equal(Confidence.Low, @internal.Confidence);
 
+        var containedPublic = Single(
+            result,
+            "CatL.InternalsVisibleTo.InternalContainer.PublicNested.PublicButFriendVisible()");
+        Assert.Contains(Hazard.InternalsVisibleTo, containedPublic.Hazards);
+        Assert.Equal(Confidence.Low, containedPublic.Confidence);
+
+        var containedPrivate = Single(
+            result,
+            "CatL.InternalsVisibleTo.InternalContainer.PublicNested.PrivateButContained()");
+        Assert.Empty(containedPrivate.Hazards);
+        Assert.Equal(Confidence.High, containedPrivate.Confidence);
+
+        var publicApi = Single(result, "CatL.InternalsVisibleTo.Program.PublicApiControl()");
+        Assert.Contains(Hazard.PublicApi, publicApi.Hazards);
+        Assert.DoesNotContain(Hazard.InternalsVisibleTo, publicApi.Hazards);
+
         // Anti-vacuous: a PRIVATE member is invisible even to a friend assembly, so no hazard applies
-        // and it stays HIGH — proving IVT tags only internal findings, not everything in the project.
+        // and it stays HIGH — proving IVT does not tag every finding in the project.
         var priv = result.Findings.Single(f => f.Symbol.EndsWith("DeadPrivate()", StringComparison.Ordinal));
         Assert.Empty(priv.Hazards);
         Assert.Equal(Confidence.High, priv.Confidence);
@@ -454,6 +498,29 @@ public sealed class CatLTests
             Hazard.ConfigBoundType, Single(result, "CatL.HazardShapes.PlainSettings.Value").Hazards);
     }
 
+    [Fact]
+    public async Task L21_config_bound_hazard_follows_closed_generic_helper()
+    {
+        var result = await FixtureRunner_Run("HazardShapes");
+
+        var endpoint = Single(result, "CatL.HazardShapes.HelperBoundOptions.Endpoint");
+        Assert.Contains(Hazard.ConfigBoundType, endpoint.Hazards);
+        Assert.Equal(Confidence.Low, endpoint.Confidence);
+    }
+
+    [Fact]
+    public async Task L22_config_bound_hazard_follows_bound_types_base_chain()
+    {
+        var result = await FixtureRunner_Run("HazardShapes");
+
+        Assert.Contains(
+            Hazard.ConfigBoundType, Single(result, "CatL.HazardShapes.SharedOptions.Region").Hazards);
+        Assert.Contains(
+            Hazard.ConfigBoundType, Single(result, "CatL.HazardShapes.DerivedBoundOptions.Service").Hazards);
+        Assert.DoesNotContain(
+            Hazard.ConfigBoundType, Single(result, "CatL.HazardShapes.PlainSettings.Value").Hazards);
+    }
+
     // ══ L5 / L6 / L7 (WS8c) — the agent-facing CLI additions, exercised OUT-OF-PROCESS through the real
     //    process boundary (like CatJ/CatI): --why provenance, --print-config, all-config-key warnings. ══
 
@@ -507,10 +574,11 @@ public sealed class CatLTests
         Assert.True(root.GetProperty("roots").GetProperty("treatAllPublicAsUsed").GetBoolean());
         Assert.Equal("json", root.GetProperty("output").GetProperty("format").GetString());
 
-        // Defaults fill the rest: entryPoints.symbolNames keeps its built-in defaults (e.g. "Main").
+        // Built-in entry points are semantic roots, not global configured symbol names.
         var symbolNames = root.GetProperty("entryPoints").GetProperty("symbolNames")
             .EnumerateArray().Select(e => e.GetString()).ToList();
-        Assert.Contains("Main", symbolNames);
+        Assert.Empty(symbolNames);
+
 
         // No analysis ran (exit 0 despite the fixture having a dead sibling, and no findings JSON shape).
         Assert.False(root.TryGetProperty("findings", out _));
@@ -605,7 +673,9 @@ public sealed class CatLTests
     }
 
     private static Task<AnalysisResult> FixtureRunner_Run(string variant, KnipConfig? config = null) =>
-        KnipEngine.RunAsync(config ?? new KnipConfig(), FixtureSolution(variant));
+        KnipEngine.RunAsync(
+            FixtureRunner.AddSyntheticGlobalRoots(config ?? new KnipConfig()),
+            FixtureSolution(variant));
 
     private static IReadOnlyList<string> ExtractIds(string json)
     {

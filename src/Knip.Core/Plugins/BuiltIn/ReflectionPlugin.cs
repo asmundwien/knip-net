@@ -1,3 +1,4 @@
+using Knip.Core.Analysis;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -85,7 +86,7 @@ internal sealed class ReflectionPlugin : IKnipPlugin
     }
 
     /// <summary>
-    /// Root a reflectively-named type AND its externally-visible declared members. A type resolved from
+    /// Root a reflectively-named type AND its effectively externally-visible declared members. A type resolved from
     /// a reflection string (Type.GetType / Activator.CreateInstance) is being instantiated and its members
     /// invoked at runtime; rooting the members keeps them alive (mirrors the entry-type rule). Over-rooting
     /// here is a false negative at worst (§3.8) and is scoped to THIS type, not its collaborators.
@@ -94,8 +95,7 @@ internal sealed class ReflectionPlugin : IKnipPlugin
     {
         sink.AddRoot(type);
         foreach (var member in type.GetMembers())
-            if (!member.IsImplicitlyDeclared
-                && member.DeclaredAccessibility is Accessibility.Public or Accessibility.Protected or Accessibility.ProtectedOrInternal)
+            if (!member.IsImplicitlyDeclared && SymbolVisibility.IsExternallyVisible(member))
                 sink.AddRoot(member);
     }
 

@@ -1,4 +1,5 @@
 using System;
+using WS2.ImportOnlyLib;
 
 namespace WS2.Consumer;
 

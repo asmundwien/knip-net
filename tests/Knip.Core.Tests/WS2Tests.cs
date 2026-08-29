@@ -8,10 +8,13 @@ namespace Knip.Core.Tests;
 /// referencing project touches any symbol in the referenced project's assembly. False positives are
 /// the product risk (invariant #8), so the fixture pins BOTH what IS and what is NOT flagged.
 ///
-/// Fixture (tests/fixtures/WS2, a 4-project solution, never in Knip.slnx):
-///   Consumer  -> UsedLib   : Consumer.Main calls Greeter.Hello() (real edge)          -> NOT flagged
-///   Consumer  -> UnusedLib : no Consumer symbol ever touches an UnusedLib type         -> FLAGGED
-///   Consumer  -> HazardLib : Consumer uses an INTERNAL type via [InternalsVisibleTo]   -> NOT flagged
+/// Fixture (tests/fixtures/WS2, a 6-project solution, never in Knip.slnx):
+///   Consumer  -> UsedLib       : Consumer.Main calls Greeter.Hello() (real edge)          -> NOT flagged
+///   UsedLib   -> TransitiveLib : Greeter.Hello() calls Message.Value (real direct edge)   -> NOT flagged
+///   Consumer  -> UnusedLib     : no Consumer symbol ever touches an UnusedLib type         -> FLAGGED
+///   Consumer  -> ImportOnlyLib : namespace import makes the reference compile-load-bearing -> NOT flagged
+///   Consumer  -> HazardLib     : Consumer uses an INTERNAL type via [InternalsVisibleTo]   -> NOT flagged
+///   Consumer  -> TransitiveLib : compilation-only transitive edge, no declared reference   -> NOT flagged
 /// </summary>
 [Collection(MsBuildCollection.Name)]
 public sealed class WS2Tests
@@ -40,6 +43,12 @@ public sealed class WS2Tests
         Assert.EndsWith("WS2.Consumer.csproj", unused.FilePath);
         Assert.Equal(0, unused.Line);
         Assert.Equal(0, unused.Column);
+        Assert.Equal(Remediation.RemoveProjectReference, unused.Remediation);
+        Assert.Equal(Confidence.Medium, unused.Confidence);
+        var span = Assert.IsType<SourceSpan>(unused.Span);
+        Assert.Equal(unused.FilePath, span.File);
+        Assert.Equal(span.Start.Line, span.End.Line);
+        Assert.True(span.End.Column > span.Start.Column);
     }
 
     [Fact] // The reference whose types Consumer actually uses is NOT reported (false-positive guard).
@@ -48,6 +57,26 @@ public sealed class WS2Tests
         var findings = await ProjectReferenceFindingsAsync();
 
         Assert.DoesNotContain(findings, f => f.ReferencedProject == "WS2.UsedLib");
+    }
+
+    [Fact] // A transitive compilation reference has no declared <ProjectReference> deletion unit.
+    public async Task Transitive_project_reference_is_not_reported_for_consumer()
+    {
+        var findings = await ProjectReferenceFindingsAsync();
+
+        Assert.DoesNotContain(
+            findings,
+            f => f.Project == "WS2.Consumer" && f.ReferencedProject == "WS2.TransitiveLib");
+    }
+
+    [Fact] // Deleting only the project-file span would leave an unresolved namespace import.
+    public async Task Reference_with_namespace_import_is_not_reported_as_a_single_span_action()
+    {
+        var findings = await ProjectReferenceFindingsAsync();
+
+        Assert.DoesNotContain(
+            findings,
+            f => f.Project == "WS2.Consumer" && f.ReferencedProject == "WS2.ImportOnlyLib");
     }
 
     [Fact] // HAZARD: an internals-only dependency (via [InternalsVisibleTo]) is REAL usage, not flagged.

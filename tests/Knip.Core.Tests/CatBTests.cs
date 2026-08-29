@@ -53,8 +53,8 @@ public sealed class CatBTests
     // B4: publicApiProjects glob roots the public surface of a MATCHING project.
     //   ALIVE (NOT flagged): Contract.UnusedPublicApi — unreferenced public member, rooted because
     //     CatB.B4.Api matches the "*.B4.Api" glob.
-    //   DEAD SIBLING: Contract.UnusedPrivate — private, not externally visible, so the rule does not
-    //     root it; unreferenced -> flagged. Proves the rule is scoped to the public surface only.
+    //   DEAD SIBLINGS: Contract.UnusedPrivate is declared private; PublicButContained is declared public
+    //     but enclosed by an internal type. Neither is externally visible, so both remain flagged.
     [Fact]
     public async Task B4_publicapiprojects_public_not_flagged_private_sibling_flagged()
     {
@@ -63,7 +63,11 @@ public sealed class CatBTests
 
         var findings = await FindingsIn("CatB.B4", config);
         Assert.Equal(
-            new HashSet<string> { "CatB.B4.Contract.UnusedPrivate()" },
+            new HashSet<string>
+            {
+                "CatB.B4.Contract.UnusedPrivate()",
+                "CatB.B4.InternalContainer.PublicNested.PublicButContained()",
+            },
             findings);
     }
 
@@ -85,7 +89,7 @@ public sealed class CatBTests
     // (CatB.B6.Duplicate.Collide). Doc-comment IDs carry no assembly, but SymbolId qualifies each key
     // with the DEFINING assembly, so the two copies are DISTINCT graph nodes. Project X (assembly
     // CatB.B6.ProjX) reaches its Duplicate.Collide from a rooted entry point
-    // (XStartup.ConfigureServices) — X's whole Duplicate type stays alive. Project Y (assembly
+    // (Startup.ConfigureServices) — X's whole Duplicate type stays alive. Project Y (assembly
     // CatB.B6.ProjY) has NO use site for its identical copy, so Y's Duplicate type is genuinely dead.
     // ShouldReport rolls a fully-dead type up to the outermost dead symbol, so the finding is the type
     // CatB.B6.Duplicate (Y's copy), not the member. This pins the fix for the former doc-comment-ID

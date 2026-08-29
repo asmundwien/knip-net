@@ -11,30 +11,49 @@ namespace Knip.Core.Tests;
 /// </summary>
 public static class FixtureRunner
 {
-    /// <summary>Runs Knip on one fixture category solution with default config.</summary>
-    public static async Task<AnalysisResult> RunAsync(string category, KnipConfig? config = null)
+    private static readonly string[] SyntheticGlobalRoots =
+        ["Main", "Configure", "ConfigureServices", "ConfigureContainer"];
+
+    /// <summary>Runs Knip on one fixture category with its explicit synthetic global roots.</summary>
+    public static async Task<AnalysisResult> RunAsync(
+        string category, KnipConfig? config = null, bool includeSyntheticGlobalRoots = true)
     {
+        var effectiveConfig = config ?? new KnipConfig();
+        if (includeSyntheticGlobalRoots)
+            AddSyntheticGlobalRoots(effectiveConfig);
         var solutionPath = ResolveFixtureSolution(category);
-        return await KnipEngine.RunAsync(config ?? new KnipConfig(), solutionPath);
+        return await KnipEngine.RunAsync(effectiveConfig, solutionPath);
     }
 
     /// <summary>
     /// The exact set of reported symbols, as their display names (DeadCodeAnalyzer's DisplayFormat:
     /// namespace-qualified, parameters included). Assert on this for both what IS and IS NOT flagged.
     /// </summary>
-    public static async Task<IReadOnlySet<string>> FindingSymbolsAsync(string category, KnipConfig? config = null)
+    public static async Task<IReadOnlySet<string>> FindingSymbolsAsync(
+        string category, KnipConfig? config = null, bool includeSyntheticGlobalRoots = true)
     {
-        var result = await RunAsync(category, config);
+        var result = await RunAsync(category, config, includeSyntheticGlobalRoots);
         return result.Findings.Select(f => f.Symbol).ToHashSet(StringComparer.Ordinal);
     }
 
     /// <summary>The reported symbols scoped to a single scenario namespace (e.g. "CatE.E01").</summary>
     public static async Task<IReadOnlySet<string>> FindingSymbolsInAsync(
-        string category, string scenarioNamespace, KnipConfig? config = null)
+        string category,
+        string scenarioNamespace,
+        KnipConfig? config = null,
+        bool includeSyntheticGlobalRoots = true)
     {
-        var all = await FindingSymbolsAsync(category, config);
+        var all = await FindingSymbolsAsync(category, config, includeSyntheticGlobalRoots);
         var prefix = scenarioNamespace + ".";
         return all.Where(s => s.StartsWith(prefix, StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
+    }
+
+    internal static KnipConfig AddSyntheticGlobalRoots(KnipConfig config)
+    {
+        foreach (var name in SyntheticGlobalRoots)
+            if (!config.EntryPoints.SymbolNames.Contains(name, StringComparer.Ordinal))
+                config.EntryPoints.SymbolNames.Add(name);
+        return config;
     }
 
     /// <summary>

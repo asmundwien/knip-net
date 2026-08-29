@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="CatH.csproj" />
+  <Project Path="H21.Metadata/CatH.H21.Metadata.csproj" />
 </Solution>
