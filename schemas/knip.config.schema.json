@@ -13,12 +13,12 @@
     },
     "production": {
       "type": "boolean",
-      "description": "WS7 production mode: flag production code reachable ONLY via tests as onlyUsedByTests. Off by default; also enabled by --production."
+      "description": "Report production code that is reachable only through tests as onlyUsedByTests. Off by default; --production also enables it."
     },
     "testProjects": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "WS7: project-name globs that classify a project as a test project (highest-priority signal). Empty => auto-detect via referenced test-framework assembly, then name globs (*Tests/*.Test/*.Tests)."
+      "description": "Project-name globs that classify test projects before assembly and name-based detection."
     },
     "entryPoints": {
       "type": "object",

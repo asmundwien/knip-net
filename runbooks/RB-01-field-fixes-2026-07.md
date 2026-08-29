@@ -1,4 +1,6 @@
-# RB-01 — Field fixes & features from the 2026-07 real-solution test
+# RB-01 field fixes from the July 2026 field run
+
+**Status.** Tasks A and B shipped. Task C remains open. The completed sections below are the accepted contracts and the record of why those changes exist.
 
 **Audience:** an orchestrator agent executing this runbook by dispatching implementer and reviewer
 subagents. You do not need to invent anything — every task below has a defined contract, a defined
@@ -121,13 +123,9 @@ and confirm D10's callee no longer appears while D11's dead type still does.
 
 ---
 
-## Task B — FEATURE: runtime-only hazard *detection* (serialization / config-bound / DI-shaped)
+## Task B: runtime-only hazard detection
 
-**Status today:** `Hazard.SerializationShaped`, `Hazard.ConfigBoundType`, `Hazard.DiPluginShaped`
-already exist in `src/Knip.Core/Model/Finding.cs` and `ConfidenceModel` already demotes them (C2 →
-low). Only **detection** is missing — no finding ever carries these hazards. The deferred contract
-already exists as a skipped test: `tests/Knip.Core.Tests/CatLTests.cs:389`
-(`G-feat: serialization/config/DI hazard DETECTION is WS5`).
+**Status.** Shipped. `RuntimeHazardDetector` attaches `serializationShaped` and `configBoundType`; uncertain dependency injection activation attaches `diPluginShaped`. `ConfidenceModel` demotes these findings to low. The active CatL and plugin tests hold the contract.
 
 **Field motivation:** in the field run, a property was deleted from a DTO that is deserialized via
 `JsonConvert.DeserializeObject<T>` elsewhere in the solution. The deletion happened to be

@@ -1,7 +1,6 @@
-# Knip.NET — agent consumer protocol
+# Knip.NET agent consumer protocol
 
-You are an agent cleaning up dead code with Knip.NET. Its JSON output is the product API. Follow
-this protocol exactly. Do not delete anything until every gate below passes.
+You are cleaning up dead code with Knip.NET. Its JSON output is the product API. Do not delete anything until every gate below passes.
 
 ## 1. Run
 
@@ -9,72 +8,58 @@ this protocol exactly. Do not delete anything until every gate below passes.
 dotnet-knip --format json --no-fail
 ```
 
-`--no-fail` gives you the JSON for triage without the exit-code gate. Assert `formatVersion == 2`
-before parsing anything else — if it is not `2`, stop; you were built against a different contract.
+`--no-fail` returns the report without using findings as an exit-code gate. Assert `formatVersion == 2` before parsing anything else. A different version is a different contract, so stop.
 
-## 2. Trust the run before trusting a finding
+## 2. Check reliability
 
-If `reliability.degraded == true`, do NOT delete anything. Restore/load was incomplete, so the
-reachability graph under every finding is untrustworthy. Report the `reliability` details to a human
-and stop.
+If `reliability.degraded == true`, do not delete anything. Restore or workspace loading was incomplete, so the reachability graph is not fit for deletion decisions. Report the `reliability` details to a human and stop.
 
-## 3. Triage by `confidence`
+## 3. Triage by confidence
 
 | `confidence` | Action | Precondition |
 |---|---|---|
-| `high`   | may DELETE | only via the full verify loop (§6), and only when `reliability.degraded == false` |
-| `medium` | PROPOSE for human review | — |
-| `low`    | SURFACE only — never touch | — |
+| `high` | May delete | Complete the verification loop in section 6. |
+| `medium` | Propose for human review | None. |
+| `low` | Report only | Never delete. |
 
-`hazards[]` is advisory: it means "verify harder", never "auto-safe". Its absence never upgrades
-autonomy. `confidence` is the only field that gates action.
+`hazards[]` records known false-positive shapes. It is advisory. A missing hazard does not make a finding safe, and only `confidence` controls the action.
 
-`--production` / `onlyUsedByTests` findings are human-review only (`medium`) unless another rule
-demotes them; never delete them autonomously. Their deletion unit is the production code AND its tests.
+`onlyUsedByTests` findings cover production code and its tests. They require human review even when their confidence is `medium`.
 
-## 4. Delete by `span`, never by `location`
+## 4. Delete by span
 
-`span` is the complete, safe single-file deletion unit (leading XML-doc comments and attribute lists
-through the closing `}` / terminating `;`). `location` is only the jump-to line for humans — never
-reconstruct a range from it.
+`span` is the complete single-file deletion range. It includes owned XML documentation and attributes through the declaration's last token. Positions are 1-based and the range is half-open: `[start, end)`.
 
-- An omitted `span` means no complete independently removable declaration can be represented (for example,
-  multiple symbol declarations or sibling field/event declarators). Never auto-delete it; surface it.
-- Delete only eligible `rootCause == null` findings in the current pass. A finding with a non-null
-  `rootCause` is covered by deleting its parent; cascades are handled by re-running (§6).
-- For `onlyUsedByTests`, follow `rootCause` to the direct test boundary carrying
-  `details.testReferrers`. That boundary's confidence governs the whole unit; never bypass a `low` or
-  `medium` parent to delete its child.
+`location` is only the identifier position for navigation. Never derive a deletion range from it.
 
-## 5. Library posture — set this first if the repo ships a library
+- A missing `span` means Knip.NET cannot describe one independent deletion. Report the finding without deleting it.
+- Delete only eligible findings with `rootCause == null` in the current pass. A non-null `rootCause` points to a reported parent whose deletion already covers the finding.
+- For `onlyUsedByTests`, follow `rootCause` to the direct test boundary with `details.testReferrers`. The boundary's confidence governs the whole code-and-tests deletion.
 
-Public and protected symbols are flagged by default (nothing in the solution references them). If
-this repo is a library consumed by other repos, set `roots.treatAllPublicAsUsed` or
-`roots.publicApiProjects` in `knip.json` before triage, or you will drown in `publicApi` findings you
-must not touch.
+## 5. Set library posture before triage
 
-## 6. The verify loop (mandatory before any `high` deletion)
+Public and protected symbols are findings by default because the solution contains no external callers. If other repositories consume this solution as a library, set `roots.treatAllPublicAsUsed` or `roots.publicApiProjects` in `knip.json`. Matching public symbols then become roots and leave the finding set.
 
-1. Delete the `high`, `rootCause == null` finding by `span`.
+## 6. Verify every high-confidence deletion
+
+1. Delete one eligible `high` finding by `span`.
 2. Run `dotnet build`.
 3. Run the full test suite.
-4. Re-run Knip.NET.
+4. Run Knip.NET again.
 
-Any build or test failure means the finding was not safe → drop it to `medium` handling (propose,
-don't delete).
+If the build or tests fail, revert the deletion and propose it for human review.
 
-Re-run assertion: do NOT require identical output. Deleting dead code legitimately uncovers newly
-dead symbols (cascades) — that is the tool working. The failure condition is a symbol that was ALIVE
-before your deletion now being flagged. That is a regression → revert.
+The second Knip run need not match the first. Deleting dead code can expose another dead layer. The failure condition is a symbol that was alive before the deletion and becomes a finding afterward. Revert that deletion.
 
-Repeat until a run reports no new deletable `high` findings.
+Repeat until a run has no new eligible high-confidence findings.
 
 ## 7. Exit codes
 
 | Code | Meaning |
 |---|---|
-| `0` | clean — no findings |
-| `1` | findings present (the CI gate) |
-| `2` | error (bad args, malformed config, load failure) |
+| `0` | Clean, or findings with `--no-fail` |
+| `1` | Findings present |
+| `2` | Usage, config, or load error |
+| `130` | Cancelled |
 
-`--no-fail` masks findings only (forces `0` when findings exist); exit `2` always wins.
+`--no-fail` changes exit `1` to `0`. It does not mask errors or cancellation.

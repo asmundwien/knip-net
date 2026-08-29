@@ -9,19 +9,20 @@
 
   // "solution": "path/to/Your.sln",   // or pass on the CLI: dotnet-knip Your.sln
 
-  // WS7 PRODUCTION MODE. Off by default (default mode keeps test-only production code alive — every
-  // [Fact]/[Theory] is a root). Turn it on (here, or with --production) to also flag production code
-  // reachable ONLY through tests as `onlyUsedByTests` (remediation `deleteCodeAndTests`). Directly
+  // Production mode is off by default. In default mode every [Fact]/[Theory] is a root, so
+  // test-only production code stays alive. Enable it here or with --production to report that code as
+  // `onlyUsedByTests` with remediation `deleteCodeAndTests`. Directly
   // test-referenced findings list tests under details.testReferrers; transitive findings point through
   // rootCause to that direct boundary. The boundary's confidence governs the whole deletion unit: a dead
   // feature plus its test suite.
   // "production": true,
 
-  // Test-project classification (K7), first match wins: (1) these `testProjects` globs override
-  // everything; (2) else a referenced test-framework assembly (MSTest.TestFramework / xunit.core /
-  // nunit.framework); (3) else name globs (*Tests / *.Test / *.Tests). Zero test projects detected in
-  // production mode → a LOUD warning (stderr + reliability.productionModeWarnings); never fails. Set
-  // this only when auto-detection misclassifies (e.g. a test project named "…Verification").
+  // Test-project classification uses the first matching rule. These `testProjects` globs override
+  // everything. Otherwise Knip.NET checks for a referenced test-framework assembly
+  // (MSTest.TestFramework / xunit.core / nunit.framework), then name globs
+  // (*Tests / *.Test / *.Tests). Zero test projects in production mode adds a visible warning to
+  // stderr and reliability.productionModeWarnings; it does not fail the run. Set this only when
+  // auto-detection misclassifies a project, for example one named "Verification".
   // "testProjects": ["*.IntegrationTests", "My.Test.Harness"],
 
   "entryPoints": {

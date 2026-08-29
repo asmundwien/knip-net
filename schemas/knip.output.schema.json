@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/asmundwien/knip-net/main/schemas/knip.output.schema.json",
   "title": "Knip.NET JSON output (formatVersion 2)",
-  "description": "The machine-readable output of a Knip.NET run. THIS IS THE PRODUCT API (WS8 §1).",
+  "description": "The machine-readable product API for a Knip.NET run.",
   "type": "object",
   "additionalProperties": false,
   "required": ["formatVersion", "tool", "run", "reliability", "summary", "findings"],
@@ -76,11 +76,11 @@
         "productionModeWarnings": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "WS7: e.g. production mode requested but zero test projects detected. Does NOT set degraded."
+          "description": "Warnings produced by production mode, such as finding no test projects. These warnings do not set degraded."
         },
         "testProjectClassification": {
           "type": "array",
-          "description": "WS7: per-project production/test verdict + the signal that decided it (K7).",
+          "description": "The production or test classification of each project and the signal that determined it.",
           "items": {
             "type": "object",
             "additionalProperties": false,
@@ -133,8 +133,8 @@
       "additionalProperties": false,
       "required": ["line", "column"],
       "properties": {
-        "line": { "type": "integer", "minimum": 0 },
-        "column": { "type": "integer", "minimum": 0 }
+        "line": { "type": "integer", "minimum": 1 },
+        "column": { "type": "integer", "minimum": 1 }
       }
     },
     "finding": {
@@ -204,7 +204,7 @@
         },
         "details": {
           "type": "object",
-          "description": "Kind-specific extras. For onlyUsedByTests: testReferrers[] (WS7 K3).",
+          "description": "Kind-specific data. onlyUsedByTests findings use testReferrers for direct references from tests.",
           "properties": {
             "testReferrers": {
               "type": "array",

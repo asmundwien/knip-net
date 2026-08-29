@@ -1,9 +1,10 @@
-# RB-02 — Unused-configuration detection (dead `appsettings.json` keys)
+# RB-02 unused `appsettings.json` key detection
 
-**Audience:** an orchestrator agent executing this runbook by dispatching implementer and reviewer
-subagents. This is a self-contained iteration — do not start it until RB-01 has merged (it builds
-on RB-01's Task B config-bound detection data). When this runbook and `RUNBOOK.md` (repo root)
-disagree, follow `RUNBOOK.md` and escalate.
+**Status.** Proposed. No contract tests or implementation have landed.
+
+**Audience:** an orchestrator agent executing this runbook with implementer and reviewer subagents.
+RB-01 Task B is the prerequisite because this detector reuses its config-bound type data. Task B has
+shipped. When this runbook and `RUNBOOK.md` disagree, follow `RUNBOOK.md` and escalate.
 
 **Origin:** a supervised field run (2026-07-16) deleted config-constant classes and a
 config-consuming utility from a real backend; the corresponding sections in `appsettings.json` and
