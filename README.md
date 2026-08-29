@@ -78,7 +78,7 @@ The annotated [`knip.json`](knip.json) documents the available settings and plug
 
 Use `--format json` for automation. The output schema is [`schemas/knip.output.schema.json`](schemas/knip.output.schema.json).
 
-Each finding has a confidence, hazards, a remediation, and usually a deletion span. `span` uses 1-based, half-open coordinates: `[start, end)`. `location` is for navigation and is not a deletion range.
+Each finding has a confidence, hazards, a remediation, and usually a deletion span. Confidence is effective for the complete deletion unit: a descendant linked by `rootCause` cannot advertise greater autonomy than its governing ancestor, and summary confidence counts use that effective tier. `span` uses 1-based, half-open coordinates: `[start, end)`. `location` is for navigation and is not a deletion range.
 
 - `high` findings may be deleted only through the full verification loop.
 - `medium` findings need human review.

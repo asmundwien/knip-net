@@ -18,7 +18,7 @@ namespace CatL.Main
     /// compiling.
     /// </summary>
     [Obsolete("dead")]
-    public sealed class DeadDocumented
+    internal sealed class DeadDocumented
     {
         /// <summary>DEAD member — not reported on its own (its containing type is dead / outermost-only).</summary>
         public void NeverCalled() { }
@@ -32,7 +32,7 @@ namespace CatL.Main
     }
 
     // DEAD (L10 cascade): the only incoming edge is DeadCaller's field, which is itself dead.
-    public sealed class DeadCallee
+    internal sealed class DeadCallee
     {
     }
 }

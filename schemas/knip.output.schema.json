@@ -101,7 +101,10 @@
       "properties": {
         "total": { "type": "integer", "minimum": 0 },
         "byKind": { "$ref": "#/$defs/countMap" },
-        "byConfidence": { "$ref": "#/$defs/countMap" },
+        "byConfidence": {
+          "$ref": "#/$defs/countMap",
+          "description": "Counts findings by effective deletion-unit confidence; descendants inherit the most restrictive confidence in their rootCause chain."
+        },
         "byProject": {
           "type": "array",
           "items": {
@@ -112,7 +115,10 @@
               "project": { "type": "string" },
               "total": { "type": "integer", "minimum": 0 },
               "byKind": { "$ref": "#/$defs/countMap" },
-              "byConfidence": { "$ref": "#/$defs/countMap" }
+              "byConfidence": {
+                "$ref": "#/$defs/countMap",
+                "description": "Project findings by effective deletion-unit confidence."
+              }
             }
           }
         }
@@ -158,7 +164,11 @@
         "symbolKind": { "type": "string" },
         "accessibility": { "type": "string" },
         "project": { "type": "string" },
-        "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"],
+          "description": "Effective autonomy tier for the complete deletion unit. This value never exceeds the confidence of a rootCause ancestor."
+        },
         "hazards": {
           "type": "array",
           "items": {

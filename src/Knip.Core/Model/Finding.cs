@@ -32,8 +32,7 @@ public enum FindingKind
 }
 
 /// <summary>
-/// How safe autonomous deletion of a finding is (WS8 §4). Every finding ships <see cref="High"/> in the
-/// WS8b field-shape task; the demotion engine (WS8b-2) grades this down for hazardous / degraded findings.
+/// How safe autonomous deletion of a finding's complete deletion unit is.
 /// </summary>
 public enum Confidence
 {
@@ -43,8 +42,8 @@ public enum Confidence
 }
 
 /// <summary>
-/// Advisory shapes that make a finding risky to auto-delete (WS8 §4.2, closed set). Attached by the
-/// demotion engine (WS8b-2); this task defines the enum but leaves <see cref="Finding.Hazards"/> empty.
+/// Advisory shapes that make a finding risky to delete autonomously. Hazards describe local evidence;
+/// confidence carries their effect through a complete deletion unit.
 /// </summary>
 public enum Hazard
 {
@@ -139,7 +138,10 @@ public sealed record Finding(
     /// <summary>The safe single-file deletion unit, or null when one cannot be represented.</summary>
     public SourceSpan? Span { get; init; }
 
-    /// <summary>How safe autonomous deletion is. Always <see cref="Model.Confidence.High"/> in WS8b-1.</summary>
+    /// <summary>
+    /// Effective autonomy tier for this finding's complete deletion unit. A finding with a
+    /// <see cref="RootCause"/> never has greater confidence than any ancestor in that chain.
+    /// </summary>
     public Confidence Confidence { get; init; } = Confidence.High;
 
     /// <summary>Advisory hazard shapes. Always empty in WS8b-1 (demotion engine is WS8b-2).</summary>

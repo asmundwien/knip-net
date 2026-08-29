@@ -18,11 +18,12 @@ namespace Knip.Core.Tests;
 /// demotion C1 → publicApi/C2 → internalsVisibleTo → C3 → C4; C2 precedes C4 per DECISION 2026-07-15).
 ///
 /// Promoted rows: L1 (output validates against the schema), L2 (stable ids + order across runs),
-/// L3 (degraded true vs false), L4 (delete every finding strictly by span → compiles green),
-/// L8 (summary == findings), L10 (cascade carries parent id as rootCause; direct == null),
-/// and the WS8b-2 demotion rows L11 (global → all low), L12 (per-project attribution), L13/L14
-/// (publicApi + config split), L16 (unusedProjectReference → medium), L17 (IVT → low), and L18
-/// (the C2-before-C4 collision: public test-only unconfigured→low/configured→medium, internal→medium).
+/// L3 (degraded true vs false), L4 (delete every finding strictly by span → compiles green), L8
+/// (summary == findings), L10 (cascade carries parent id as rootCause; direct == null), L23 (rootCause
+/// descendants inherit effective confidence), and the WS8b-2 demotion rows L11 (global → all low), L12
+/// (per-project attribution), L13/L14 (publicApi + config split), L16 (unusedProjectReference → medium),
+/// L17 (IVT → low), and L18 (the C2-before-C4 collision: public test-only
+/// unconfigured→low/configured→medium, internal→medium).
 /// WS8c promoted L5 (--why flagged/alive, out-of-process CLI), L6 (--print-config = file over defaults),
 /// L7 (all-config-key unknown-key warnings). Still Skip "G-feat": only L15 (serialization/config/DI
 /// hazard DETECTION, WS5).
@@ -196,6 +197,47 @@ public sealed class CatLTests
         // A stand-alone dead type with no dead referrer is also directly unreferenced.
         var documented = Single(result, "CatL.Main.DeadDocumented");
         Assert.Null(documented.RootCause);
+    }
+
+    // A descendant cannot be safer to delete than the outer deletion unit named by its rootCause chain.
+    // Exercise the same public parent as low (undeclared API posture) and medium (declared posture), while
+    // an independent internal finding proves that direct high-confidence findings remain high.
+    [Fact]
+    public async Task L23_rootcause_descendants_inherit_the_outer_deletion_units_confidence()
+    {
+        var unconfigured = await FixtureRunner_Run("Main");
+        AssertEffectiveConfidence(unconfigured, Confidence.Low);
+
+        var configured = new KnipConfig();
+        configured.Roots.PublicApiProjects.Add("SomeOther*");
+        var configuredResult = await FixtureRunner_Run("Main", configured);
+        AssertEffectiveConfidence(configuredResult, Confidence.Medium);
+
+        static void AssertEffectiveConfidence(AnalysisResult result, Confidence expectedUnitConfidence)
+        {
+            var parent = Single(result, "CatL.Main.DeadCaller");
+            var child = Single(result, "CatL.Main.DeadCallee");
+            var direct = Single(result, "CatL.Main.DeadDocumented");
+
+            Assert.Equal(expectedUnitConfidence, parent.Confidence);
+            Assert.Equal(parent.Id, child.RootCause);
+            Assert.Equal(expectedUnitConfidence, child.Confidence);
+            Assert.Null(direct.RootCause);
+            Assert.Equal(Confidence.High, direct.Confidence);
+
+            using var writer = new StringWriter();
+            new JsonReporter().Report(result, writer);
+            using var document = JsonDocument.Parse(writer.ToString());
+            var root = document.RootElement;
+            var findings = root.GetProperty("findings").EnumerateArray().ToList();
+            var childJson = findings.Single(f => f.GetProperty("symbol").GetString() == child.Symbol);
+            Assert.Equal(
+                expectedUnitConfidence.ToString().ToLowerInvariant(),
+                childJson.GetProperty("confidence").GetString());
+
+            var expectedHigh = findings.Count(f => f.GetProperty("confidence").GetString() == "high");
+            Assert.Equal(expectedHigh, root.GetProperty("summary").GetProperty("byConfidence").GetProperty("high").GetInt32());
+        }
     }
 
     // ══ L9 confidence/hazard demotion engine (WS8b-2). Rows L11–L17 pin the individual rules; each

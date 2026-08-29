@@ -37,7 +37,7 @@ A symbol is alive when a path from a root reaches it. A finding is a declared sy
 
 `span` is the complete single-file deletion range. Its positions are 1-based and the range is half-open: `[start, end)`. `location` is only the identifier position for navigation.
 
-A hazard records a known false-positive shape. Confidence sets the permitted action. Hazards do not change reachability and their absence does not make a finding safe.
+`confidence` is the effective autonomy tier of the complete deletion unit. A descendant linked by `rootCause` cannot have greater confidence than any ancestor governing its deletion. Hazards remain local evidence about the finding where they were detected; their confidence demotion propagates through the unit. Hazards do not change reachability and their absence does not make a finding safe.
 
 Reliability describes whether restore and workspace loading produced a graph fit for deletion decisions. `reliability.degraded` blocks autonomous deletion.
 

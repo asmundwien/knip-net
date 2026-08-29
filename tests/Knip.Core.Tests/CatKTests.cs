@@ -175,7 +175,7 @@ public sealed class CatKTests
         Assert.Equal(FindingKind.OnlyUsedByTests, a.Kind);
         Assert.Equal(FindingKind.OnlyUsedByTests, b.Kind);
 
-        Assert.Equal(Confidence.Medium, a.Confidence);
+        Assert.Equal(Confidence.Low, a.Confidence); // The low boundary governs its whole deletion unit.
         Assert.Equal(Confidence.Low, b.Confidence);
         Assert.Equal(b.Id, a.RootCause);
         Assert.Null(b.RootCause);
