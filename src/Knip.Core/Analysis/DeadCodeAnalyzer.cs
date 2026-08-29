@@ -390,7 +390,7 @@ public sealed class DeadCodeAnalyzer
             // subsumed by the outer symbol.
             if (!ShouldReport(id, symbol, suppressed, state)) continue;
             var finding = isTestOnly
-                ? ToTestOnlyFinding(symbol, ivtToNonSolution, testReferrers)
+                ? ToTestOnlyFinding(symbol, ivtToNonSolution, testReferrers, state)
                 : ToFinding(symbol, ivtToNonSolution, state);
             if (finding is null) continue;
             reportedKeyToFindingId[id] = finding.Id;
@@ -788,10 +788,7 @@ public sealed class DeadCodeAnalyzer
             // WS8b-2: attach ADVISORY hazards (publicApi / internalsVisibleTo), plus (RB-01 Task B) the
             // runtime-only serialization/config-bound shapes detected by RuntimeHazardDetector. Confidence
             // is graded in a final pass (ConfidenceModel.Apply) once the reliability picture is complete.
-            Hazards = CombineHazards(
-                FindingEnrichment.ComputeHazards(symbol, hasIvt),
-                FindingEnrichment.ComputeRuntimeHazards(
-                    symbol, state.SerializationUsageTypes, state.ConfigBoundTypes, state.DiPluginShapedSymbols)),
+            Hazards = ComputeHazards(symbol, hasIvt, state),
         };
     }
 
@@ -804,7 +801,8 @@ public sealed class DeadCodeAnalyzer
     private static Finding? ToTestOnlyFinding(
         ISymbol symbol,
         HashSet<string> ivtToNonSolution,
-        Dictionary<string, List<TestReferrer>> testReferrers)
+        Dictionary<string, List<TestReferrer>> testReferrers,
+        GraphState state)
     {
         var location = symbol.Locations.FirstOrDefault(l => l.IsInSource);
         if (location is null) return null;
@@ -834,10 +832,17 @@ public sealed class DeadCodeAnalyzer
             Id = FindingEnrichment.ComputeId(FindingKind.OnlyUsedByTests, displayName, project, null),
             Span = FindingEnrichment.ComputeSpan(symbol),
             Remediation = Model.Remediation.DeleteCodeAndTests,
-            Hazards = FindingEnrichment.ComputeHazards(symbol, hasIvt),
+            Hazards = ComputeHazards(symbol, hasIvt, state),
             TestReferrers = referrers,
         };
     }
+
+    /// <summary>Apply the same visibility and runtime hazard enrichment to every symbol finding kind.</summary>
+    private static IReadOnlyList<Model.Hazard> ComputeHazards(ISymbol symbol, bool hasIvt, GraphState state) =>
+        CombineHazards(
+            FindingEnrichment.ComputeHazards(symbol, hasIvt),
+            FindingEnrichment.ComputeRuntimeHazards(
+                symbol, state.SerializationUsageTypes, state.ConfigBoundTypes, state.DiPluginShapedSymbols));
 
     /// <summary>Concatenate the base + runtime hazard lists, preserving order and avoiding an alloc when empty.</summary>
     private static IReadOnlyList<Model.Hazard> CombineHazards(

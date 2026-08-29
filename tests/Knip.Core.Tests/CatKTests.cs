@@ -116,6 +116,11 @@ public sealed class CatKTests
         var testOnly = findings.Single(f => f.Symbol == "CatK.K2.Service.ProductionMethod()");
         Assert.Equal(FindingKind.OnlyUsedByTests, testOnly.Kind);
         Assert.Equal(Remediation.DeleteCodeAndTests, testOnly.Remediation);
+        Assert.Contains(Hazard.PublicApi, testOnly.Hazards);
+        Assert.Null(testOnly.RootCause);
+        Assert.Equal(
+            new[] { "CatK.K2.ServiceTests.Exercises_ProductionMethod()" },
+            testOnly.TestReferrers.Select(r => r.Symbol));
         // ProductionMethod is PUBLIC → carries the publicApi hazard. HUMAN DECISION 2026-07-15 (§6): C2
         // (publicApi) now PRECEDES C4, and no publicApi posture is declared here, so this unconfigured-
         // public test-only finding lands LOW (was medium under the old C4-before-C2 order). The verify
@@ -267,6 +272,53 @@ public sealed class CatKTests
         var plainDead = findings.Single(f => f.Symbol == "CatK.K8.Service.NeverCalled()");
         Assert.Equal(FindingKind.UnusedMethod, plainDead.Kind);
         Assert.DoesNotContain(findings, f => f.Symbol == "CatK.K8.Service.KeepAlive()");
+    }
+
+    // ---- K9: Runtime hazards survive production-mode test-only classification ----------------
+
+    [Trait("status", "contract")]
+    [Fact]
+    public async Task K9_test_only_findings_preserve_runtime_hazards_and_deletion_unit_metadata()
+    {
+        var findings = await FindingObjectsIn("CatK.K9", Production());
+        var boundary = findings.Single(f => f.Symbol == "CatK.K9.TestOnlyBoundary.Run()");
+
+        Assert.Equal(FindingKind.OnlyUsedByTests, boundary.Kind);
+        Assert.Equal(Confidence.Medium, boundary.Confidence);
+        Assert.Null(boundary.RootCause);
+        Assert.Equal(
+            new[] { "CatK.K9.RuntimeHazardTests.Exercises_boundary()" },
+            boundary.TestReferrers.Select(r => r.Symbol));
+
+        AssertTransitivePair(
+            "CatK.K9.SerializedData.RuntimeValue",
+            "CatK.K9.PlainData.PlainValue",
+            Hazard.SerializationShaped);
+        AssertTransitivePair(
+            "CatK.K9.ConfigBoundData.RuntimeValue",
+            "CatK.K9.PlainConfigData.PlainValue",
+            Hazard.ConfigBoundType);
+        AssertTransitivePair(
+            "CatK.K9.FactoryRegisteredService.RuntimeDependency()",
+            "CatK.K9.PlainService.PlainDependency()",
+            Hazard.DiPluginShaped);
+
+        void AssertTransitivePair(string runtimeSymbol, string plainSymbol, Hazard hazard)
+        {
+            var runtimeShaped = findings.Single(f => f.Symbol == runtimeSymbol);
+            Assert.Equal(FindingKind.OnlyUsedByTests, runtimeShaped.Kind);
+            Assert.Contains(hazard, runtimeShaped.Hazards);
+            Assert.Equal(Confidence.Low, runtimeShaped.Confidence);
+            Assert.Equal(boundary.Id, runtimeShaped.RootCause);
+            Assert.Empty(runtimeShaped.TestReferrers);
+
+            var plain = findings.Single(f => f.Symbol == plainSymbol);
+            Assert.Equal(FindingKind.OnlyUsedByTests, plain.Kind);
+            Assert.DoesNotContain(hazard, plain.Hazards);
+            Assert.Equal(Confidence.Medium, plain.Confidence);
+            Assert.Equal(boundary.Id, plain.RootCause);
+            Assert.Empty(plain.TestReferrers);
+        }
     }
 
     [Trait("status", "contract")]

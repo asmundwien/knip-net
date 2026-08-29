@@ -322,6 +322,37 @@ public sealed class CatLTests
         Assert.Equal(Confidence.High, priv.Confidence);
     }
 
+    [Fact]
+    public async Task L17_production_mode_preserves_ivt_hazard_on_test_only_findings()
+    {
+        var result = await FixtureRunner_Run(
+            "InternalsVisibleTo",
+            new KnipConfig { Production = true });
+        var friendVisible = Single(
+            result,
+            "CatL.InternalsVisibleTo.TestOnlyIvtService.FriendVisible()");
+        var privateControl = Single(
+            result,
+            "CatL.InternalsVisibleTo.TestOnlyIvtService.PrivateControl()");
+
+        Assert.Equal(FindingKind.OnlyUsedByTests, friendVisible.Kind);
+        Assert.Contains(Hazard.InternalsVisibleTo, friendVisible.Hazards);
+        Assert.Equal(Confidence.Low, friendVisible.Confidence);
+        Assert.Null(friendVisible.RootCause);
+
+        Assert.Equal(FindingKind.OnlyUsedByTests, privateControl.Kind);
+        Assert.Empty(privateControl.Hazards);
+        Assert.Equal(Confidence.Medium, privateControl.Confidence);
+        Assert.Null(privateControl.RootCause);
+
+        var expectedReferrer = new[]
+        {
+            "CatL.InternalsVisibleTo.TestOnlyIvtService.Tests.Exercises_both()",
+        };
+        Assert.Equal(expectedReferrer, friendVisible.TestReferrers.Select(r => r.Symbol));
+        Assert.Equal(expectedReferrer, privateControl.TestReferrers.Select(r => r.Symbol));
+    }
+
     // ── L18: the COLLISION row (HUMAN DECISION 2026-07-15, §6). The reordered confidence chain puts C2
     //    (publicApi) BEFORE C4 (deleteCodeAndTests). This pins ALL THREE branches on ONE production-mode
     //    fixture whose two OnlyUsedByTests findings differ only in accessibility:

@@ -8,11 +8,18 @@ using System.Runtime.CompilerServices;
 
 namespace CatL.InternalsVisibleTo
 {
+    [System.AttributeUsage(System.AttributeTargets.Method)]
+    internal sealed class FactAttribute : System.Attribute { }
+
     // Rooted so the private dead sibling below is REPORTED (a private top-level type is illegal; the
     // anti-vacuous private finding must live inside a live type).
     public sealed class Program
     {
-        public static void Main() => _ = new InternalContainer.PublicNested();
+        public static void Main()
+        {
+            _ = new InternalContainer.PublicNested();
+            new TestOnlyIvtService().KeepAlive();
+        }
 
         // DEAD control: an ordinary external consumer can bind this, so publicApi keeps precedence.
         public void PublicApiControl() { }
@@ -42,4 +49,24 @@ namespace CatL.InternalsVisibleTo
     {
         internal void Unused() { }
     }
+    // Production mode must preserve friend-visibility risk on test-only findings. A private sibling
+    // proves the assembly-level IVT declaration does not blanket-tag the deletion unit.
+    internal sealed class TestOnlyIvtService
+    {
+        internal void FriendVisible() { }
+        private void PrivateControl() { }
+        internal void KeepAlive() { }
+
+        internal sealed class Tests
+        {
+            [Fact]
+            internal void Exercises_both()
+            {
+                var service = new TestOnlyIvtService();
+                service.FriendVisible();
+                service.PrivateControl();
+            }
+        }
+    }
+
 }
