@@ -778,9 +778,8 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     /// </summary>
     private void AddRoot(string id, bool asTest)
     {
-        _state.Roots.Add(id);
-        if (asTest) _state.TestRoots.Add(id);
-        else _state.ProductionRoots.Add(id);
+        _state.AddRoot(id, asTest);
+        if (asTest) _state.TestEntryRoots.Add(id);
     }
 
     private static bool MatchesAttribute(AttributeData attr, List<string> names)

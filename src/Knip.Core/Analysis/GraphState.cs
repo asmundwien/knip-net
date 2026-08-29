@@ -24,6 +24,12 @@ internal sealed class GraphState
 
     /// <summary>Symbol id → ids it references ("uses" edges).</summary>
     public Dictionary<string, HashSet<string>> Edges { get; } = new(StringComparer.Ordinal);
+    /// <summary>
+    /// Plugin edges discovered only while analyzing test projects. Full traversal follows them; production
+    /// traversal does not. An ordinary source edge or production plugin discovery removes the matching entry.
+    /// </summary>
+    private Dictionary<string, HashSet<string>> TestOnlyPluginEdges { get; } = new(StringComparer.Ordinal);
+
 
     /// <summary>
     /// (WS8c, gated by <see cref="CaptureProvenance"/>) One representative reference-site source location
@@ -59,6 +65,12 @@ internal sealed class GraphState
     /// findings (the two-color pass excludes them). String-keyed (invariant #1).
     /// </summary>
     public HashSet<string> TestDeclarations { get; } = new(StringComparer.Ordinal);
+    /// <summary>
+    /// Test-origin roots that are themselves test entry code. Unlike plugin roots discovered from a test
+    /// project, these are excluded from production findings even when declared in a production project.
+    /// </summary>
+    public HashSet<string> TestEntryRoots { get; } = new(StringComparer.Ordinal);
+
 
     /// <summary>
     /// (WS7) The roots that are TEST-ONLY: test-origin and NOT also production-rooted. Production wins so a
@@ -66,6 +78,14 @@ internal sealed class GraphState
     /// its PRODUCTION color from <c>Roots \ TestOnlyRoots</c> and its FULL color from all <see cref="Roots"/>.
     /// </summary>
     public IEnumerable<string> TestOnlyRoots => TestRoots.Where(r => !ProductionRoots.Contains(r));
+    public bool AddRoot(string id, bool asTest)
+    {
+        var added = Roots.Add(id);
+        if (asTest) TestRoots.Add(id);
+        else ProductionRoots.Add(id);
+        return added;
+    }
+
 
     /// <summary>
     /// Ids DECLARED inside a BUILT-IN generated tree (H11). These are still walked for their outbound
@@ -123,8 +143,12 @@ internal sealed class GraphState
     /// <summary>Source field/event-field initializers keyed by their containing type's stable symbol id.</summary>
     public Dictionary<string, HashSet<string>> RuntimeInitializersByType { get; } = new(StringComparer.Ordinal);
 
-    /// <summary>Types proven runtime-activated before all source declarations may be available.</summary>
-    public HashSet<string> RuntimeActivationRootTypes { get; } = new(StringComparer.Ordinal);
+    /// <summary>Runtime-activated types contributed from test projects.</summary>
+    public HashSet<string> TestRuntimeActivationRootTypes { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Runtime-activated types contributed from production projects.</summary>
+    public HashSet<string> ProductionRuntimeActivationRootTypes { get; } = new(StringComparer.Ordinal);
+
 
     /// <summary>Types with uncertain DI activation whose source initializer closures need hazard tags.</summary>
     public HashSet<string> DiPluginActivationTypes { get; } = new(StringComparer.Ordinal);
@@ -134,9 +158,36 @@ internal sealed class GraphState
 
     public void AddEdge(string source, string target)
     {
-        if (!Edges.TryGetValue(source, out var set))
-            Edges[source] = set = new HashSet<string>(StringComparer.Ordinal);
-        set.Add(target);
+        AddEdge(Edges, source, target);
+        RemoveTestOnlyPluginEdge(source, target);
+    }
+
+    public void AddPluginEdge(string source, string target, bool asTest)
+    {
+        var alreadyPresent = Edges.TryGetValue(source, out var targets) && targets.Contains(target);
+        AddEdge(Edges, source, target);
+
+        if (!asTest)
+            RemoveTestOnlyPluginEdge(source, target);
+        else if (!alreadyPresent)
+            AddEdge(TestOnlyPluginEdges, source, target);
+    }
+
+    public bool IsTestOnlyPluginEdge(string source, string target) =>
+        TestOnlyPluginEdges.TryGetValue(source, out var targets) && targets.Contains(target);
+
+    private static void AddEdge(Dictionary<string, HashSet<string>> edges, string source, string target)
+    {
+        if (!edges.TryGetValue(source, out var targets))
+            edges[source] = targets = new HashSet<string>(StringComparer.Ordinal);
+        targets.Add(target);
+    }
+
+    private void RemoveTestOnlyPluginEdge(string source, string target)
+    {
+        if (!TestOnlyPluginEdges.TryGetValue(source, out var targets)) return;
+        targets.Remove(target);
+        if (targets.Count == 0) TestOnlyPluginEdges.Remove(source);
     }
 
     public void RecordRuntimeInitializer(string type, string initializer)
@@ -209,9 +260,16 @@ internal static class RuntimeActivation
 
     public static void CompleteRoots(GraphState state)
     {
-        foreach (var typeId in state.RuntimeActivationRootTypes)
+        CompleteRoots(state, state.ProductionRuntimeActivationRootTypes, asTest: false);
+        CompleteRoots(state, state.TestRuntimeActivationRootTypes, asTest: true);
+    }
+
+    private static void CompleteRoots(GraphState state, IEnumerable<string> typeIds, bool asTest)
+    {
+        foreach (var typeId in typeIds)
             if (state.RuntimeInitializersByType.TryGetValue(typeId, out var initializers))
-                state.Roots.UnionWith(initializers);
+                foreach (var initializer in initializers)
+                    state.AddRoot(initializer, asTest);
     }
 
     public static bool HasInstanceInitializer(ISymbol member)

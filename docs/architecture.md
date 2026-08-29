@@ -43,7 +43,7 @@ Reliability describes whether restore and workspace loading produced a graph fit
 
 ## Plugin boundary
 
-Plugins implement `IKnipPlugin` and contribute through `ContributionSink`. They may keep code alive by adding roots or edges. They may not create dead findings. This one-way rule prevents a plugin from making the core analysis less conservative.
+Plugins implement `IKnipPlugin` and contribute through a project-scoped `ContributionSink`. They may keep code alive by adding roots or edges. The sink records whether each contribution was discovered from a test or production project; production traversal excludes test-only contributions, while default traversal includes both. A contribution discovered from both origins counts as production. Plugins may not create dead findings. This one-way rule prevents a plugin from making the core analysis less conservative.
 
 Built-in plugins live under `src/Knip.Core/Plugins/BuiltIn`. Configuration selects them by id. Runtime hazard detection is separate from plugin reachability because a disabled plugin may still need to warn that a finding has a risky shape.
 

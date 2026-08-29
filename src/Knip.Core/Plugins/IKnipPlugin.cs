@@ -50,8 +50,8 @@ public sealed class PluginContext
 
 /// <summary>
 /// The ONLY way a plugin mutates the graph. Symbol-typed on the way in; the sink derives the
-/// SymbolId key and applies the solution-assembly filter internally, so invariants #1 and #5
-/// hold no matter what the plugin does. Every method is additive — there is no remove/suppress verb.
+/// SymbolId key, applies the solution-assembly filter, and records the current project's test or production
+/// origin internally. Every method is additive — there is no remove/suppress verb.
 /// </summary>
 public interface IContributionSink
 {

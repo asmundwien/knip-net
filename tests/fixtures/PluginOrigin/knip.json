@@ -1,0 +1,9 @@
+{
+  "plugins": {
+    "reflection": { "enabled": true },
+    "serialization": { "enabled": true },
+    "scanningDi": { "enabled": true },
+    "blazorParameter": { "enabled": true },
+    "aspnetcore": { "enabled": true }
+  }
+}

@@ -59,8 +59,6 @@ public sealed class DeadCodeAnalyzer
         foreach (var warning in _config.ValidatePlugins())
             result.LoadDiagnostics.Add(warning);
 
-        // The single choke point through which every plugin mutates the graph (invariants #1, #5, add-only).
-        var sink = new ContributionSink(state, solutionAssemblies);
 
         // Per-DEFINING-assembly: does that project carry [InternalsVisibleTo] a NON-solution assembly?
         // Keyed by assembly name (invariant #1); drives the InternalsVisibleTo hazard in ToFinding.
@@ -94,9 +92,9 @@ public sealed class DeadCodeAnalyzer
             if (compilation.GetEntryPoint(ct) is { } entry)
             {
                 // Program entry point roots take the project's origin (test project → test root).
-                if (SymbolId.For(entry) is { } entryId) AddRoot(state, entryId, isTestProject);
+                if (SymbolId.For(entry) is { } entryId) state.AddRoot(entryId, isTestProject);
                 if (entry.ContainingType is { } host && SymbolId.For(host) is { } hostId)
-                    AddRoot(state, hostId, isTestProject);
+                    state.AddRoot(hostId, isTestProject);
             }
 
             foreach (var tree in compilation.SyntaxTrees)
@@ -128,7 +126,7 @@ public sealed class DeadCodeAnalyzer
             foreach (var (descriptor, plugin) in _plugins)
             {
                 ct.ThrowIfCancellationRequested();
-                sink.ResetCounts();
+                var sink = new ContributionSink(state, solutionAssemblies, isTestProject);
                 var pluginWatch = Stopwatch.StartNew();
                 var context = new PluginContext(compilation, project, _config.PluginSettingsFor(descriptor.Id), sink);
                 plugin.Contribute(context, ct);
@@ -156,9 +154,12 @@ public sealed class DeadCodeAnalyzer
         // production mode PRODUCTION = reachable from production-origin roots only; a symbol dead in
         // PRODUCTION but alive in FULL is reachable ONLY via tests → OnlyUsedByTests. In default mode the
         // production set is unused (every FULL-reachable symbol stays alive — K1/B1 pinned).
-        var reachable = Traverse(state, state.Roots);
+        var reachable = Traverse(state, state.Roots, includeTestPluginEdges: true);
         var productionReachable = _config.Production
-            ? Traverse(state, state.Roots.Where(r => !state.TestRoots.Contains(r) || state.ProductionRoots.Contains(r)))
+            ? Traverse(
+                state,
+                state.Roots.Where(r => !state.TestRoots.Contains(r) || state.ProductionRoots.Contains(r)),
+                includeTestPluginEdges: false)
             : reachable;
 
         BuildFindings(state, reachable, productionReachable, result, ivtToNonSolution);
@@ -304,20 +305,14 @@ public sealed class DeadCodeAnalyzer
         return e;
     }
 
-    /// <summary>(WS7) Seed a root from the analyzer, recording its production/test origin.</summary>
-    private static void AddRoot(GraphState state, string id, bool asTest)
-    {
-        state.Roots.Add(id);
-        if (asTest) state.TestRoots.Add(id);
-        else state.ProductionRoots.Add(id);
-    }
 
     /// <summary>
-    /// Mark-and-sweep BFS from the given <paramref name="roots"/> (WS7 two-color: called once for ALL
-    /// roots — default liveness — and once for the production-only roots). Only declared symbols enter the
-    /// reachable set; edges to non-declared ids are ignored.
+    /// Mark-and-sweep BFS from the given <paramref name="roots"/>. Full traversal includes every edge;
+    /// production traversal excludes plugin edges discovered only while analyzing test projects.
+    /// Only declared symbols enter the reachable set; edges to non-declared ids are ignored.
     /// </summary>
-    private static HashSet<string> Traverse(GraphState state, IEnumerable<string> roots)
+    private static HashSet<string> Traverse(
+        GraphState state, IEnumerable<string> roots, bool includeTestPluginEdges)
     {
         var reachable = new HashSet<string>(StringComparer.Ordinal);
         var queue = new Queue<string>();
@@ -331,7 +326,9 @@ public sealed class DeadCodeAnalyzer
             var current = queue.Dequeue();
             if (!state.Edges.TryGetValue(current, out var targets)) continue;
             foreach (var target in targets)
-                if (state.Declared.ContainsKey(target) && reachable.Add(target))
+                if ((includeTestPluginEdges || !state.IsTestOnlyPluginEdge(current, target))
+                    && state.Declared.ContainsKey(target)
+                    && reachable.Add(target))
                     queue.Enqueue(target);
         }
 
@@ -434,13 +431,12 @@ public sealed class DeadCodeAnalyzer
     }
 
     /// <summary>
-    /// (WS7) True when the id is TEST CODE (declared in a test project) or itself a test root — never an
-    /// OnlyUsedByTests production finding. A test helper in a PRODUCTION project reached only by a test is
-    /// NOT test-side (it is exactly the test-only production code we flag).
+    /// True when the id is test code: declared in a test project or rooted as a test entry point. Plugin
+    /// targets discovered from test projects are deliberately not excluded; those production declarations
+    /// are the test-only code production mode must report.
     /// </summary>
     private static bool IsTestSide(string id, GraphState state) =>
-        state.TestDeclarations.Contains(id)
-        || (state.TestRoots.Contains(id) && !state.ProductionRoots.Contains(id));
+        state.TestDeclarations.Contains(id) || state.TestEntryRoots.Contains(id);
 
     /// <summary>
     /// (WS7 / K3) For each OnlyUsedByTests production symbol, the TEST methods that DIRECTLY reference it —
