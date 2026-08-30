@@ -258,4 +258,13 @@ public sealed class CatFTests
             findings);
     }
 
+    [Fact]
+    public async Task F17_real_mstest_assembly_roots_test_methods()
+    {
+        var findings = await FindingsIn("CatF.F17");
+        Assert.Equal(
+            new HashSet<string> { "CatF.F17.MstestTests.DeadSibling()" },
+            findings);
+    }
+
 }

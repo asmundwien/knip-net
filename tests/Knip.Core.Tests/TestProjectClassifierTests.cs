@@ -39,7 +39,7 @@ public sealed class TestProjectClassifierTests
     [Theory] // Signal 2: a referenced test-framework assembly classifies as test (offline via synthesis).
     [InlineData("xunit.core")]
     [InlineData("nunit.framework")]
-    [InlineData("MSTest.TestFramework")]
+    [InlineData("Microsoft.VisualStudio.TestPlatform.TestFramework")]
     public void Referenced_test_framework_assembly_classifies_test(string framework)
     {
         // Project NAME is production-shaped ("Acme.App") so ONLY the assembly signal can classify it.

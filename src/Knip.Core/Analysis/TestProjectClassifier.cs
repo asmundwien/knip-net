@@ -23,7 +23,7 @@ public sealed record ProjectClassification(string Project, ProjectKind Kind, str
 /// <list type="number">
 ///   <item>explicit <c>testProjects</c> config globs (<c>testProjects:&lt;glob&gt;</c>) — override everything;</item>
 ///   <item>a referenced test-framework ASSEMBLY in the <see cref="Compilation"/>
-///     (<c>MSTest.TestFramework</c> / <c>xunit.core</c> / <c>nunit.framework</c>) —
+///     (<c>Microsoft.VisualStudio.TestPlatform.TestFramework</c> / <c>xunit.core</c> / <c>nunit.framework</c>) —
 ///     (<c>referencedAssembly:&lt;name&gt;</c>) — preferred over the MSBuild <c>IsTestProject</c> property
 ///     (Roslyn's Project model doesn't surface it; no MSBuild-evaluation machinery is built for it);</item>
 ///   <item>project-NAME globs (<c>*Tests</c> / <c>*.Test</c> / <c>*.Tests</c>) as a fallback
@@ -35,7 +35,7 @@ internal static class TestProjectClassifier
 {
     /// <summary>The test-framework assembly names that identify a test project (signal 2).</summary>
     private static readonly string[] TestFrameworkAssemblies =
-        ["MSTest.TestFramework", "xunit.core", "nunit.framework"];
+        ["Microsoft.VisualStudio.TestPlatform.TestFramework", "xunit.core", "nunit.framework"];
 
     /// <summary>The default project-NAME globs a test project matches (signal 3).</summary>
     private static readonly string[] NameGlobs = ["*Tests", "*.Test", "*.Tests"];

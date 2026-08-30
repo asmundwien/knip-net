@@ -73,6 +73,7 @@ The annotated [`knip.json`](knip.json) documents the available settings and plug
 - Enable opt-in plugins only for frameworks the solution uses.
 - Built-in ASP.NET Core handling roots only framework-dispatched members and runtime activation for controllers, components, hubs, page models, and hosted services; unrelated helpers remain reportable.
 - Built-in framework matching uses resolved namespace and defining assembly identities. A same-named application type is not a framework shape. For source-only stand-ins or compatible extensions, configure an explicit attribute name or a plugin `aliases` mapping from canonical type to qualified local type.
+- Built-in test roots use resolved attributes from xUnit v2/v3, MSTest, and NUnit. Assembly qualification prevents same-named application attributes from becoming roots.
 
 `--print-config` prints the effective config. Unknown keys produce a warning instead of failing the run.
 

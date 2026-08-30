@@ -1,6 +1,6 @@
 {
   // Knip.NET configuration (config-as-code). All keys are optional; defaults are tuned for
-  // ASP.NET Core + xUnit/NUnit. Only what you set here overrides the defaults.
+  // ASP.NET Core and xUnit/MSTest/NUnit. Only what you set here overrides the defaults.
   //
   // Any UNKNOWN key here (top-level or nested) is warned by name and then ignored — a typo never
   // silently no-ops (nor changes the exit code). Inspect the effective merged config (this file over
@@ -9,8 +9,9 @@
 
   // "solution": "path/to/Your.sln",   // or pass on the CLI: dotnet-knip Your.sln
 
-  // Production mode is off by default. In default mode every [Fact]/[Theory] is a root, so
-  // test-only production code stays alive. Enable it here or with --production to report that code as
+  // Production mode is off by default. In default mode recognized xUnit, MSTest, and NUnit test
+  // methods and lifecycle hooks are roots, so test-only production code stays alive.
+  // Enable it here or with --production to report that code as
   // `onlyUsedByTests` with remediation `deleteCodeAndTests`. Directly
   // test-referenced findings list tests under details.testReferrers; transitive findings point through
   // rootCause to that direct boundary. The boundary's confidence governs the whole deletion unit: a dead
@@ -19,7 +20,7 @@
 
   // Test-project classification uses the first matching rule. These `testProjects` globs override
   // everything. Otherwise Knip.NET checks for a referenced test-framework assembly
-  // (MSTest.TestFramework / xunit.core / nunit.framework), then name globs
+  // (Microsoft.VisualStudio.TestPlatform.TestFramework / xunit.core / nunit.framework), then name globs
   // (*Tests / *.Test / *.Tests). Zero test projects in production mode adds a visible warning to
   // stderr and reliability.productionModeWarnings; it does not fail the run. Set this only when
   // auto-detection misclassifies a project, for example one named "Verification".
@@ -34,14 +35,14 @@
     "attributes": [
       "xunit.core::Xunit.FactAttribute", "xunit.core::Xunit.TheoryAttribute",
       "xunit.v3.core::Xunit.FactAttribute", "xunit.v3.core::Xunit.TheoryAttribute",
-      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute",
-      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.DataTestMethodAttribute",
-      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestInitializeAttribute",
-      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestCleanupAttribute",
-      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassInitializeAttribute",
-      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassCleanupAttribute",
-      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyInitializeAttribute",
-      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyCleanupAttribute",
+      "Microsoft.VisualStudio.TestPlatform.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute",
+      "Microsoft.VisualStudio.TestPlatform.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.DataTestMethodAttribute",
+      "Microsoft.VisualStudio.TestPlatform.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestInitializeAttribute",
+      "Microsoft.VisualStudio.TestPlatform.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestCleanupAttribute",
+      "Microsoft.VisualStudio.TestPlatform.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassInitializeAttribute",
+      "Microsoft.VisualStudio.TestPlatform.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassCleanupAttribute",
+      "Microsoft.VisualStudio.TestPlatform.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyInitializeAttribute",
+      "Microsoft.VisualStudio.TestPlatform.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyCleanupAttribute",
       "nunit.framework::NUnit.Framework.TestAttribute",
       "nunit.framework::NUnit.Framework.TestCaseAttribute",
       "nunit.framework::NUnit.Framework.SetUpAttribute",
