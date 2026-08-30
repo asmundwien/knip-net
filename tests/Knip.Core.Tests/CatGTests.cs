@@ -30,6 +30,101 @@ public sealed class CatGTests
         AssertExactly(await FindingsIn("CatG.G1"), "CatG.G1.Sample.UnusedMethod()");
     }
 
+    [Fact] // G12: an uncalled local function does not keep its member dependencies alive.
+    [Trait("status", "contract")]
+    public async Task G12_uncalled_local_function_body_is_unreachable()
+    {
+        AssertExactly(await FindingsIn("CatG.G12"), "CatG.G12.Sample.UnusedHelper()");
+    }
+
+    [Fact] // G13: reading a property keeps only its explicit getter closure alive.
+    [Trait("status", "contract")]
+    public async Task G13_getter_only_usage_preserves_only_getter()
+    {
+        var findings = (await FixtureRunner.RunAsync(Category)).Findings
+            .Where(f => f.Symbol.StartsWith("CatG.G13.", StringComparison.Ordinal))
+            .ToList();
+        Assert.Equal(2, findings.Count);
+
+        var setter = Assert.Single(findings, f => f.Line == 12);
+        Assert.Equal(Knip.Core.Model.FindingKind.UnusedMethod, setter.Kind);
+        Assert.NotNull(setter.Span);
+        Assert.Null(setter.RootCause);
+        await AssertDeletingSpanCompiles(setter.Span!);
+
+        var helper = Assert.Single(findings, f => f.Symbol == "CatG.G13.Sample.WriteValue(int)");
+        Assert.Equal(setter.Id, helper.RootCause);
+        Assert.DoesNotContain(findings, f => f.Symbol == "CatG.G13.Sample.ReadValue()");
+    }
+
+    [Fact] // G14: assigning a property keeps only its explicit setter closure alive.
+    [Trait("status", "contract")]
+    public async Task G14_setter_only_usage_preserves_only_setter()
+    {
+        var findings = (await FixtureRunner.RunAsync(Category)).Findings
+            .Where(f => f.Symbol.StartsWith("CatG.G14.", StringComparison.Ordinal))
+            .ToList();
+        Assert.Equal(2, findings.Count);
+
+        var getter = Assert.Single(findings, f => f.Line == 10);
+        Assert.Equal(Knip.Core.Model.FindingKind.UnusedMethod, getter.Kind);
+        Assert.NotNull(getter.Span);
+        Assert.Null(getter.RootCause);
+        await AssertDeletingSpanCompiles(getter.Span!);
+
+        var helper = Assert.Single(findings, f => f.Symbol == "CatG.G14.Sample.ReadValue()");
+        Assert.Equal(getter.Id, helper.RootCause);
+        Assert.DoesNotContain(findings, f => f.Symbol == "CatG.G14.Sample.WriteValue(int)");
+    }
+
+    [Fact] // G15: object initialization keeps only the explicit init accessor closure alive.
+    [Trait("status", "contract")]
+    public async Task G15_init_only_usage_preserves_only_init()
+    {
+        var findings = (await FixtureRunner.RunAsync(Category)).Findings
+            .Where(f => f.Symbol.StartsWith("CatG.G15.", StringComparison.Ordinal))
+            .ToList();
+        Assert.Equal(2, findings.Count);
+
+        var getter = Assert.Single(findings, f => f.Line == 10);
+        Assert.NotNull(getter.Span);
+        Assert.Null(getter.RootCause);
+        await AssertDeletingSpanCompiles(getter.Span!);
+
+        var helper = Assert.Single(findings, f => f.Symbol == "CatG.G15.Sample.ReadValue()");
+        Assert.Equal(getter.Id, helper.RootCause);
+        Assert.DoesNotContain(findings, f => f.Symbol == "CatG.G15.Sample.WriteValue(int)");
+    }
+
+    [Fact] // G16: custom add/remove accessors remain one safe event deletion unit.
+    [Trait("status", "contract")]
+    public async Task G16_event_usage_preserves_the_whole_event_unit()
+    {
+        var findings = (await FixtureRunner.RunAsync(Category)).Findings
+            .Where(f => f.Symbol.StartsWith("CatG.G16.", StringComparison.Ordinal))
+            .ToList();
+        Assert.Equal(3, findings.Count);
+
+        var unusedEvent = Assert.Single(findings, f => f.Symbol == "CatG.G16.Publisher.Unused");
+        Assert.Equal(Knip.Core.Model.FindingKind.UnusedEvent, unusedEvent.Kind);
+        Assert.NotNull(unusedEvent.Span);
+        Assert.Null(unusedEvent.RootCause);
+        await AssertDeletingSpanCompiles(unusedEvent.Span!);
+
+        foreach (var helperName in new[] { "UnusedAdd", "UnusedRemove" })
+        {
+            var helper = Assert.Single(findings, f => f.Symbol == $"CatG.G16.Publisher.{helperName}(System.Action)");
+            Assert.Equal(unusedEvent.Id, helper.RootCause);
+        }
+
+        Assert.DoesNotContain(findings, f => f.Symbol.Contains("AddOnlyAdd", StringComparison.Ordinal));
+        Assert.DoesNotContain(findings, f => f.Symbol.Contains("AddOnlyRemove", StringComparison.Ordinal));
+        Assert.DoesNotContain(findings, f => f.Symbol.Contains("RemoveOnlyAdd", StringComparison.Ordinal));
+        Assert.DoesNotContain(findings, f => f.Symbol.Contains("RemoveOnlyRemove", StringComparison.Ordinal));
+        Assert.DoesNotContain(findings, f => f.Symbol.EndsWith(".add", StringComparison.Ordinal));
+        Assert.DoesNotContain(findings, f => f.Symbol.EndsWith(".remove", StringComparison.Ordinal));
+    }
+
     [Fact] // G2: unused record flagged; a used record's synthesized members never reported.
     [Trait("status", "contract")]
     public async Task G2_records_synthesized_members_never_reported()
@@ -129,5 +224,31 @@ public sealed class CatGTests
         // Dead sibling: the unused expression-bodied method is flagged; the used expression-bodied
         // method and property are ALIVE-by-omission.
         AssertExactly(await FindingsIn("CatG.G11"), "CatG.G11.Sample.UnusedMethod()");
+    }
+
+    private static async Task AssertDeletingSpanCompiles(Knip.Core.Model.SourceSpan span)
+    {
+        using var workspace = Microsoft.CodeAnalysis.MSBuild.MSBuildWorkspace.Create();
+        var solution = await workspace.OpenSolutionAsync(FixtureRunner.ResolveFixtureSolution(Category));
+        var document = solution.Projects
+            .SelectMany(project => project.Documents)
+            .Single(document => string.Equals(document.FilePath, span.File, StringComparison.Ordinal));
+        var text = await document.GetTextAsync();
+        var start = text.Lines.GetPosition(new Microsoft.CodeAnalysis.Text.LinePosition(
+            span.Start.Line - 1, span.Start.Column - 1));
+        var end = text.Lines.GetPosition(new Microsoft.CodeAnalysis.Text.LinePosition(
+            span.End.Line - 1, span.End.Column - 1));
+        var mutated = solution.WithDocumentText(
+            document.Id,
+            text.WithChanges(new Microsoft.CodeAnalysis.Text.TextChange(
+                new Microsoft.CodeAnalysis.Text.TextSpan(start, end - start), string.Empty)));
+        var compilation = await mutated.GetProject(document.Project.Id)!.GetCompilationAsync();
+        var errors = compilation!.GetDiagnostics()
+            .Where(diagnostic => diagnostic.Severity == Microsoft.CodeAnalysis.DiagnosticSeverity.Error)
+            .ToList();
+
+        Assert.True(
+            errors.Count == 0,
+            $"deleting the reported span left the project uncompilable:\n{string.Join("\n", errors)}");
     }
 }

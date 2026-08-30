@@ -497,6 +497,11 @@ public sealed class DeadCodeAnalyzer
     {
         // Prefer the containing type when it is itself unreachable (deleting the type removes this symbol).
         // NB: such a member is normally suppressed by ShouldReport; keep this for nested edge cases.
+        if (symbol is IMethodSymbol { AssociatedSymbol: { } associated }
+            && SymbolId.For(associated) is { } associatedId
+            && unreachable.Contains(associatedId)
+            && reportedKeyToFindingId.TryGetValue(associatedId, out var associatedFindingId))
+            return associatedFindingId;
         for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)
             if (SymbolId.For(container) is { } cId && unreachable.Contains(cId)
                 && reportedKeyToFindingId.TryGetValue(cId, out var containerFindingId))
@@ -525,6 +530,10 @@ public sealed class DeadCodeAnalyzer
     {
         if (reportedKeyToFindingId.TryGetValue(key, out var direct)) return direct;
         if (!state.Declared.TryGetValue(key, out var symbol)) return null;
+        if (symbol is IMethodSymbol { AssociatedSymbol: { } associated }
+            && SymbolId.For(associated) is { } associatedId
+            && reportedKeyToFindingId.TryGetValue(associatedId, out var associatedFindingId))
+            return associatedFindingId;
         for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)
             if (SymbolId.For(container) is { } cId && reportedKeyToFindingId.TryGetValue(cId, out var id))
                 return id;
@@ -707,7 +716,13 @@ public sealed class DeadCodeAnalyzer
 
         if (symbol.IsImplicitlyDeclared) return false;
         if (symbol.Name.Length == 0 || symbol.Name[0] is '<' or '$') return false; // compiler-generated
-
+        // Custom events require both accessors, so the event is their only safe deletion unit. A property
+        // accessor is reportable only while its enclosing property remains alive.
+        if (symbol is IMethodSymbol { AssociatedSymbol: IEventSymbol }) return false;
+        if (symbol is IMethodSymbol { AssociatedSymbol: IPropertySymbol associatedProperty }
+            && SymbolId.For(associatedProperty) is { } propertyId
+            && dead.Contains(propertyId))
+            return false;
         switch (symbol)
         {
             case IMethodSymbol method:
