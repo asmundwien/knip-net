@@ -295,7 +295,95 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     public override void VisitBinaryExpression(BinaryExpressionSyntax node)
     {
         RecordReference(node);
+
+        // Conditional && and || also invoke false or true respectively before the bound & or |.
+        // Roslyn exposes the binary operator but omits that short-circuit operator from IOperation.
+        if (node.IsKind(SyntaxKind.LogicalAndExpression))
+            RecordBooleanOperator(node, WellKnownMemberNames.FalseOperatorName);
+        else if (node.IsKind(SyntaxKind.LogicalOrExpression))
+            RecordBooleanOperator(node, WellKnownMemberNames.TrueOperatorName);
+
         base.VisitBinaryExpression(node);
+    }
+
+    // User-defined unary and increment/decrement operators have no identifier at the call site.
+    public override void VisitPrefixUnaryExpression(PrefixUnaryExpressionSyntax node)
+    {
+        RecordReference(node);
+        base.VisitPrefixUnaryExpression(node);
+    }
+
+    public override void VisitPostfixUnaryExpression(PostfixUnaryExpressionSyntax node)
+    {
+        RecordReference(node);
+        base.VisitPostfixUnaryExpression(node);
+    }
+
+    public override void VisitIfStatement(IfStatementSyntax node)
+    {
+        RecordBooleanCondition(node.Condition);
+        base.VisitIfStatement(node);
+    }
+
+    public override void VisitWhileStatement(WhileStatementSyntax node)
+    {
+        RecordBooleanCondition(node.Condition);
+        base.VisitWhileStatement(node);
+    }
+
+    public override void VisitDoStatement(DoStatementSyntax node)
+    {
+        RecordBooleanCondition(node.Condition);
+        base.VisitDoStatement(node);
+    }
+
+    public override void VisitForStatement(ForStatementSyntax node)
+    {
+        if (node.Condition is { } condition) RecordBooleanCondition(condition);
+        base.VisitForStatement(node);
+    }
+
+    public override void VisitConditionalExpression(ConditionalExpressionSyntax node)
+    {
+        RecordBooleanCondition(node.Condition);
+        base.VisitConditionalExpression(node);
+    }
+
+    public override void VisitWhenClause(WhenClauseSyntax node)
+    {
+        RecordBooleanCondition(node.Condition);
+        base.VisitWhenClause(node);
+    }
+
+    private void RecordBooleanCondition(ExpressionSyntax condition)
+    {
+        if (_context.Count == 0) return;
+        SetSite(condition);
+        if (_model.GetOperation(condition) is IUnaryOperation { OperatorMethod: { } method })
+        {
+            AddEdge(_context.Peek(), method);
+            return;
+        }
+
+        if (_model.GetTypeInfo(condition).Type is { } type)
+            RecordBooleanOperator(type, WellKnownMemberNames.TrueOperatorName);
+    }
+
+    private void RecordBooleanOperator(ExpressionSyntax expression, string metadataName)
+    {
+        if (_model.GetOperation(expression) is { Type: { } type })
+        {
+            SetSite(expression);
+            RecordBooleanOperator(type, metadataName);
+        }
+    }
+
+    private void RecordBooleanOperator(ITypeSymbol type, string metadataName)
+    {
+        if (_context.Count == 0) return;
+        foreach (var member in type.GetMembers(metadataName))
+            if (member is IMethodSymbol method)
+                AddEdge(_context.Peek(), method);
     }
 
     // Explicit casts ((T)x) carry a user-defined conversion operator with no IdentifierName node.
@@ -317,6 +405,11 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     public override void VisitArgument(ArgumentSyntax node)
     {
         RecordConversion(node.Expression);
+        if (_context.Count > 0 && _model.GetOperation(node) is { } operation)
+        {
+            SetSite(node);
+            RecordImplicitInvocations(operation, _context.Peek());
+        }
         base.VisitArgument(node);
     }
 
@@ -324,6 +417,12 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     {
         if (node.Expression is { } expr) RecordConversion(expr);
         base.VisitReturnStatement(node);
+    }
+
+    public override void VisitYieldStatement(YieldStatementSyntax node)
+    {
+        if (node.Expression is { } expression) RecordConversion(expression);
+        base.VisitYieldStatement(node);
     }
 
     public override void VisitAssignmentExpression(AssignmentExpressionSyntax node)
@@ -366,6 +465,17 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         base.VisitInitializerExpression(node);
     }
 
+    public override void VisitCollectionExpression(CollectionExpressionSyntax node)
+    {
+        if (_context.Count > 0
+            && _model.GetOperation(node) is ICollectionExpressionOperation { ConstructMethod: { } method })
+        {
+            SetSite(node);
+            AddEdge(_context.Peek(), method);
+        }
+        base.VisitCollectionExpression(node);
+    }
+
     private void RecordDeconstruction(AssignmentExpressionSyntax node)
     {
         if (_context.Count == 0) return;
@@ -378,6 +488,45 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (info.Method is { } method) AddEdge(source, method);
         foreach (var nested in info.Nested)
             RecordDeconstructionInfo(nested, source);
+    }
+
+    public override void VisitRecursivePattern(RecursivePatternSyntax node)
+    {
+        RecordPatternMembers(node);
+        base.VisitRecursivePattern(node);
+    }
+
+    public override void VisitListPattern(ListPatternSyntax node)
+    {
+        RecordPatternMembers(node);
+        base.VisitListPattern(node);
+    }
+
+    private void RecordPatternMembers(SyntaxNode node)
+    {
+        if (_context.Count == 0 || _model.GetOperation(node) is not { } operation) return;
+        SetSite(node);
+        RecordPatternMembers(operation, _context.Peek());
+    }
+
+    private void RecordPatternMembers(IOperation operation, string source)
+    {
+        switch (operation)
+        {
+            case IRecursivePatternOperation { DeconstructSymbol: { } deconstruct }:
+                AddEdge(source, deconstruct);
+                break;
+            case IListPatternOperation list:
+                if (list.LengthSymbol is { } length) AddEdge(source, length);
+                if (list.IndexerSymbol is { } indexer) AddEdge(source, indexer);
+                break;
+            case ISlicePatternOperation { SliceSymbol: { } slice }:
+                AddEdge(source, slice);
+                break;
+        }
+
+        foreach (var child in operation.ChildOperations)
+            RecordPatternMembers(child, source);
     }
 
     // Element access (obj[i], obj[^1], obj[1..]) invokes a member with no IdentifierName/GenericName
@@ -415,6 +564,17 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         base.VisitForEachStatement(node);
     }
 
+    public override void VisitForEachVariableStatement(ForEachVariableStatementSyntax node)
+    {
+        RecordForEachMembers(node);
+        if (_context.Count > 0)
+        {
+            SetSite(node);
+            RecordDeconstructionInfo(_model.GetDeconstructionInfo(node), _context.Peek());
+        }
+        base.VisitForEachVariableStatement(node);
+    }
+
     private void RecordForEachMembers(CommonForEachStatementSyntax node)
     {
         if (_context.Count == 0) return;
@@ -425,6 +585,8 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (info.MoveNextMethod is { } moveNext) AddEdge(source, moveNext);
         if (info.CurrentProperty is { } current) AddEdge(source, current);
         if (info.DisposeMethod is { } dispose) AddEdge(source, dispose);
+        RecordConversion(info.CurrentConversion, source);
+        RecordConversion(info.ElementConversion, source);
     }
 
     // `await` on a custom awaitable binds GetAwaiter/IsCompleted/GetResult with no IdentifierName node
@@ -445,6 +607,23 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (info.GetAwaiterMethod is { } getAwaiter) AddEdge(source, getAwaiter);
         if (info.IsCompletedProperty is { } isCompleted) AddEdge(source, isCompleted);
         if (info.GetResultMethod is { } getResult) AddEdge(source, getResult);
+    }
+
+
+    private void RecordImplicitInvocations(IOperation operation, string source)
+    {
+        switch (operation)
+        {
+            case IInvocationOperation { IsImplicit: true } invocation:
+                AddEdge(source, invocation.TargetMethod);
+                break;
+            case IObjectCreationOperation { IsImplicit: true, Constructor: { } constructor }:
+                AddEdge(source, constructor);
+                break;
+        }
+
+        foreach (var child in operation.ChildOperations)
+            RecordImplicitInvocations(child, source);
     }
 
     // LINQ query syntax (`from x in xs where ... select ...`) lowers each clause to a method call
@@ -557,12 +736,14 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     private void RecordConversion(ExpressionSyntax expression)
     {
         if (_context.Count == 0) return;
-        var conversion = _model.GetConversion(expression);
+        SetSite(expression);
+        RecordConversion(_model.GetConversion(expression), _context.Peek());
+    }
+
+    private void RecordConversion(Conversion conversion, string source)
+    {
         if (conversion.IsUserDefined && conversion.MethodSymbol is { } method)
-        {
-            _currentSite = _state.CaptureProvenance ? expression.GetLocation() : null;
-            AddEdge(_context.Peek(), method);
-        }
+            AddEdge(source, method);
     }
 
     /// <summary>(WS8c) Set the reference-site for the edges a body-recording helper is about to add.</summary>

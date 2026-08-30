@@ -126,4 +126,80 @@ public sealed class CatETests
     {
         AssertExactly(await FindingsIn("CatE.E13"), "CatE.E13.Publisher.Unused");
     }
+
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task E14_unary_operator_methods_alive()
+    {
+        AssertExactly(await FindingsIn("CatE.E14"),
+            "CatE.E14.Number.operator ~(CatE.E14.Number)",
+            "CatE.E14.Number.operator --(CatE.E14.Number)");
+    }
+
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task E15_boolean_context_operator_methods_alive()
+    {
+        AssertExactly(await FindingsIn("CatE.E15"),
+            "CatE.E15.Flag.operator +(CatE.E15.Flag, CatE.E15.Flag)");
+    }
+
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task E16_yield_conversion_operator_alive()
+    {
+        AssertExactly(await FindingsIn("CatE.E16"),
+            "CatE.E16.Target.explicit operator CatE.E16.Source(CatE.E16.Target)");
+    }
+
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task E17_deconstructing_foreach_method_alive()
+    {
+        AssertExactly(await FindingsIn("CatE.E17"),
+            "CatE.E17.Point.DeconstructOther(int, int)");
+    }
+
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task E18_collection_expression_builder_alive()
+    {
+        AssertExactly(await FindingsIn("CatE.E18"),
+            "CatE.E18.BagBuilder.CreateOther(System.ReadOnlySpan<int>)");
+    }
+
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task E19_interpolated_string_handler_members_alive()
+    {
+        AssertExactly(await FindingsIn("CatE.E19"),
+            "CatE.E19.Handler.InitializeOther(int)",
+            "CatE.E19.Handler.AppendOther(string)");
+    }
+
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task E20_foreach_element_conversion_operator_alive()
+    {
+        AssertExactly(await FindingsIn("CatE.E20"),
+            "CatE.E20.Target.explicit operator CatE.E20.Source(CatE.E20.Target)");
+    }
+
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task E21_positional_pattern_deconstruct_alive()
+    {
+        AssertExactly(await FindingsIn("CatE.E21"),
+            "CatE.E21.Point.DeconstructOther(int, int)");
+    }
+
+    [Fact]
+    [Trait("status", "contract")]
+    public async Task E22_list_pattern_members_alive()
+    {
+        AssertExactly(await FindingsIn("CatE.E22"),
+            "CatE.E22.Sequence.Count",
+            "CatE.E22.Sequence.At(int)",
+            "CatE.E22.Sequence.Subsequence(int, int)");
+    }
 }
