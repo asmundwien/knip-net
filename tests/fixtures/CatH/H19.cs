@@ -24,8 +24,7 @@ public interface IAuthorizationPolicyProvider
     Task<AuthorizationPolicy> GetFallbackPolicyAsync();
 }
 
-// The framework's default provider — the common base derived-from. Matched by simple NAME
-// "DefaultAuthorizationPolicyProvider". Local stand-in.
+// Local stand-in for the framework's default provider, enabled through an explicit fixture alias.
 public abstract class DefaultAuthorizationPolicyProvider : IAuthorizationPolicyProvider
 {
     public virtual Task<AuthorizationPolicy> GetPolicyAsync(string policyName) { _ = policyName; return Task.FromResult(new AuthorizationPolicy()); }

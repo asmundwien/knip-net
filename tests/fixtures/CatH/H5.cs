@@ -9,8 +9,7 @@ namespace CatH.H5;
 // alive. Over-rooting guard (two decoys): a member on a NON-serialized type, and an unrelated dead type,
 // STAY flagged — the plugin roots only the serialized type's own data members, never the whole solution.
 
-// Local stand-in for a serializer shape: accepts an object, reflects over its properties. No framework
-// (offline; the plugin matches the method NAME "Serialize", not a NuGet type — invariant #9).
+// Local serializer stand-in, mapped explicitly to System.Text.Json.JsonSerializer by the fixture config.
 public static class JsonSerializer
 {
     public static string Serialize(object value)

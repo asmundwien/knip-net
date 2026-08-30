@@ -29,14 +29,33 @@
     // Explicit custom members the framework/runtime invokes without a by-name reference in source.
     "symbolNames": [],
 
-    // Test frameworks (incl. MSTest/NUnit lifecycle hooks the runner invokes) + ASP.NET routing.
+    // Built-ins are assembly + namespace qualified. Add a namespace-qualified or simple name only as an
+    // explicit alias for a source-only fixture or custom framework; the Attribute suffix is optional.
     "attributes": [
-      "Fact", "Theory",
-      "TestMethod", "DataTestMethod",
-      "TestInitialize", "TestCleanup", "ClassInitialize", "ClassCleanup",
-      "AssemblyInitialize", "AssemblyCleanup",
-      "Test", "TestCase", "SetUp", "TearDown", "OneTimeSetUp", "OneTimeTearDown",
-      "HttpGet", "HttpPost", "HttpPut", "HttpDelete"
+      "xunit.core::Xunit.FactAttribute", "xunit.core::Xunit.TheoryAttribute",
+      "xunit.v3.core::Xunit.FactAttribute", "xunit.v3.core::Xunit.TheoryAttribute",
+      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute",
+      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.DataTestMethodAttribute",
+      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestInitializeAttribute",
+      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestCleanupAttribute",
+      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassInitializeAttribute",
+      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassCleanupAttribute",
+      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyInitializeAttribute",
+      "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyCleanupAttribute",
+      "nunit.framework::NUnit.Framework.TestAttribute",
+      "nunit.framework::NUnit.Framework.TestCaseAttribute",
+      "nunit.framework::NUnit.Framework.SetUpAttribute",
+      "nunit.framework::NUnit.Framework.TearDownAttribute",
+      "nunit.framework::NUnit.Framework.OneTimeSetUpAttribute",
+      "nunit.framework::NUnit.Framework.OneTimeTearDownAttribute",
+      "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.BenchmarkAttribute",
+      "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.GlobalSetupAttribute",
+      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpGetAttribute",
+      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPostAttribute",
+      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPutAttribute",
+      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpDeleteAttribute",
+      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPatchAttribute",
+      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.RouteAttribute"
     ],
     "baseTypes": [
       "Microsoft.AspNetCore.Mvc.ControllerBase",
@@ -78,6 +97,10 @@
     //
     // Unknown plugin ids and unknown per-plugin keys are NOT silently ignored — they print a visible
     // "warning:" so a typo (e.g. "reflectoin" or "enabldd") is caught instead of quietly no-opping.
+    // Plugins with framework shape matching accept an optional "aliases" object. Each key is a canonical
+    // namespace-qualified framework type and each value lists explicit namespace-qualified stand-ins or
+    // user extensions. Built-in matches still require the expected defining assembly.
+    // Example: "aliases": { "MediatR.IRequestHandler": ["MyMediator.IRequestHandler"] }.
 
     // reflection — ON by default. Keeps alive types/members named only via reflection strings/typeof:
     //   Type.GetType("Ns.Foo"), Activator.CreateInstance(typeof(Foo)/"Ns.Foo"),
@@ -91,16 +114,16 @@
     // dependencies. Also keeps alive assembly-scanned types by framework marker shape:
     //   • MediatR handlers    — implement IRequestHandler / INotificationHandler / IStreamRequestHandler
     //   • MassTransit         — implement IConsumer / IConsumer<T>
-    //   • AutoMapper profiles — derive from a base named Profile
+    //   • AutoMapper profiles — derive from AutoMapper.Profile
     // It never blanket-roots every interface implementer or unrelated member.
     "scanningDi": { "enabled": true },
 
     // blazorParameter — OFF by default (opt-in). Keeps alive Blazor component members set from .razor
     // markup or the DI container, which the walker never sees assigned in C#. Roots properties carrying
-    // [Parameter] / [CascadingParameter] / [SupplyParameterFromQuery] / [EditorRequired] / [Inject]
-    // (matched by attribute NAME, offline). Conservative: roots ONLY the attribute-bearing member and
-    // its accessors — never blanket-roots a component's members, so plain siblings stay flagged. Enable
-    // it if your solution has Blazor components:
+    // [Parameter] / [CascadingParameter] / [SupplyParameterFromQuery] / [EditorRequired] / [Inject].
+    // Resolved framework identities are required unless an explicit alias is configured. Conservative:
+    // roots ONLY the attribute-bearing member and its accessors, never a component's other members.
+    // Enable it if your solution has Blazor components:
     "blazorParameter": { "enabled": false },
 
     // serialization — OFF by default (opt-in). Keeps alive DTO data members touched only by a JSON
@@ -108,8 +131,8 @@
     // source. Roots the public get/set PROPERTIES and public FIELDS of a DEMONSTRABLY-serialized type:
     //   • the type argument or the serialized value of a serialize/deserialize call —
     //     JsonSerializer.Serialize<T>/Deserialize<T> (System.Text.Json),
-    //     JsonConvert.SerializeObject/DeserializeObject<T> (Newtonsoft), matched by method NAME offline;
-    //   • plus any member wearing [JsonPropertyName] / [JsonProperty] / [DataMember] (matched by name).
+    //     JsonConvert.SerializeObject/DeserializeObject<T> (Newtonsoft), resolved by declaring type;
+    //   • plus any member wearing a resolved [JsonPropertyName] / [JsonProperty] / [DataMember].
     // Conservative: roots ONLY serialized types' own data members — never blanket-roots every property,
     // so non-serialized types' plain members and unrelated dead types stay flagged. Optional
     // "namespaces" glob list also roots the data members of types in matching namespaces (a "these are
@@ -122,9 +145,9 @@
     // alive but the middleware's Invoke/InvokeAsync(HttpContext) is called reflectively, so the entry
     // method + ctor + fields (_next/_logger) + private helpers cascade to false positives; likewise an
     // MVC/Razor filter's interface method is framework-dispatched, so its private helpers cascade dead.
-    // Roots the convention ENTRY members (making them reachable so their fields/ctors/helpers gain
-    // liveness via normal edges), matched by framework-type NAME offline:
-    // Every recognized framework-activated type's explicit instance constructors are rooted as well.
+    // Roots the convention entry members so their fields, constructors, and helpers gain liveness via
+    // normal edges. Resolved framework identity is required unless an explicit alias names an offline
+    // stand-in or compatible user extension. Same-named application types remain reportable.
     //   • for each UseMiddleware<T>() / UseMiddleware(typeof(T)) → T's Invoke + InvokeAsync + instance ctors;
     //   • IMiddleware implementers → InvokeAsync;
     //   • MVC/Razor filters (IActionFilter/IAsyncActionFilter/IResultFilter/IAsyncResultFilter/

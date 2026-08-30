@@ -143,7 +143,7 @@ public sealed class DeadCodeAnalyzer
             // Collect runtime-hazard shapes independently of optional keep-alive plugins. Hazards are
             // advisory metadata, not reachability; uncertain DI constructor closures are completed after
             // every project's edges and global polymorphism edges exist.
-            RuntimeHazardDetector.Collect(compilation, state, ct);
+            RuntimeHazardDetector.Collect(compilation, _config, state, ct);
         }
 
         AddPolymorphismEdges(state, solutionAssemblies);

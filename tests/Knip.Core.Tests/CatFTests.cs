@@ -19,11 +19,16 @@ public sealed class CatFTests
     private static Task<IReadOnlySet<string>> FindingsIn(string ns, KnipConfig? config = null) =>
         FixtureRunner.FindingSymbolsInAsync(Category, ns, config ?? new KnipConfig(), includeSyntheticGlobalRoots: false);
 
-    [Fact] // F1: [Fact]/[Theory] method + containing type ALIVE (default Attributes include Fact/Theory);
-           // non-test sibling flagged (dead-sibling).
+    private static KnipConfig WithAttributeAliases(params string[] attributes) => new()
+    {
+        EntryPoints = new EntryPointConfig { Attributes = [.. attributes] },
+    };
+
+    [Fact] // F1: configured [Fact]/[Theory] aliases root methods and their containing type;
+           // the non-test sibling remains flagged.
     public async Task F1_test_attribute_roots_method_and_type()
     {
-        var findings = await FindingsIn("CatF.F1"); // default config
+        var findings = await FindingsIn("CatF.F1", WithAttributeAliases("Fact", "Theory"));
         Assert.Equal(
             new HashSet<string> { "CatF.F1.Tests.NotATest()" },
             findings);
@@ -149,32 +154,35 @@ public sealed class CatFTests
             flipped);
     }
 
-    [Fact] // F9: MSTest [TestInitialize] setup method rooted by DEFAULT config -> keeps the helper it
-           // calls and the containing type alive; an unattributed sibling is flagged (dead-sibling),
-           // proving the attribute (not mere presence in a test class) is what roots it.
+    [Fact] // F9: an explicit local [TestInitialize] alias roots setup and its helper; an unattributed
+           // sibling remains flagged, proving the attribute drives rooting.
     public async Task F9_mstest_testinitialize_roots_setup_and_helper()
     {
-        var findings = await FindingsIn("CatF.F9"); // default config
+        var findings = await FindingsIn("CatF.F9", WithAttributeAliases("TestInitialize"));
         Assert.Equal(
             new HashSet<string> { "CatF.F9.LifecycleTests.UnattributedSetup()" },
             findings);
     }
 
-    [Fact] // F10: MSTest static [ClassInitialize]/[AssemblyInitialize] hooks and [DataTestMethod] are all
-           // rooted by DEFAULT config; an unattributed static sibling is flagged (dead-sibling).
-    public async Task F10_mstest_static_hooks_and_datatestmethod_rooted_by_default()
+    [Fact] // F10: explicit local MSTest lifecycle aliases root their hooks; an unattributed static sibling
+           // remains flagged.
+    public async Task F10_mstest_static_hooks_and_datatestmethod_use_explicit_aliases()
     {
-        var findings = await FindingsIn("CatF.F10"); // default config
+        var findings = await FindingsIn(
+            "CatF.F10",
+            WithAttributeAliases("ClassInitialize", "AssemblyInitialize", "DataTestMethod"));
         Assert.Equal(
             new HashSet<string> { "CatF.F10.StaticHooks.UnattributedStaticSetup()" },
             findings);
     }
 
-    [Fact] // F11: NUnit [OneTimeSetUp]/[OneTimeTearDown] hooks rooted by DEFAULT config; a same-shaped
-           // unattributed sibling is flagged (dead-sibling).
-    public async Task F11_nunit_one_time_hooks_rooted_by_default()
+    [Fact] // F11: explicit local NUnit lifecycle aliases root their hooks; an unattributed sibling remains
+           // flagged.
+    public async Task F11_nunit_one_time_hooks_use_explicit_aliases()
     {
-        var findings = await FindingsIn("CatF.F11"); // default config
+        var findings = await FindingsIn(
+            "CatF.F11",
+            WithAttributeAliases("OneTimeSetUp", "OneTimeTearDown"));
         Assert.Equal(
             new HashSet<string> { "CatF.F11.Fixture.NotAHook()" },
             findings);
@@ -185,7 +193,7 @@ public sealed class CatFTests
            // ALIVE; a never-assigned/read field is the dead-sibling.
     public async Task F12_fact_class_ctor_keeps_ctor_only_field_and_helper_alive()
     {
-        var findings = await FindingsIn("CatF.F12"); // default config
+        var findings = await FindingsIn("CatF.F12", WithAttributeAliases("Fact"));
         Assert.Equal(
             new HashSet<string> { "CatF.F12.SampleTests._neverUsed" },
             findings);
@@ -230,6 +238,26 @@ public sealed class CatFTests
             {
                 "CatF.F15.OrdinaryHost.Main()",
                 "CatF.F15.OrdinaryHost.Main(string[])",
+            },
+            findings);
+    }
+
+    [Fact]
+    public async Task F16_user_defined_route_attribute_is_not_a_framework_entry_point()
+    {
+        var config = new KnipConfig { EntryPoints = new EntryPointConfig { SymbolNames = ["KeepAlive"] } };
+        var findings = await FindingsIn("CatF.F16", config);
+
+        var aliasConfig = WithAttributeAliases("CatF.F16.Route");
+        aliasConfig.EntryPoints.SymbolNames.Add("KeepAlive");
+        var aliased = await FindingsIn("CatF.F16", aliasConfig);
+        Assert.Empty(aliased);
+
+        Assert.Equal(
+            new HashSet<string>
+            {
+                "CatF.F16.RouteAttribute",
+                "CatF.F16.Endpoint.UserDefinedRoute()",
             },
             findings);
     }

@@ -15,7 +15,7 @@ namespace CatL.TestOnlyPublicApi
     // A genuine production root (Entry.Main -> KeepAlive) keeps the Service TYPE alive so both findings
     // land at MEMBER granularity rather than collapsing to the whole type under outermost-only.
 
-    // Local test-framework attribute (zero NuGet): the walker matches [Fact] roots by NAME.
+    // Local test-framework attribute (zero NuGet), configured as an explicit fixture alias.
     [AttributeUsage(AttributeTargets.Method)]
     public sealed class FactAttribute : Attribute { }
 

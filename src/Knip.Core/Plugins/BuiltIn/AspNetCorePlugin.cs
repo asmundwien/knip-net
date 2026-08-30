@@ -22,48 +22,57 @@ namespace Knip.Core.Plugins.BuiltIn;
 /// method on a middleware (one <c>Invoke</c> never calls) STAYS flagged (the over-rooting guard). Everything
 /// goes through the additive sink, so worst case is a false negative.
 ///
-/// Recognizes, matched by simple framework-type NAME (offline — no NuGet reference; fixtures use local
-/// stand-ins so the plugin ships with ZERO framework dependencies and is version-agnostic, invariant #9):
-///   • Convention middleware — for each <c>UseMiddleware&lt;T&gt;()</c> invocation (or the non-generic
-///     <c>UseMiddleware(typeof(T))</c>), root T's <c>Invoke</c> AND <c>InvokeAsync</c> methods (whichever
-///     exist) plus T's instance constructors.
-///   • Factory middleware — types implementing <c>IMiddleware</c> → root their <c>InvokeAsync</c>.
-///   • MVC / Razor Pages filters — types implementing any of IActionFilter / IAsyncActionFilter /
-///     IResultFilter / IAsyncResultFilter / IExceptionFilter / IAsyncExceptionFilter / IAuthorizationFilter /
-///     IAsyncAuthorizationFilter / IPageFilter / IAsyncPageFilter → root the type's implementations of those
-///     interface methods (so they, and the helpers they call, are reachable).
-///   • Startup filters — types implementing <c>IStartupFilter</c> → root their <c>Configure</c> method.
-///   • Authorization handlers — types deriving from a base named <c>AuthorizationHandler</c>
-///     (<c>AuthorizationHandler&lt;TRequirement&gt;</c> / <c>&lt;TRequirement,TResource&gt;</c>) OR implementing
-///     <c>IAuthorizationHandler</c> → root <c>HandleRequirementAsync</c> and/or <c>HandleAsync</c> (whichever
-///     exist) plus instance constructors. Policy evaluation dispatches the handler's entry method reflectively,
-///     so its ctor/fields (<c>_logger</c>, <c>_authenticationStateProvider</c>) + helpers cascade dead without it.
-///   • Blazor components — types deriving from a base named <c>ComponentBase</c> → root the lifecycle methods
-///     when present (<c>OnInitialized</c>/<c>OnInitializedAsync</c>, <c>OnParametersSet</c>/<c>OnParametersSetAsync</c>,
-///     <c>OnAfterRender</c>/<c>OnAfterRenderAsync</c>, <c>SetParametersAsync</c>, <c>BuildRenderTree</c>,
-///     <c>Dispose</c>/<c>DisposeAsync</c>). The Blazor renderer invokes these by convention — never named in
-///     source — so the helpers they call cascade dead without rooting. (<c>[Parameter]</c> props are the separate
-///     <c>blazorParameter</c> plugin's job — this handles the lifecycle METHODS only.)
-///   • Application Insights telemetry — types implementing <c>ITelemetryProcessor</c> → root <c>Process</c>;
-///     types implementing <c>ITelemetryInitializer</c> → root <c>Initialize</c>; plus instance ctors in both
-///     cases. The telemetry pipeline is DI-registered by generic arg (so the TYPE is alive), but the interface
-///     entry method is invoked by the pipeline — never named in source — so the ctor-assigned <c>_next</c> and
-///     the private helpers the entry calls cascade dead without rooting.
-///   • Health checks — types implementing <c>IHealthCheck</c> → root <c>CheckHealthAsync</c> + instance ctors.
-///     The health-check middleware dispatches <c>CheckHealthAsync</c>, so the helpers it calls cascade dead.
-///   • Authorization policy providers — types implementing <c>IAuthorizationPolicyProvider</c> OR deriving from
-///     a base named <c>DefaultAuthorizationPolicyProvider</c> → root <c>GetPolicyAsync</c>/<c>GetDefaultPolicyAsync</c>/
-///     <c>GetFallbackPolicyAsync</c> + instance ctors. The authorization middleware dispatches these, so the
-///     provider's ctor + policy-building helpers cascade dead without rooting.
+/// Recognizes resolved framework type identities. Built-in matches require the expected namespace and
+/// defining assembly. <c>plugins.aspnetcore.aliases</c> can map a canonical framework type to explicit
+/// namespace-qualified stand-ins or compatible user extensions without making simple names global.
+/// Supported conventions are middleware, MVC/Razor filters, startup filters, authorization handlers and
+/// policy providers, Blazor component lifecycle methods, Application Insights processors/initializers,
+/// and health checks. Only the framework-dispatched entry members and runtime activation closure are rooted;
+/// unrelated members remain reportable.
 ///
-/// OFF by default (opt-in via <c>plugins.aspnetcore.enabled: true</c>): a project not using ASP.NET Core
-/// should not pay for these name matches, and the recognized names are common enough that rooting them is a
-/// deliberate opt-in. When on, over-rooting is a false negative at worst, scoped to a middleware/filter's own
-/// convention entry members (never its unrelated methods or its collaborators).
+/// ON by default because field validation found these conventions produce dangerous high-confidence false
+/// positives. Contributions remain additive, so an imprecise configured alias can only hide a finding.
 /// </summary>
 internal sealed class AspNetCorePlugin : IKnipPlugin
 {
     public string Id => "aspnetcore";
+
+    private const string UseMiddlewareExtensions =
+        "Microsoft.AspNetCore.Http.Abstractions::Microsoft.AspNetCore.Builder.UseMiddlewareExtensions";
+    private const string MiddlewareInterface =
+        "Microsoft.AspNetCore.Http.Abstractions::Microsoft.AspNetCore.Http.IMiddleware";
+    private const string StartupFilterInterface =
+        "Microsoft.AspNetCore.Hosting.Abstractions::Microsoft.AspNetCore.Hosting.IStartupFilter";
+    private const string AuthorizationHandlerInterface =
+        "Microsoft.AspNetCore.Authorization::Microsoft.AspNetCore.Authorization.IAuthorizationHandler";
+    private const string AuthorizationHandlerBase =
+        "Microsoft.AspNetCore.Authorization::Microsoft.AspNetCore.Authorization.AuthorizationHandler";
+    private const string ComponentBase =
+        "Microsoft.AspNetCore.Components::Microsoft.AspNetCore.Components.ComponentBase";
+    private const string PolicyProviderInterface =
+        "Microsoft.AspNetCore.Authorization.Policy::Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider";
+    private const string DefaultPolicyProviderBase =
+        "Microsoft.AspNetCore.Authorization.Policy::Microsoft.AspNetCore.Authorization.DefaultAuthorizationPolicyProvider";
+    private const string TelemetryProcessorInterface =
+        "Microsoft.ApplicationInsights::Microsoft.ApplicationInsights.Extensibility.ITelemetryProcessor";
+    private const string TelemetryInitializerInterface =
+        "Microsoft.ApplicationInsights::Microsoft.ApplicationInsights.Extensibility.ITelemetryInitializer";
+    private const string HealthCheckInterface =
+        "Microsoft.Extensions.Diagnostics.HealthChecks.Abstractions::Microsoft.Extensions.Diagnostics.HealthChecks.IHealthCheck";
+
+    private static readonly string[] FilterInterfaces =
+    [
+        "Microsoft.AspNetCore.Mvc.Abstractions::Microsoft.AspNetCore.Mvc.Filters.IActionFilter",
+        "Microsoft.AspNetCore.Mvc.Abstractions::Microsoft.AspNetCore.Mvc.Filters.IAsyncActionFilter",
+        "Microsoft.AspNetCore.Mvc.Abstractions::Microsoft.AspNetCore.Mvc.Filters.IResultFilter",
+        "Microsoft.AspNetCore.Mvc.Abstractions::Microsoft.AspNetCore.Mvc.Filters.IAsyncResultFilter",
+        "Microsoft.AspNetCore.Mvc.Abstractions::Microsoft.AspNetCore.Mvc.Filters.IExceptionFilter",
+        "Microsoft.AspNetCore.Mvc.Abstractions::Microsoft.AspNetCore.Mvc.Filters.IAsyncExceptionFilter",
+        "Microsoft.AspNetCore.Mvc.Abstractions::Microsoft.AspNetCore.Mvc.Filters.IAuthorizationFilter",
+        "Microsoft.AspNetCore.Mvc.Abstractions::Microsoft.AspNetCore.Mvc.Filters.IAsyncAuthorizationFilter",
+        "Microsoft.AspNetCore.Mvc.RazorPages::Microsoft.AspNetCore.Mvc.Filters.IPageFilter",
+        "Microsoft.AspNetCore.Mvc.RazorPages::Microsoft.AspNetCore.Mvc.Filters.IAsyncPageFilter",
+    ];
 
     // Convention-middleware entry method names invoked reflectively by the RequestDelegate factory.
     private static readonly HashSet<string> MiddlewareEntryMethodNames = new(StringComparer.Ordinal)
@@ -72,21 +81,6 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         "InvokeAsync",
     };
 
-    // MVC / Razor Pages filter marker interfaces (simple name). A type wearing one has its implementations
-    // of that interface's methods dispatched by the framework filter pipeline.
-    private static readonly HashSet<string> FilterInterfaceNames = new(StringComparer.Ordinal)
-    {
-        "IActionFilter",
-        "IAsyncActionFilter",
-        "IResultFilter",
-        "IAsyncResultFilter",
-        "IExceptionFilter",
-        "IAsyncExceptionFilter",
-        "IAuthorizationFilter",
-        "IAsyncAuthorizationFilter",
-        "IPageFilter",
-        "IAsyncPageFilter",
-    };
 
     // Authorization-handler entry method names — policy evaluation dispatches these reflectively. A handler
     // overrides one (AuthorizationHandler<T>.HandleRequirementAsync) or implements IAuthorizationHandler.HandleAsync.
@@ -141,6 +135,7 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
     {
         var compilation = ctx.Compilation;
         var sink = ctx.Sink;
+        var matcher = new FrameworkTypeMatcher(ctx.Settings);
 
         foreach (var tree in compilation.SyntaxTrees)
         {
@@ -152,7 +147,9 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
             foreach (var inv in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
                 if (model.GetSymbolInfo(inv, ct).Symbol is not IMethodSymbol method) continue;
-                if (method.Name != "UseMiddleware") continue;
+                if (method.Name != "UseMiddleware"
+                    || !matcher.Matches((method.ReducedFrom ?? method).ContainingType, UseMiddlewareExtensions))
+                    continue;
 
                 if (MiddlewareTypeArg(model, inv, method, ct) is { } middleware)
                     RootConventionMiddleware(middleware, sink);
@@ -166,7 +163,7 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
                 // Only concrete, instantiable classes are what the framework activates.
                 if (type.IsAbstract || type.TypeKind != TypeKind.Class) continue;
 
-                RootFrameworkDispatchedMembers(type, sink);
+                RootFrameworkDispatchedMembers(type, matcher, sink);
             }
         }
     }
@@ -214,7 +211,10 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
     /// interface-method implementations are rooted — never the whole type — so an unrelated dead method
     /// stays flagged (the over-rooting guard).
     /// </summary>
-    private static void RootFrameworkDispatchedMembers(INamedTypeSymbol type, IContributionSink sink)
+    private static void RootFrameworkDispatchedMembers(
+        INamedTypeSymbol type,
+        FrameworkTypeMatcher matcher,
+        IContributionSink sink)
     {
         // IAuthorizationHandler declares no requirement-typed HandleRequirementAsync (that lives on the
         // AuthorizationHandler<T> base), and its HandleAsync may be provided by the base too — so root the
@@ -228,69 +228,62 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
 
         foreach (var iface in type.AllInterfaces)
         {
-            var name = iface.Name;
-
-            if (name == "IMiddleware")
+            if (matcher.Matches(iface, MiddlewareInterface))
             {
-                // Factory-activated middleware: the framework resolves it from DI and calls InvokeAsync.
                 isFrameworkActivated = true;
                 RootInterfaceMethodImplementations(type, iface, sink);
             }
-            else if (name == "IStartupFilter")
+            else if (matcher.Matches(iface, StartupFilterInterface))
             {
-                // The startup pipeline invokes Configure to wrap the app builder.
                 isFrameworkActivated = true;
                 RootInterfaceMethodImplementations(type, iface, sink);
             }
-            else if (name == "IAuthorizationHandler")
+            else if (matcher.Matches(iface, AuthorizationHandlerInterface))
             {
                 isAuthorizationHandler = true;
                 isFrameworkActivated = true;
             }
-            else if (name == "ITelemetryProcessor")
+            else if (matcher.Matches(iface, TelemetryProcessorInterface))
             {
                 isTelemetryProcessor = true;
                 isFrameworkActivated = true;
             }
-            else if (name == "ITelemetryInitializer")
+            else if (matcher.Matches(iface, TelemetryInitializerInterface))
             {
                 isTelemetryInitializer = true;
                 isFrameworkActivated = true;
             }
-            else if (name == "IHealthCheck")
+            else if (matcher.Matches(iface, HealthCheckInterface))
             {
                 isHealthCheck = true;
                 isFrameworkActivated = true;
             }
-            else if (name == "IAuthorizationPolicyProvider")
+            else if (matcher.Matches(iface, PolicyProviderInterface))
             {
                 isPolicyProvider = true;
                 isFrameworkActivated = true;
             }
-            else if (FilterInterfaceNames.Contains(name))
+            else if (FilterInterfaces.Any(identity => matcher.Matches(iface, identity)))
             {
-                // The MVC / Razor Pages filter pipeline invokes the filter interface methods reflectively.
                 isFrameworkActivated = true;
                 RootInterfaceMethodImplementations(type, iface, sink);
             }
         }
 
-        // Base-class-shaped conventions: authorization handlers (AuthorizationHandler<T>), Blazor components
-        // (ComponentBase), and authorization policy providers (DefaultAuthorizationPolicyProvider). Matched by
-        // simple base NAME up the chain (offline, version-agnostic).
+        // Base-class conventions retain their role through explicit canonical-to-alias mappings.
         for (var b = type.BaseType; b is not null; b = b.BaseType)
         {
-            if (b.Name == "AuthorizationHandler")
+            if (matcher.Matches(b, AuthorizationHandlerBase))
             {
                 isAuthorizationHandler = true;
                 isFrameworkActivated = true;
             }
-            else if (b.Name == "ComponentBase")
+            else if (matcher.Matches(b, ComponentBase))
             {
                 RootMethodsByName(type, BlazorLifecycleMethodNames, sink);
                 isFrameworkActivated = true;
             }
-            else if (b.Name == "DefaultAuthorizationPolicyProvider")
+            else if (matcher.Matches(b, DefaultPolicyProviderBase))
             {
                 isPolicyProvider = true;
                 isFrameworkActivated = true;

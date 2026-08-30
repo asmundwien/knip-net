@@ -2,10 +2,8 @@ using System;
 
 namespace CatF.F1;
 
-// F1: a [Fact]/[Theory] method is a root (default config Attributes include "Fact"/"Theory").
-// Rooting the method also roots its containing type (EvaluateRoots walks ContainingType chain).
-// Attributes match by NAME with/without the "Attribute" suffix, so a LOCAL FactAttribute suffices —
-// no xunit package needed.
+// F1: local [Fact]/[Theory] stand-ins are explicit configured aliases. Rooting each method also roots its
+// containing type without teaching the built-in defaults to trust every same-named attribute.
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class FactAttribute : Attribute { }
 

@@ -242,22 +242,42 @@ public sealed class EntryPointConfig
     /// <summary>Explicit method/type names that are always roots.</summary>
     public List<string> SymbolNames { get; set; } = [];
 
-    /// <summary>Attribute names (with or without the "Attribute" suffix) that mark a member as an entry point.</summary>
+    /// <summary>
+    /// Attribute identities that mark a member as an entry point. Built-ins use
+    /// <c>Assembly::Namespace.Type</c>; configured namespace-qualified or simple names remain explicit
+    /// aliases for source-only fixtures and custom frameworks. The <c>Attribute</c> suffix is optional.
+    /// </summary>
     public List<string> Attributes { get; set; } =
     [
-        // xUnit
-        "Fact", "Theory",
-        // MSTest (test + lifecycle hooks — invoked by the framework, never by name in source)
-        "TestMethod", "DataTestMethod",
-        "TestInitialize", "TestCleanup",
-        "ClassInitialize", "ClassCleanup",
-        "AssemblyInitialize", "AssemblyCleanup",
-        // NUnit (test + one-time and per-test lifecycle hooks)
-        "Test", "TestCase", "SetUp", "TearDown", "OneTimeSetUp", "OneTimeTearDown",
+        // xUnit v2 and v3
+        "xunit.core::Xunit.FactAttribute", "xunit.core::Xunit.TheoryAttribute",
+        "xunit.v3.core::Xunit.FactAttribute", "xunit.v3.core::Xunit.TheoryAttribute",
+        // MSTest
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.DataTestMethodAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestInitializeAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestCleanupAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassInitializeAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassCleanupAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyInitializeAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyCleanupAttribute",
+        // NUnit
+        "nunit.framework::NUnit.Framework.TestAttribute",
+        "nunit.framework::NUnit.Framework.TestCaseAttribute",
+        "nunit.framework::NUnit.Framework.SetUpAttribute",
+        "nunit.framework::NUnit.Framework.TearDownAttribute",
+        "nunit.framework::NUnit.Framework.OneTimeSetUpAttribute",
+        "nunit.framework::NUnit.Framework.OneTimeTearDownAttribute",
         // BenchmarkDotNet
-        "Benchmark", "GlobalSetup",
+        "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.BenchmarkAttribute",
+        "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.GlobalSetupAttribute",
         // ASP.NET Core routing
-        "HttpGet", "HttpPost", "HttpPut", "HttpDelete", "HttpPatch", "Route",
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpGetAttribute",
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPostAttribute",
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPutAttribute",
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpDeleteAttribute",
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPatchAttribute",
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.RouteAttribute",
     ];
 
     /// <summary>Fully-qualified base classes whose subtypes (and their public members) are roots.</summary>

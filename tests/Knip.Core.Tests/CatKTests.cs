@@ -29,21 +29,28 @@ public sealed class CatKTests
     private const string Category = "CatK";
 
     private static Task<IReadOnlySet<string>> FindingsIn(string ns, KnipConfig? config = null) =>
-        FixtureRunner.FindingSymbolsInAsync(Category, ns, config);
+        FixtureRunner.FindingSymbolsInAsync(Category, ns, WithFixtureAliases(config));
 
     /// <summary>Full findings scoped to a scenario namespace (kind/remediation/referrers assertions).</summary>
     private static async Task<IReadOnlyList<Finding>> FindingObjectsIn(string ns, KnipConfig? config = null)
     {
-        var result = await FixtureRunner.RunAsync(Category, config);
+        var result = await FixtureRunner.RunAsync(Category, WithFixtureAliases(config));
         var prefix = ns + ".";
         return result.Findings.Where(f => f.Symbol.StartsWith(prefix, StringComparison.Ordinal)).ToList();
     }
 
-    private static KnipConfig Production()
+    private static KnipConfig WithFixtureAliases(KnipConfig? config)
     {
-        var config = new KnipConfig { Production = true };
+        config ??= new KnipConfig();
+        if (!config.EntryPoints.Attributes.Contains("Fact", StringComparer.Ordinal))
+            config.EntryPoints.Attributes.Add("Fact");
+        if (!config.EntryPoints.Attributes.Contains("Theory", StringComparer.Ordinal))
+            config.EntryPoints.Attributes.Add("Theory");
         return config;
     }
+
+    private static KnipConfig Production() =>
+        WithFixtureAliases(new KnipConfig { Production = true });
 
     // ---- K1: Contract — DEFAULT mode keeps test-only production code alive -------------------
 
@@ -240,7 +247,7 @@ public sealed class CatKTests
         // (a production-named project) as a test project via config; it then classifies test with the
         // testProjects signal.
         var config = new KnipConfig { Production = true, TestProjects = ["CatK.K4.Lib"] };
-        var result = await FixtureRunner.RunAsync(Category, config);
+        var result = await FixtureRunner.RunAsync(Category, WithFixtureAliases(config));
         var lib = result.Reliability.TestProjectClassifications.Single(c => c.Project == "CatK.K4.Lib");
 
         Assert.Equal("test", lib.Kind);

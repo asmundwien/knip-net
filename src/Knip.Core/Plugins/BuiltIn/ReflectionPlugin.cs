@@ -20,6 +20,27 @@ internal sealed class ReflectionPlugin : IKnipPlugin
 {
     public string Id => "reflection";
 
+    private static readonly string[] SystemTypeIdentities =
+    [
+        "System.Private.CoreLib::System.Type",
+        "System.Runtime::System.Type",
+        "mscorlib::System.Type",
+    ];
+
+    private static readonly string[] AssemblyIdentities =
+    [
+        "System.Private.CoreLib::System.Reflection.Assembly",
+        "System.Runtime::System.Reflection.Assembly",
+        "mscorlib::System.Reflection.Assembly",
+    ];
+
+    private static readonly string[] ActivatorIdentities =
+    [
+        "System.Private.CoreLib::System.Activator",
+        "System.Runtime::System.Activator",
+        "mscorlib::System.Activator",
+    ];
+
     public void Contribute(PluginContext ctx, CancellationToken ct)
     {
         var compilation = ctx.Compilation;
@@ -34,35 +55,49 @@ internal sealed class ReflectionPlugin : IKnipPlugin
             foreach (var inv in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
                 if (model.GetSymbolInfo(inv, ct).Symbol is not IMethodSymbol method) continue;
-                var name = method.ToDisplayString();
-
-                switch (name)
+                if (IsMethod(method, SystemTypeIdentities, "GetType", SpecialType.System_String)
+                    || IsMethod(method, AssemblyIdentities, "GetType", SpecialType.System_String))
                 {
-                    // ── named TYPE alive: Type.GetType("Ns.Foo") / Assembly.GetType("Ns.Foo") ──
-                    case "System.Type.GetType(string)":
-                    case "System.Reflection.Assembly.GetType(string)":
-                        RootTypeFromStringArg(compilation, model, inv, sink, ct);
-                        break;
-
-                    // ── Activator.CreateInstance(typeof(Foo)) or (string) ──
-                    case "System.Activator.CreateInstance(System.Type)":
-                        RootTypeFromTypeofArg(model, inv, sink, ct);
-                        break;
-                    case "System.Activator.CreateInstance(string, string)":
-                        // CreateInstance(assemblyName, typeName) — typeName is the SECOND arg.
-                        RootTypeFromStringArg(compilation, model, inv, sink, ct, argIndex: 1);
-                        break;
-
-                    default:
-                        // ── named MEMBER alive: <receiver>.GetMethod/GetProperty/GetField/GetEvent("X") ──
-                        if (method.ContainingType?.ToDisplayString() == "System.Type"
-                            && method.Name is "GetMethod" or "GetProperty" or "GetField" or "GetEvent")
-                            RootMemberFromString(model, inv, method.Name, sink, ct);
-                        break;
+                    RootTypeFromStringArg(compilation, model, inv, sink, ct);
+                }
+                else if (IsTypeArgumentActivator(method))
+                {
+                    RootTypeFromTypeofArg(model, inv, sink, ct);
+                }
+                else if (IsMethod(
+                    method,
+                    ActivatorIdentities,
+                    "CreateInstance",
+                    SpecialType.System_String,
+                    SpecialType.System_String))
+                {
+                    RootTypeFromStringArg(compilation, model, inv, sink, ct, argIndex: 1);
+                }
+                else if (SystemTypeIdentities.Any(identity =>
+                             SymbolIdentity.MatchesType(method.ContainingType, identity))
+                         && method.Name is "GetMethod" or "GetProperty" or "GetField" or "GetEvent")
+                {
+                    RootMemberFromString(model, inv, method.Name, sink, ct);
                 }
             }
         }
     }
+
+    private static bool IsMethod(
+        IMethodSymbol method,
+        string[] containingTypes,
+        string name,
+        params SpecialType[] parameterTypes) =>
+        method.Name == name
+        && containingTypes.Any(identity => SymbolIdentity.MatchesType(method.ContainingType, identity))
+        && method.Parameters.Select(parameter => parameter.Type.SpecialType).SequenceEqual(parameterTypes);
+
+    private static bool IsTypeArgumentActivator(IMethodSymbol method) =>
+        method.Name == "CreateInstance"
+        && ActivatorIdentities.Any(identity => SymbolIdentity.MatchesType(method.ContainingType, identity))
+        && method.Parameters.Length == 1
+        && SystemTypeIdentities.Any(identity =>
+            SymbolIdentity.MatchesType(method.Parameters[0].Type as INamedTypeSymbol, identity));
 
     /// <summary>Resolve a string-literal type name argument to a type and root it (with its members).</summary>
     private static void RootTypeFromStringArg(
@@ -142,13 +177,15 @@ internal sealed class ReflectionPlugin : IKnipPlugin
         // to the receiver's own type when that type shadows the signature — accept either).
         if (receiver is InvocationExpressionSyntax innerInv
             && innerInv.Expression is MemberAccessExpressionSyntax { Name.Identifier.ValueText: "GetType", Expression: { } innerReceiver }
-            && model.GetSymbolInfo(innerInv, ct).Symbol is IMethodSymbol { Name: "GetType", IsStatic: false, Parameters.IsEmpty: true, ReturnType.SpecialType: SpecialType.None } getType
-            && getType.ReturnType.ToDisplayString() == "System.Type")
+            && model.GetSymbolInfo(innerInv, ct).Symbol is IMethodSymbol { Name: "GetType", IsStatic: false, Parameters.IsEmpty: true } getType
+            && SystemTypeIdentities.Any(identity =>
+                SymbolIdentity.MatchesType(getType.ReturnType as INamedTypeSymbol, identity)))
         {
             var innerType = model.GetTypeInfo(innerReceiver, ct).Type;
             // Idiomatic `instance.GetType()` — the instance's static type is the conservative target.
             if (innerType is not null && innerType.SpecialType != SpecialType.System_Object
-                && innerType.ToDisplayString() != "System.Type")
+                && !SystemTypeIdentities.Any(identity =>
+                    SymbolIdentity.MatchesType(innerType as INamedTypeSymbol, identity)))
                 return innerType;
 
             // `typeVar.GetType()` where the receiver is itself a System.Type value: the runtime type is

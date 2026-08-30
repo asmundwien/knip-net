@@ -1,3 +1,4 @@
+using Knip.Core.Analysis;
 using Knip.Core.Plugins.BuiltIn;
 
 namespace Knip.Core.Plugins;
@@ -32,29 +33,32 @@ public sealed class PluginDescriptor
 
 /// <summary>
 /// The static, built-in plugin registry. Order here is the order plugins run in. The default-on set
-/// for v1 is <c>{reflection, scanningDi}</c>. blazorParameter/serialization default OFF.
+/// for v1 is <c>{reflection, scanningDi, aspnetcore}</c>. Blazor parameter and serialization remain opt-in.
 /// </summary>
 public static class PluginRegistry
 {
     public static IReadOnlyList<PluginDescriptor> All { get; } =
     [
         new("reflection", defaultEnabled: true, () => new ReflectionPlugin()),
-        new("scanningDi", defaultEnabled: true, () => new ScanningDiPlugin()),
+        new("scanningDi", defaultEnabled: true, () => new ScanningDiPlugin(),
+            FrameworkTypeMatcher.AliasesSettingKey),
         // blazorParameter — opt-in (default OFF): roots Blazor [Parameter]/[CascadingParameter]/[Inject]
         // members set from .razor markup / DI.
-        new("blazorParameter", defaultEnabled: false, () => new BlazorParameterPlugin()),
+        new("blazorParameter", defaultEnabled: false, () => new BlazorParameterPlugin(),
+            FrameworkTypeMatcher.AliasesSettingKey),
         // serialization — opt-in (default OFF): roots the public data members of demonstrably-serialized
         // DTO types (Serialize/Deserialize target) and serialization-annotated members. Optional
         // 'namespaces' glob list roots DTO members by namespace.
         new("serialization", defaultEnabled: false, () => new SerializationPlugin(),
-            SerializationPlugin.NamespacesSettingKey),
+            SerializationPlugin.NamespacesSettingKey, FrameworkTypeMatcher.AliasesSettingKey),
         // aspnetcore — DEFAULT ON (decided 2026-07-15): roots ASP.NET Core convention-invoked entry
         // members the framework dispatches reflectively — middleware Invoke/InvokeAsync (+ ctors),
         // MVC/Razor filter interface methods, auth handlers/policy providers, telemetry processors,
         // health checks, Blazor lifecycle, IStartupFilter.Configure. Dogfooding showed these produce
         // dangerous HIGH-confidence FPs on the org's ASP.NET portfolio; default-on keeps the tool
         // trustworthy out of the box. (blazorParameter/serialization stay opt-in.)
-        new("aspnetcore", defaultEnabled: true, () => new AspNetCorePlugin()),
+        new("aspnetcore", defaultEnabled: true, () => new AspNetCorePlugin(),
+            FrameworkTypeMatcher.AliasesSettingKey),
     ];
 
     /// <summary>The ids that run under a default (<c>new KnipConfig()</c>) configuration.</summary>

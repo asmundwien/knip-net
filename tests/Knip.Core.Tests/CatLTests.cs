@@ -485,9 +485,9 @@ public sealed class CatLTests
             Hazard.SerializationShaped, Single(result, "CatL.HazardShapes.PlainPoco.Label").Hazards);
     }
 
-    // ── L19 (RB-01 Task B): ATTRIBUTE-shaped serialization detection. A member wearing [JsonProperty], or
-    //    any data member of a type wearing [Serializable], is serializationShaped. Both proof members are
-    //    INTERNAL, so the serialization hazard — not publicApi — is the graded signal: it demotes to low
+    // ── L19 (RB-01 Task B): ATTRIBUTE-shaped serialization detection. A member wearing
+    //    [JsonPropertyName], or any data member of a type wearing [Serializable], is serializationShaped.
+    //    Both proof members are INTERNAL, so the serialization hazard alone demotes them to low.
     //    on its own. A plain internal sibling on the same (member-attributed) type is NOT tagged. ──────────
     [Fact]
     public async Task L19_attribute_shaped_serialization_hazard_tags_and_demotes_low()
@@ -703,10 +703,15 @@ public sealed class CatLTests
         return writer.ToString();
     }
 
-    private static Task<AnalysisResult> FixtureRunner_Run(string variant, KnipConfig? config = null) =>
-        KnipEngine.RunAsync(
-            FixtureRunner.AddSyntheticGlobalRoots(config ?? new KnipConfig()),
+    private static Task<AnalysisResult> FixtureRunner_Run(string variant, KnipConfig? config = null)
+    {
+        config ??= new KnipConfig();
+        if (!config.EntryPoints.Attributes.Contains("Fact", StringComparer.Ordinal))
+            config.EntryPoints.Attributes.Add("Fact");
+        return KnipEngine.RunAsync(
+            FixtureRunner.AddSyntheticGlobalRoots(config),
             FixtureSolution(variant));
+    }
 
     private static IReadOnlyList<string> ExtractIds(string json)
     {

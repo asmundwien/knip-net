@@ -1,3 +1,4 @@
+using Knip.Core.Analysis;
 using Knip.Core.Configuration;
 using Knip.Core.Plugins;
 using Knip.Core.Model;
@@ -28,25 +29,75 @@ public sealed class PluginsTests
         Plugins = { ["reflection"] = new PluginSettings { Enabled = enabled } },
     };
 
-    private static KnipConfig WithScanningDi(bool enabled) => new()
-    {
-        Plugins = { ["scanningDi"] = new PluginSettings { Enabled = enabled } },
-    };
+    private static KnipConfig WithScanningDi(bool enabled) => WithAliases(
+        "scanningDi",
+        enabled,
+        new Dictionary<string, string[]>
+        {
+            ["MediatR.IRequestHandler"] = ["CatH.H4.IRequestHandler"],
+            ["MassTransit.IConsumer"] = ["CatH.H12.IConsumer"],
+            ["Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions"] =
+                ["CatH.DiConstructorActivation.ServiceCollectionServiceExtensions"],
+            ["Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions"] =
+                ["CatH.DiConstructorActivation.ServiceCollectionDescriptorExtensions"],
+        });
 
-    private static KnipConfig WithBlazorParameter(bool enabled) => new()
-    {
-        Plugins = { ["blazorParameter"] = new PluginSettings { Enabled = enabled } },
-    };
+    private static KnipConfig WithBlazorParameter(bool enabled) => WithAliases(
+        "blazorParameter",
+        enabled,
+        new Dictionary<string, string[]>
+        {
+            ["Microsoft.AspNetCore.Components.ParameterAttribute"] = ["CatH.H6.ParameterAttribute"],
+            ["Microsoft.AspNetCore.Components.CascadingParameterAttribute"] =
+                ["CatH.H6.CascadingParameterAttribute"],
+            ["Microsoft.AspNetCore.Components.InjectAttribute"] = ["CatH.H6.InjectAttribute"],
+        });
 
-    private static KnipConfig WithSerialization(bool enabled) => new()
-    {
-        Plugins = { ["serialization"] = new PluginSettings { Enabled = enabled } },
-    };
+    private static KnipConfig WithSerialization(bool enabled) => WithAliases(
+        "serialization",
+        enabled,
+        new Dictionary<string, string[]>
+        {
+            ["System.Text.Json.JsonSerializer"] = ["CatH.H5.JsonSerializer", "CatH.H20.JsonSerializer"],
+        });
 
-    private static KnipConfig WithAspNetCore(bool enabled) => new()
+    private static KnipConfig WithAspNetCore(bool enabled) => WithAliases(
+        "aspnetcore",
+        enabled,
+        new Dictionary<string, string[]>
+        {
+            ["Microsoft.AspNetCore.Builder.UseMiddlewareExtensions"] =
+                ["CatH.AspNetMiddleware.ApplicationBuilder"],
+            ["Microsoft.AspNetCore.Http.IMiddleware"] = ["CatH.AspNetFrameworkActivation.IMiddleware"],
+            ["Microsoft.AspNetCore.Hosting.IStartupFilter"] =
+                ["CatH.AspNetFrameworkActivation.IStartupFilter"],
+            ["Microsoft.AspNetCore.Mvc.Filters.IAsyncActionFilter"] =
+                ["CatH.AspNetFilter.IAsyncActionFilter"],
+            ["Microsoft.AspNetCore.Authorization.AuthorizationHandler"] =
+                ["CatH.AspNetAuthHandler.AuthorizationHandler"],
+            ["Microsoft.AspNetCore.Components.ComponentBase"] = ["CatH.BlazorLifecycle.ComponentBase"],
+            ["Microsoft.ApplicationInsights.Extensibility.ITelemetryProcessor"] =
+                ["CatH.AspNetTelemetry.ITelemetryProcessor"],
+            ["Microsoft.ApplicationInsights.Extensibility.ITelemetryInitializer"] =
+                ["CatH.AspNetTelemetry.ITelemetryInitializer"],
+            ["Microsoft.Extensions.Diagnostics.HealthChecks.IHealthCheck"] =
+                ["CatH.AspNetHealthCheck.IHealthCheck"],
+            ["Microsoft.AspNetCore.Authorization.IAuthorizationPolicyProvider"] =
+                ["CatH.AspNetPolicyProvider.IAuthorizationPolicyProvider"],
+            ["Microsoft.AspNetCore.Authorization.DefaultAuthorizationPolicyProvider"] =
+                ["CatH.AspNetPolicyProvider.DefaultAuthorizationPolicyProvider"],
+        });
+
+    private static KnipConfig WithAliases(
+        string plugin,
+        bool enabled,
+        Dictionary<string, string[]> aliases)
     {
-        Plugins = { ["aspnetcore"] = new PluginSettings { Enabled = enabled } },
-    };
+        var settings = new PluginSettings { Enabled = enabled };
+        settings.Extra[FrameworkTypeMatcher.AliasesSettingKey] =
+            System.Text.Json.JsonSerializer.SerializeToElement(aliases);
+        return new KnipConfig { Plugins = { [plugin] = settings } };
+    }
 
     private static Task<IReadOnlySet<string>> FindingsIn(string ns, KnipConfig config) =>
         FixtureRunner.FindingSymbolsInAsync(Category, ns, config);
@@ -599,9 +650,8 @@ public sealed class PluginsTests
         Assert.Contains(helper, off);
         Assert.Contains(ns + ".HintAuthorizationPolicyProvider._options", off);
 
-        // Plugin ON: the plugin roots the Get*PolicyAsync entry methods + instance ctors (matched by base NAME
-        // DefaultAuthorizationPolicyProvider / IAuthorizationPolicyProvider) → the field and the private helper
-        // gain liveness → NOT reported…
+        // Plugin ON: explicit fixture aliases preserve the policy-provider entry methods and instance ctors,
+        // so the field and private helper gain liveness.
         var on = await FindingsIn(ns, WithAspNetCore(true));
         Assert.DoesNotContain(helper, on);
         Assert.DoesNotContain(ns + ".HintAuthorizationPolicyProvider._options", on);
@@ -609,16 +659,56 @@ public sealed class PluginsTests
         Assert.Contains(ns + ".HintAuthorizationPolicyProvider.NeverConsulted()", on);
     }
 
+    [Fact]
+    public async Task Resolved_framework_shapes_remain_alive()
+    {
+        var config = new KnipConfig
+        {
+            Plugins = { ["blazorParameter"] = new PluginSettings { Enabled = true } },
+        };
+
+        var findings = await FindingsIn("CatH.QualifiedFrameworkShapes", config);
+
+        Assert.DoesNotContain("CatH.QualifiedFrameworkShapes.FrameworkEndpoint.Routed()", findings);
+        Assert.DoesNotContain("CatH.QualifiedFrameworkShapes.FrameworkEndpoint.RoutedCore()", findings);
+        Assert.DoesNotContain("CatH.QualifiedFrameworkShapes.FrameworkComponent.Value", findings);
+        Assert.DoesNotContain("CatH.QualifiedFrameworkShapes.FrameworkComponent.InitializeCore()", findings);
+        Assert.Contains("CatH.QualifiedFrameworkShapes.FrameworkEndpoint.NeverCalled()", findings);
+        Assert.Contains("CatH.QualifiedFrameworkShapes.FrameworkComponent.NeverRendered()", findings);
+    }
+
+    [Fact]
+    public async Task Framework_plugins_ignore_unqualified_user_defined_shapes()
+    {
+        var config = new KnipConfig
+        {
+            Plugins =
+            {
+                ["blazorParameter"] = new PluginSettings { Enabled = true },
+                ["serialization"] = new PluginSettings { Enabled = true },
+            },
+        };
+
+        var findings = await FindingsIn("CatH.QualifiedCollisions", config);
+
+        Assert.Contains("CatH.QualifiedCollisions.Handler.HandleCore()", findings);
+        Assert.Contains("CatH.QualifiedCollisions.MappingProfile.ConfigureMap()", findings);
+        Assert.Contains("CatH.QualifiedCollisions.Component.InitializeCore()", findings);
+        Assert.Contains("CatH.QualifiedCollisions.Component.Value", findings);
+        Assert.Contains("CatH.QualifiedCollisions.Dto.Value", findings);
+        Assert.Contains("CatH.QualifiedCollisions.Middleware.Invoke()", findings);
+    }
+
     // aspnetcore is ON by default (decided 2026-07-15): a default config keeps the middleware Invoke alive.
     [Fact]
-    public async Task AspNetCore_is_on_by_default()
+    public async Task AspNetCore_is_on_by_default_without_matching_unqualified_stand_ins()
     {
         Assert.Contains("aspnetcore", PluginRegistry.DefaultEnabledIds);
         Assert.True(new KnipConfig().IsPluginEnabled(Descriptor("aspnetcore")),
             "aspnetcore must default ON");
 
         var byDefault = await FindingsIn("CatH.AspNetMiddleware", new KnipConfig());
-        Assert.DoesNotContain("CatH.AspNetMiddleware.AuditLoggingMiddleware.Invoke(CatH.AspNetMiddleware.HttpContext)", byDefault);
+        Assert.Contains("CatH.AspNetMiddleware.AuditLoggingMiddleware.Invoke(CatH.AspNetMiddleware.HttpContext)", byDefault);
     }
 
     // A typo in the aspnetcore block surfaces a visible unknown-key warning (never silently no-ops).
@@ -720,6 +810,10 @@ public sealed class PluginsTests
             Plugins = { ["reflection"] = new PluginSettings { Enabled = true } },
         };
         Assert.Empty(config.ValidatePlugins());
+        Assert.Empty(WithScanningDi(true).ValidatePlugins());
+        Assert.Empty(WithBlazorParameter(true).ValidatePlugins());
+        Assert.Empty(WithSerialization(true).ValidatePlugins());
+        Assert.Empty(WithAspNetCore(true).ValidatePlugins());
     }
 
     private static PluginDescriptor Descriptor(string id) =>

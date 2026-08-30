@@ -88,20 +88,22 @@ internal static class FindingEnrichment
     }
 
 
-    // Member attribute simple names (with or without the "Attribute" suffix) that mark a member serialized.
-    private static readonly HashSet<string> MemberSerializationAttributes = new(StringComparer.Ordinal)
-    {
-        "JsonPropertyName", // System.Text.Json.Serialization.JsonPropertyNameAttribute
-        "JsonProperty",     // Newtonsoft.Json.JsonPropertyAttribute
-        "DataMember",       // System.Runtime.Serialization.DataMemberAttribute
-    };
+    private static readonly string[] MemberSerializationAttributes =
+    [
+        "System.Text.Json::System.Text.Json.Serialization.JsonPropertyNameAttribute",
+        "Newtonsoft.Json::Newtonsoft.Json.JsonPropertyAttribute",
+        "System.Runtime.Serialization.Primitives::System.Runtime.Serialization.DataMemberAttribute",
+        "System.Runtime.Serialization::System.Runtime.Serialization.DataMemberAttribute",
+    ];
 
-    // Type-level attribute simple names that mark a whole type serialized (all its data members are shaped).
-    private static readonly HashSet<string> TypeSerializationAttributes = new(StringComparer.Ordinal)
-    {
-        "Serializable",  // System.SerializableAttribute
-        "DataContract",  // System.Runtime.Serialization.DataContractAttribute
-    };
+    private static readonly string[] TypeSerializationAttributes =
+    [
+        "System.Private.CoreLib::System.SerializableAttribute",
+        "mscorlib::System.SerializableAttribute",
+        "System.Runtime::System.SerializableAttribute",
+        "System.Runtime.Serialization.Primitives::System.Runtime.Serialization.DataContractAttribute",
+        "System.Runtime.Serialization::System.Runtime.Serialization.DataContractAttribute",
+    ];
 
     /// <summary>
     /// Runtime-only advisory hazards for deletions that can compile and pass tests but fail at runtime.
@@ -150,17 +152,12 @@ internal static class FindingEnrichment
         return hazards.Count == 0 ? [] : hazards;
     }
 
-    private static bool WearsAnySerializationAttribute(ISymbol symbol, HashSet<string> names)
+    private static bool WearsAnySerializationAttribute(ISymbol symbol, string[] identities)
     {
         foreach (var attr in symbol.GetAttributes())
-        {
-            var name = attr.AttributeClass?.Name;
-            if (name is null) continue;
-            var trimmed = name.EndsWith("Attribute", StringComparison.Ordinal)
-                ? name[..^"Attribute".Length]
-                : name;
-            if (names.Contains(trimmed)) return true;
-        }
+            if (identities.Any(identity => SymbolIdentity.MatchesAttribute(attr.AttributeClass, identity)))
+                return true;
+
         return false;
     }
 
@@ -176,7 +173,16 @@ internal static class FindingEnrichment
     {
         foreach (var attribute in compilation.Assembly.GetAttributes())
         {
-            if (attribute.AttributeClass?.Name != "InternalsVisibleToAttribute") continue;
+            if (!SymbolIdentity.MatchesAttribute(
+                    attribute.AttributeClass,
+                    "System.Private.CoreLib::System.Runtime.CompilerServices.InternalsVisibleToAttribute")
+                && !SymbolIdentity.MatchesAttribute(
+                    attribute.AttributeClass,
+                    "System.Runtime::System.Runtime.CompilerServices.InternalsVisibleToAttribute")
+                && !SymbolIdentity.MatchesAttribute(
+                    attribute.AttributeClass,
+                    "mscorlib::System.Runtime.CompilerServices.InternalsVisibleToAttribute"))
+                continue;
             if (attribute.ConstructorArguments.Length == 0) continue;
             if (attribute.ConstructorArguments[0].Value is not string target) continue;
 

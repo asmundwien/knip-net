@@ -1,29 +1,6 @@
 namespace CatK.K9;
 
-// Local stand-ins keep the fixture offline while matching the runtime-hazard detector's API shapes.
-internal static class JsonConvert
-{
-    internal static T DeserializeObject<T>(string json) => default!;
-}
-
-internal interface IConfiguration { }
-
-internal static class ConfigurationBinder
-{
-    internal static T Get<T>(this IConfiguration configuration) => default!;
-}
-
-internal sealed class ServiceProvider { }
-internal sealed class ServiceCollection { }
-
-internal static class ServiceCollectionServiceExtensions
-{
-    internal static void AddScoped<TService>(
-        this ServiceCollection services,
-        System.Func<ServiceProvider, TService> factory)
-    {
-    }
-}
+// Shared-framework APIs keep runtime-hazard matching assembly- and namespace-aware without NuGet restore.
 
 internal sealed class SerializedData
 {
@@ -76,11 +53,13 @@ internal static class Entry
     internal static void Main()
     {
         // Keep all containing types production-reachable without reading their test-only members.
-        System.Console.WriteLine(JsonConvert.DeserializeObject<SerializedData>("{}"));
-        IConfiguration configuration = null!;
-        System.Console.WriteLine(configuration.Get<ConfigBoundData>());
-        var services = new ServiceCollection();
-        services.AddScoped<FactoryRegisteredService>(_ => default!);
+        System.Console.WriteLine(System.Text.Json.JsonSerializer.Deserialize<SerializedData>("{}"));
+        Microsoft.Extensions.Configuration.IConfiguration configuration = null!;
+        System.Console.WriteLine(
+            Microsoft.Extensions.Configuration.ConfigurationBinder.Get<ConfigBoundData>(configuration));
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions
+            .AddScoped<FactoryRegisteredService>(services, _ => default!);
         System.Console.WriteLine(new PlainData());
         System.Console.WriteLine(new PlainConfigData());
         System.Console.WriteLine(typeof(PlainService));

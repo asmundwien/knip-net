@@ -2,7 +2,7 @@ using System;
 
 namespace CatK.K4.Tests;
 
-// Local FactAttribute (zero NuGet); matched by name by the reachability walker.
+// Local FactAttribute (zero NuGet); the fixture harness configures it as an explicit alias.
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class FactAttribute : Attribute { }
 

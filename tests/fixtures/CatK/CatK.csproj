@@ -19,4 +19,8 @@
     <Compile Remove="K4.Tests/**/*.cs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
 </Project>

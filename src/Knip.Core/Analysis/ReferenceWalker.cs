@@ -17,24 +17,39 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         .WithGlobalNamespaceStyle(SymbolDisplayGlobalNamespaceStyle.Omitted);
 
     /// <summary>
-    /// (WS7) Attribute names (with or without the "Attribute" suffix) that mark a root as TEST-ORIGIN,
-    /// regardless of the declaring project. These are the test-FRAMEWORK attributes — the runner invokes
-    /// the method, and it exists to exercise production code. NON-test entry-point attributes (ASP.NET
-    /// routing like <c>HttpGet</c>, <c>IHostedService</c> conventions) are NOT here: they are genuine
-    /// production entry points and must seed PRODUCTION roots. Kept in sync with the test-framework subset
-    /// of <see cref="EntryPointConfig.Attributes"/>.
+    /// Test-framework attribute identities used to preserve test-root origin independently of project
+    /// classification. Assembly qualification prevents application attributes with familiar names from
+    /// being treated as tests.
     /// </summary>
     internal static readonly HashSet<string> TestAttributeNames = new(StringComparer.Ordinal)
     {
-        // xUnit
+        "xunit.core::Xunit.FactAttribute", "xunit.core::Xunit.TheoryAttribute",
+        "xunit.v3.core::Xunit.FactAttribute", "xunit.v3.core::Xunit.TheoryAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestMethodAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.DataTestMethodAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestInitializeAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.TestCleanupAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassInitializeAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.ClassCleanupAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyInitializeAttribute",
+        "MSTest.TestFramework::Microsoft.VisualStudio.TestTools.UnitTesting.AssemblyCleanupAttribute",
+        "nunit.framework::NUnit.Framework.TestAttribute",
+        "nunit.framework::NUnit.Framework.TestCaseAttribute",
+        "nunit.framework::NUnit.Framework.SetUpAttribute",
+        "nunit.framework::NUnit.Framework.TearDownAttribute",
+        "nunit.framework::NUnit.Framework.OneTimeSetUpAttribute",
+        "nunit.framework::NUnit.Framework.OneTimeTearDownAttribute",
+        "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.BenchmarkAttribute",
+        "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.GlobalSetupAttribute",
+    };
+
+    private static readonly HashSet<string> TestAttributeAliases = new(StringComparer.Ordinal)
+    {
         "Fact", "Theory",
-        // MSTest
         "TestMethod", "DataTestMethod",
         "TestInitialize", "TestCleanup", "ClassInitialize", "ClassCleanup",
         "AssemblyInitialize", "AssemblyCleanup",
-        // NUnit
         "Test", "TestCase", "SetUp", "TearDown", "OneTimeSetUp", "OneTimeTearDown",
-        // BenchmarkDotNet (a benchmark harness, not a production entry point)
         "Benchmark", "GlobalSetup",
     };
 
@@ -876,7 +891,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
 
         // A test-ATTRIBUTE-driven root is test-origin even in a production project (WS7 two-color).
         var hasTestAttribute =
-            symbol.GetAttributes().Any(a => MatchesTestAttribute(a));
+            symbol.GetAttributes().Any(a => MatchesTestAttribute(a, ep.Attributes));
 
         var isRoot = IsStartupConvention(symbol)
             || ep.SymbolNames.Contains(symbol.Name)
@@ -964,25 +979,25 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         else _state.ProductionRoots.Add(id);
     }
 
-    private static bool MatchesAttribute(AttributeData attr, List<string> names)
-    {
-        var name = attr.AttributeClass?.Name;
-        if (name is null) return false;
-        var trimmed = name.EndsWith("Attribute", StringComparison.Ordinal)
-            ? name[..^"Attribute".Length]
-            : name;
-        return names.Contains(name) || names.Contains(trimmed);
-    }
+    private static bool MatchesAttribute(AttributeData attr, List<string> names) =>
+        names.Any(name => SymbolIdentity.MatchesAttribute(attr.AttributeClass, name));
 
-    /// <summary>(WS7) True when the attribute is a test-FRAMEWORK attribute (see <see cref="TestAttributeNames"/>).</summary>
-    private static bool MatchesTestAttribute(AttributeData attr)
+    /// <summary>(WS7) True for a resolved test framework attribute or its configured alias.</summary>
+    private static bool MatchesTestAttribute(AttributeData attr, List<string> configuredAttributes) =>
+        TestAttributeNames.Any(name => SymbolIdentity.MatchesAttribute(attr.AttributeClass, name))
+        || configuredAttributes.Any(name =>
+            TestAttributeAliases.Contains(TrimAttributeName(name))
+            && SymbolIdentity.MatchesAttribute(attr.AttributeClass, name));
+
+    private static string TrimAttributeName(string identity)
     {
-        var name = attr.AttributeClass?.Name;
-        if (name is null) return false;
-        var trimmed = name.EndsWith("Attribute", StringComparison.Ordinal)
-            ? name[..^"Attribute".Length]
-            : name;
-        return TestAttributeNames.Contains(name) || TestAttributeNames.Contains(trimmed);
+        var separator = identity.LastIndexOf("::", StringComparison.Ordinal);
+        var typeName = separator < 0 ? identity : identity[(separator + 2)..];
+        var dot = typeName.LastIndexOf('.');
+        var simpleName = dot < 0 ? typeName : typeName[(dot + 1)..];
+        return simpleName.EndsWith("Attribute", StringComparison.Ordinal)
+            ? simpleName[..^"Attribute".Length]
+            : simpleName;
     }
 
     private static bool IsEntryType(INamedTypeSymbol type, EntryPointConfig ep)

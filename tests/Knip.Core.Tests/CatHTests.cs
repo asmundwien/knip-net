@@ -1,3 +1,4 @@
+using Knip.Core.Analysis;
 using Knip.Core.Configuration;
 using Xunit;
 
@@ -24,7 +25,52 @@ public sealed class CatHTests
     private const string Category = "CatH";
 
     private static Task<IReadOnlySet<string>> FindingsIn(string ns) =>
-        FixtureRunner.FindingSymbolsInAsync(Category, ns);
+        FixtureRunner.FindingSymbolsInAsync(Category, ns, WithFrameworkAliases());
+
+    private static KnipConfig WithFrameworkAliases(string? enabledPlugin = null)
+    {
+        var config = new KnipConfig();
+        AddAliases(config, "scanningDi", new Dictionary<string, string[]>
+        {
+            ["MediatR.IRequestHandler"] = ["CatH.H4.IRequestHandler"],
+            ["MassTransit.IConsumer"] = ["CatH.H12.IConsumer"],
+        }, enabledPlugin == "scanningDi" ? true : null);
+        AddAliases(config, "aspnetcore", new Dictionary<string, string[]>
+        {
+            ["Microsoft.AspNetCore.Builder.UseMiddlewareExtensions"] =
+                ["CatH.AspNetMiddleware.ApplicationBuilder"],
+            ["Microsoft.AspNetCore.Mvc.Filters.IAsyncActionFilter"] =
+                ["CatH.AspNetFilter.IAsyncActionFilter"],
+        }, enabledPlugin == "aspnetcore" ? true : null);
+
+        if (enabledPlugin == "serialization")
+            AddAliases(config, "serialization", new Dictionary<string, string[]>
+            {
+                ["System.Text.Json.JsonSerializer"] = ["CatH.H5.JsonSerializer"],
+            }, true);
+        else if (enabledPlugin == "blazorParameter")
+            AddAliases(config, "blazorParameter", new Dictionary<string, string[]>
+            {
+                ["Microsoft.AspNetCore.Components.ParameterAttribute"] = ["CatH.H6.ParameterAttribute"],
+                ["Microsoft.AspNetCore.Components.CascadingParameterAttribute"] =
+                    ["CatH.H6.CascadingParameterAttribute"],
+                ["Microsoft.AspNetCore.Components.InjectAttribute"] = ["CatH.H6.InjectAttribute"],
+            }, true);
+
+        return config;
+    }
+
+    private static void AddAliases(
+        KnipConfig config,
+        string plugin,
+        Dictionary<string, string[]> aliases,
+        bool? enabled)
+    {
+        var settings = new PluginSettings { Enabled = enabled };
+        settings.Extra[FrameworkTypeMatcher.AliasesSettingKey] =
+            System.Text.Json.JsonSerializer.SerializeToElement(aliases);
+        config.Plugins[plugin] = settings;
+    }
 
     private static void AssertExactly(IReadOnlySet<string> actual, params string[] expectedDead) =>
         Assert.Equal(new HashSet<string>(expectedDead), actual);
@@ -82,7 +128,7 @@ public sealed class CatHTests
     public async Task H5_serialized_dto_property_alive()
     {
         // The serialization plugin is OFF by default; enable it explicitly for this contract.
-        var config = new KnipConfig { Plugins = { ["serialization"] = new PluginSettings { Enabled = true } } };
+        var config = WithFrameworkAliases("serialization");
 
         // PersonDto.Name ALIVE (root via the serialize call over PersonDto). OVER-ROOTING GUARD (two decoys):
         //   • NonDto.PlainDead — a plain member on a type that is NEVER serialized -> STAYS flagged (the
@@ -100,7 +146,7 @@ public sealed class CatHTests
     public async Task H6_blazor_parameter_property_alive()
     {
         // The blazorParameter plugin is OFF by default; enable it explicitly for this contract.
-        var config = new KnipConfig { Plugins = { ["blazorParameter"] = new PluginSettings { Enabled = true } } };
+        var config = WithFrameworkAliases("blazorParameter");
 
         // Title/Theme/Clock ALIVE (root via [Parameter]/[CascadingParameter]/[Inject]; each marker attribute
         // alive via its signature edge). OVER-ROOTING GUARD: only the attribute-less Unbound property and the
@@ -189,7 +235,7 @@ public sealed class CatHTests
     public async Task H13_middleware_invoke_and_helpers_alive()
     {
         // The aspnetcore plugin is OFF by default; enable it explicitly for this contract.
-        var config = new KnipConfig { Plugins = { ["aspnetcore"] = new PluginSettings { Enabled = true } } };
+        var config = WithFrameworkAliases("aspnetcore");
 
         // Invoke, the ctor, _next/_logger and LeggTilRequestMetadata ALIVE (rooted convention entry +
         // liveness via edges — Invoke's real edges to _next/_logger/ILogger.Log keep those alive too).
@@ -205,7 +251,7 @@ public sealed class CatHTests
     [Trait("status", "contract")]
     public async Task H14_filter_method_and_helper_alive()
     {
-        var config = new KnipConfig { Plugins = { ["aspnetcore"] = new PluginSettings { Enabled = true } } };
+        var config = WithFrameworkAliases("aspnetcore");
 
         // OnActionExecutingAsync + LeggTilTjenestenavn ALIVE. OVER-ROOTING GUARD: the decoy NeverDispatched()
         // (the filter never calls it) STAYS flagged; the uncalled interface declaration also stays flagged.

@@ -11,47 +11,43 @@ namespace Knip.Core.Plugins.BuiltIn;
 /// Scanning remains conservative (§3.8): root only types whose framework-marker shape the scan plausibly
 /// registers, never every interface implementer.
 ///
-/// Recognizes, matched by simple NAME (offline — no NuGet reference; fixtures use local stand-ins so
-/// the plugin ships with ZERO framework dependencies and is version-agnostic, invariant #9):
-///   • MediatR handlers  — types implementing IRequestHandler / INotificationHandler / IStreamRequestHandler
-///                         (any generic arity), the interfaces MediatR's assembly scan discovers.
-///   • MassTransit       — types implementing IConsumer / IConsumer&lt;T&gt; (H12), discovered by AddConsumers.
-///   • AutoMapper        — types deriving from a base named Profile.
-///   • Microsoft DI     — Add/TryAdd Singleton, Scoped, and Transient registrations whose overload proves
-///                         that the container constructs the concrete implementation.
+/// Recognizes resolved framework identities. Built-in matches require both namespace and defining assembly;
+/// <c>plugins.scanningDi.aliases</c> can map a canonical type to namespace-qualified local stand-ins or
+/// application-specific scanning markers without weakening the defaults:
+///   • MediatR handlers  — IRequestHandler / INotificationHandler / IStreamRequestHandler.
+///   • MassTransit       — IConsumer / IConsumer&lt;T&gt;.
+///   • AutoMapper        — Profile subclasses.
+///   • Microsoft DI      — Add/TryAdd Singleton, Scoped, and Transient registrations whose resolved
+///                         declaring type proves that the container constructs the implementation.
 ///
-/// These marker interfaces/bases exist SPECIFICALLY for framework discovery, so a solution type wearing
-/// one is exactly what an assembly scan registers — matching by that shape is the conservative rule (it
-/// roots the handler, not its unrelated neighbours). A broad Scrutor "AddClasses().AsImplementedInterfaces()"
-/// registers every interface-implementer, but rooting every implementer in the assembly IS blanket-rooting
-/// (§3.8) and would leak liveness to unrelated interface implementers, so it is deliberately NOT done: a
-/// scanned handler/consumer is caught by its marker interface anyway. A rooted type keeps its interface-
-/// method implementations alive for free via AddPolymorphismEdges; the plugin additionally roots the marker
-/// interface it satisfies (the registration is keyed on the interface — that is what the runtime resolves).
+/// These marker interfaces/bases exist specifically for framework discovery. A broad Scrutor
+/// <c>AddClasses().AsImplementedInterfaces()</c> scan is deliberately not modeled because rooting every
+/// implementer would hide dead code. A rooted type keeps its interface-method implementations alive through
+/// normal polymorphism edges; the plugin also roots the recognized marker interface.
 /// </summary>
 internal sealed class ScanningDiPlugin : IKnipPlugin
 {
     public string Id => "scanningDi";
 
-    // Framework marker interfaces (simple name, any arity) whose implementers are scan-registered.
-    private static readonly HashSet<string> HandlerInterfaceNames = new(StringComparer.Ordinal)
-    {
-        "IRequestHandler",       // MediatR
-        "INotificationHandler",  // MediatR
-        "IStreamRequestHandler", // MediatR
-        "IConsumer",             // MassTransit (H12)
-    };
+    private static readonly string[] HandlerInterfaces =
+    [
+        "MediatR.Contracts::MediatR.IRequestHandler",
+        "MediatR::MediatR.IRequestHandler",
+        "MediatR.Contracts::MediatR.INotificationHandler",
+        "MediatR::MediatR.INotificationHandler",
+        "MediatR.Contracts::MediatR.IStreamRequestHandler",
+        "MediatR::MediatR.IStreamRequestHandler",
+        "MassTransit.Abstractions::MassTransit.IConsumer",
+        "MassTransit::MassTransit.IConsumer",
+    ];
 
-    // Base-class names whose subclasses are scan-registered (AutoMapper profiles).
-    private static readonly HashSet<string> ScannedBaseNames = new(StringComparer.Ordinal)
-    {
-        "Profile", // AutoMapper
-    };
+    private const string AutoMapperProfile = "AutoMapper::AutoMapper.Profile";
 
     public void Contribute(PluginContext ctx, CancellationToken ct)
     {
         var compilation = ctx.Compilation;
         var sink = ctx.Sink;
+        var matcher = new FrameworkTypeMatcher(ctx.Settings);
 
         foreach (var tree in compilation.SyntaxTrees)
         {
@@ -61,7 +57,8 @@ internal sealed class ScanningDiPlugin : IKnipPlugin
             foreach (var invocation in root.DescendantNodes().OfType<InvocationExpressionSyntax>())
             {
                 if (model.GetSymbolInfo(invocation, ct).Symbol is not IMethodSymbol method) continue;
-                if (DependencyInjectionRegistration.TryResolve(model, invocation, method, ct, out var registration)
+                if (DependencyInjectionRegistration.TryResolve(
+                        model, invocation, method, matcher, ct, out var registration)
                     && registration.ActivatesConstructors)
                     RuntimeActivation.AddRoots(registration.ImplementationType, sink);
             }
@@ -73,24 +70,21 @@ internal sealed class ScanningDiPlugin : IKnipPlugin
                 // Only concrete, instantiable classes are what a scanner registers as implementations.
                 if (type.IsAbstract || type.TypeKind != TypeKind.Class) continue;
 
-                if (IsScanRegistered(type))
-                    RootScannedType(type, sink);
+                if (IsScanRegistered(type, matcher))
+                    RootScannedType(type, matcher, sink);
             }
         }
     }
 
-    /// <summary>True if this concrete type has the shape an assembly scanner would register.</summary>
-    private static bool IsScanRegistered(INamedTypeSymbol type)
+    /// <summary>True if this concrete type has a resolved shape an assembly scanner registers.</summary>
+    private static bool IsScanRegistered(INamedTypeSymbol type, FrameworkTypeMatcher matcher)
     {
-        // Framework marker interfaces (MediatR handlers, MassTransit consumers) — matched by name,
-        // any generic arity.
         foreach (var iface in type.AllInterfaces)
-            if (HandlerInterfaceNames.Contains(iface.Name))
+            if (HandlerInterfaces.Any(identity => matcher.Matches(iface, identity)))
                 return true;
 
-        // Framework base classes (AutoMapper Profile) — matched by name up the base chain.
         for (var b = type.BaseType; b is not null; b = b.BaseType)
-            if (ScannedBaseNames.Contains(b.Name))
+            if (matcher.Matches(b, AutoMapperProfile))
                 return true;
 
         return false;
@@ -104,14 +98,15 @@ internal sealed class ScanningDiPlugin : IKnipPlugin
     /// contract and (via polymorphism edges) the concrete implementation alive. Over-rooting here is a
     /// false negative at worst (§3.8), scoped to THIS type and the framework interface it satisfies.
     /// </summary>
-    private static void RootScannedType(INamedTypeSymbol type, IContributionSink sink)
+    private static void RootScannedType(
+        INamedTypeSymbol type,
+        FrameworkTypeMatcher matcher,
+        IContributionSink sink)
     {
         RootTypeAndMembers(type, sink);
 
-        // Root the recognized framework marker interface(s) this type implements (and their members):
-        // the registration is keyed on the interface, so the interface is what the runtime resolves.
         foreach (var iface in type.AllInterfaces)
-            if (HandlerInterfaceNames.Contains(iface.Name))
+            if (HandlerInterfaces.Any(identity => matcher.Matches(iface, identity)))
                 RootTypeAndMembers(iface, sink);
     }
 

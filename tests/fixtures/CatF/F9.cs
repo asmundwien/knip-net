@@ -2,10 +2,8 @@ using System;
 
 namespace CatF.F9;
 
-// F9: MSTest [TestInitialize] setup method is rooted by the DEFAULT config (the shipped defaults now
-// include the MSTest lifecycle hooks). Rooting the setup method keeps a helper it calls alive and its
-// containing type alive (EvaluateRoots walks the ContainingType chain). Attributes match by NAME
-// with/without the "Attribute" suffix, so a LOCAL TestInitializeAttribute suffices — no MSTest package.
+// F9: the local MSTest-shaped attribute is an explicit configured alias. Rooting Setup keeps its helper
+// and containing type alive without treating every TestInitializeAttribute as framework-owned.
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class TestInitializeAttribute : Attribute { }
 

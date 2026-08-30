@@ -2,9 +2,8 @@ using System;
 
 namespace CatF.F11;
 
-// F11: NUnit one-time lifecycle hooks ([OneTimeSetUp]/[OneTimeTearDown]) are rooted by the DEFAULT
-// config. They run once per test fixture and are invoked by the runner, never by name. LOCAL attribute
-// stand-ins (matched by name) keep this zero-NuGet/offline.
+// F11: local NUnit-shaped lifecycle attributes are explicit configured aliases. They keep this fixture
+// offline without broadening the built-in framework identities.
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class OneTimeSetUpAttribute : Attribute { }
 

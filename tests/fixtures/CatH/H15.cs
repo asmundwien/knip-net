@@ -22,8 +22,8 @@ public sealed class AuthenticationStateProvider { }
 
 public interface IAuthorizationRequirement { }
 
-// The abstract base the framework's policy engine dispatches through: HandleRequirementAsync is called
-// reflectively per policy evaluation. Local stand-in — matched by simple NAME "AuthorizationHandler".
+// The abstract base the framework's policy engine dispatches through. The fixture config explicitly aliases
+// it to Microsoft.AspNetCore.Authorization.AuthorizationHandler.
 public abstract class AuthorizationHandler<TRequirement>
     where TRequirement : IAuthorizationRequirement
 {

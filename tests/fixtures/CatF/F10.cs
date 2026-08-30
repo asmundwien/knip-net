@@ -2,9 +2,8 @@ using System;
 
 namespace CatF.F10;
 
-// F10: MSTest static lifecycle hooks ([ClassInitialize]/[AssemblyInitialize]) and [DataTestMethod] are
-// rooted by the DEFAULT config. These run once per class / per assembly and are invoked by the runner,
-// never by name. LOCAL attribute stand-ins (matched by name) keep this zero-NuGet/offline.
+// F10: local MSTest-shaped lifecycle attributes are explicit configured aliases. The methods are invoked
+// by the represented runner and never named in source.
 [AttributeUsage(AttributeTargets.Method)]
 public sealed class ClassInitializeAttribute : Attribute { }
 

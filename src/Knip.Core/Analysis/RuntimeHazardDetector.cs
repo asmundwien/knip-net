@@ -1,3 +1,4 @@
+using Knip.Core.Configuration;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -17,36 +18,29 @@ namespace Knip.Core.Analysis;
 /// </summary>
 internal static class RuntimeHazardDetector
 {
-    // Serialize/deserialize methods whose resolved target type's data members a serializer reflects over.
-    private static readonly HashSet<string> SerializerMethodNames = new(StringComparer.Ordinal)
-    {
-        "Serialize", "Deserialize",           // System.Text.Json.JsonSerializer.Serialize/Deserialize<T>
-        "SerializeObject", "DeserializeObject", // Newtonsoft.Json.JsonConvert.SerializeObject/DeserializeObject<T>
-    };
+    private const string SystemTextJsonSerializer = "System.Text.Json::System.Text.Json.JsonSerializer";
+    private const string NewtonsoftJsonConvert = "Newtonsoft.Json::Newtonsoft.Json.JsonConvert";
 
-    // Containing-type simple names that host the recognized serializer entry points.
-    private static readonly HashSet<string> SerializerContainingTypeNames = new(StringComparer.Ordinal)
-    {
-        "JsonSerializer", "JsonConvert",
-    };
-
-    // Config-binding methods + the containing types that host them (Microsoft.Extensions.Configuration /
-    // .Options). Get<T>()/GetSection(...).Get<T>() and Bind(instance) live on ConfigurationBinder (surfaced
-    // as extensions on IConfiguration/IConfigurationSection); Configure<T>(section) lives on the options
-    // service-collection extensions.
-    private static readonly HashSet<string> ConfigBinderContainingTypeNames = new(StringComparer.Ordinal)
-    {
-        "ConfigurationBinder", "IConfiguration", "IConfigurationSection",
-        "OptionsConfigurationServiceCollectionExtensions", "OptionsServiceCollectionExtensions",
-    };
+    private static readonly string[] ConfigBinderTypes =
+    [
+        "Microsoft.Extensions.Configuration.Binder::Microsoft.Extensions.Configuration.ConfigurationBinder",
+        "Microsoft.Extensions.Options.ConfigurationExtensions::Microsoft.Extensions.DependencyInjection.OptionsConfigurationServiceCollectionExtensions",
+        "Microsoft.Extensions.Options::Microsoft.Extensions.DependencyInjection.OptionsServiceCollectionExtensions",
+    ];
 
     /// <summary>
     /// Walk one project's syntax trees for serializer, config-binding, and DI registration shapes. Records
     /// type targets plus uncertain DI activation roots; activation closures are completed after the full
     /// solution graph exists. Additive across projects; never mutates reachability.
     /// </summary>
-    public static void Collect(Compilation compilation, GraphState state, CancellationToken ct)
+    public static void Collect(
+        Compilation compilation,
+        KnipConfig config,
+        GraphState state,
+        CancellationToken ct)
     {
+        var scanningMatcher = new FrameworkTypeMatcher(config.PluginSettingsFor("scanningDi"));
+        var serializationMatcher = new FrameworkTypeMatcher(config.PluginSettingsFor("serialization"));
         var genericConfigHelpers = new Dictionary<string, HashSet<int>>(StringComparer.Ordinal);
 
         foreach (var tree in compilation.SyntaxTrees)
@@ -58,15 +52,13 @@ internal static class RuntimeHazardDetector
             {
                 if (model.GetSymbolInfo(inv, ct).Symbol is not IMethodSymbol method) continue;
 
-                if (DependencyInjectionRegistration.TryResolve(model, inv, method, ct, out var registration)
+                if (DependencyInjectionRegistration.TryResolve(
+                        model, inv, method, scanningMatcher, ct, out var registration)
                     && !registration.ActivatesConstructors)
                     RecordActivationRoots(registration.ImplementationType, state);
-                var containingName = method.ContainingType?.Name;
-                if (containingName is null) continue;
 
-                // Serialization USAGE: a recognized call → its target and collection element types.
-                if (SerializerMethodNames.Contains(method.Name)
-                    && SerializerContainingTypeNames.Contains(containingName))
+                // Serialization usage: a recognized call roots its target and collection element shapes.
+                if (IsSerializerMethod(method, serializationMatcher))
                 {
                     foreach (var type in SerializedTypeTraversal.SelfAndCollectionElements(
                         TargetType(model, inv, method, ct)))
@@ -76,7 +68,9 @@ internal static class RuntimeHazardDetector
 
                 // CONFIG binding: Get<T>() / GetSection(...).Get<T>() / Configure<T>(section) resolve their
                 // type ARGUMENT; Bind(instance) resolves the bound VALUE's type (its last argument).
-                if (!ConfigBinderContainingTypeNames.Contains(containingName)) continue;
+                if (!ConfigBinderTypes.Any(identity =>
+                        SymbolIdentity.MatchesType((method.ReducedFrom ?? method).ContainingType, identity)))
+                    continue;
                 switch (method.Name)
                 {
                     case "Get" or "Configure":
@@ -115,6 +109,14 @@ internal static class RuntimeHazardDetector
             }
         }
     }
+
+    private static bool IsSerializerMethod(IMethodSymbol method, FrameworkTypeMatcher matcher) =>
+        method.Name switch
+        {
+            "Serialize" or "Deserialize" => matcher.Matches(method.ContainingType, SystemTextJsonSerializer),
+            "SerializeObject" or "DeserializeObject" => matcher.Matches(method.ContainingType, NewtonsoftJsonConvert),
+            _ => false,
+        };
 
     private static void RecordActivationRoots(INamedTypeSymbol type, GraphState state)
     {

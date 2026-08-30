@@ -71,6 +71,9 @@ The annotated [`knip.json`](knip.json) documents the available settings and plug
 - Add project-specific entry points for code invoked by a framework or by reflection that the built-in plugins do not recognize.
 - Use ignores for generated code and known runtime-only references that static analysis cannot prove.
 - Enable opt-in plugins only for frameworks the solution uses.
+- Built-in framework matching uses resolved namespace and defining assembly identities. A same-named
+  application type is not a framework shape. For source-only stand-ins or compatible extensions, configure
+  an explicit attribute name or a plugin `aliases` mapping from canonical type to qualified local type.
 
 `--print-config` prints the effective config. Unknown keys produce a warning instead of failing the run.
 

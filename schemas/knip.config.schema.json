@@ -26,7 +26,11 @@
       "description": "Members the framework/runtime invokes without a by-name reference in your code.",
       "properties": {
         "symbolNames": { "type": "array", "items": { "type": "string" } },
-        "attributes": { "type": "array", "items": { "type": "string" } },
+        "attributes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Attribute identities. Built-ins use Assembly::Namespace.Type; namespace-qualified or simple configured values are explicit aliases. Attribute suffix optional."
+        },
         "baseTypes": { "type": "array", "items": { "type": "string" } },
         "implementedInterfaces": { "type": "array", "items": { "type": "string" } },
         "namePatterns": { "type": "array", "items": { "type": "string" } }
@@ -70,7 +74,15 @@
       "additionalProperties": {
         "type": "object",
         "properties": {
-          "enabled": { "type": "boolean" }
+          "enabled": { "type": "boolean" },
+          "aliases": {
+            "type": "object",
+            "description": "Explicit canonical framework type to local/user-extension type aliases. Keys and values are namespace-qualified type names; values may also use Assembly::Namespace.Type.",
+            "additionalProperties": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          }
         }
       }
     }

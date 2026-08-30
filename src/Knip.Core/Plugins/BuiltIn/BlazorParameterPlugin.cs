@@ -1,3 +1,4 @@
+using Knip.Core.Analysis;
 using Microsoft.CodeAnalysis;
 
 namespace Knip.Core.Plugins.BuiltIn;
@@ -8,39 +9,28 @@ namespace Knip.Core.Plugins.BuiltIn;
 /// framework from markup (<c>&lt;MyComponent Title="…" /&gt;</c>), and a <c>[Inject]</c> property is set by
 /// the DI container — neither is ever named in C# source, so the walker flags it dead. Promotes H6.
 ///
-/// Conservative (§3.8): roots ONLY the attribute-bearing member (and its accessors), NEVER blanket-roots a
-/// component type's members. Matched by attribute SIMPLE NAME (with or without the <c>Attribute</c> suffix),
-/// offline — no NuGet reference; fixtures use local stand-in attributes so the plugin ships with ZERO
-/// framework dependencies and is version-agnostic (invariant #9).
-///
-/// Recognizes:
-///   • [Parameter]            — component property bound from markup.
-///   • [CascadingParameter]   — component property supplied by a &lt;CascadingValue&gt; ancestor.
-///   • [SupplyParameterFromQuery] — routable-component property bound from the query string.
-///   • [EditorRequired]       — companion of [Parameter]; a member wearing it is a markup-bound parameter.
-///   • [Inject]               — property injected by the DI container (never assigned in source).
-///
-/// OFF by default (opt-in via <c>plugins.blazorParameter.enabled: true</c>): the recognized attribute names
-/// are common enough (a user's own <c>ParameterAttribute</c>) that rooting them everywhere is not safe as a
-/// default. When on, over-rooting here is a false negative at worst, scoped to the attribute-bearing member.
+/// Conservative (§3.8): roots only an attribute-bearing member and its accessors. Built-in attributes
+/// require their resolved Microsoft.AspNetCore.Components namespace and defining assembly;
+/// <c>plugins.blazorParameter.aliases</c> provides explicit canonical-to-alias mappings for offline
+/// fixtures and compatible user extensions.
 /// </summary>
 internal sealed class BlazorParameterPlugin : IKnipPlugin
 {
     public string Id => "blazorParameter";
 
-    // Attribute simple names (with or without the "Attribute" suffix) whose bearer is markup/DI-set.
-    private static readonly HashSet<string> RootingAttributeNames = new(StringComparer.Ordinal)
-    {
-        "Parameter",                 // Microsoft.AspNetCore.Components.ParameterAttribute
-        "CascadingParameter",        // Microsoft.AspNetCore.Components.CascadingParameterAttribute
-        "SupplyParameterFromQuery",  // Microsoft.AspNetCore.Components.SupplyParameterFromQueryAttribute
-        "EditorRequired",            // Microsoft.AspNetCore.Components.EditorRequiredAttribute (companion)
-        "Inject",                    // Microsoft.AspNetCore.Components.InjectAttribute
-    };
+    private static readonly string[] RootingAttributes =
+    [
+        "Microsoft.AspNetCore.Components::Microsoft.AspNetCore.Components.ParameterAttribute",
+        "Microsoft.AspNetCore.Components::Microsoft.AspNetCore.Components.CascadingParameterAttribute",
+        "Microsoft.AspNetCore.Components::Microsoft.AspNetCore.Components.SupplyParameterFromQueryAttribute",
+        "Microsoft.AspNetCore.Components::Microsoft.AspNetCore.Components.EditorRequiredAttribute",
+        "Microsoft.AspNetCore.Components::Microsoft.AspNetCore.Components.InjectAttribute",
+    ];
 
     public void Contribute(PluginContext ctx, CancellationToken ct)
     {
         var sink = ctx.Sink;
+        var matcher = new FrameworkTypeMatcher(ctx.Settings);
 
         foreach (var tree in ctx.Compilation.SyntaxTrees)
         {
@@ -52,24 +42,21 @@ internal sealed class BlazorParameterPlugin : IKnipPlugin
                          .OfType<Microsoft.CodeAnalysis.CSharp.Syntax.PropertyDeclarationSyntax>())
             {
                 if (model.GetDeclaredSymbol(propDecl, ct) is not IPropertySymbol property) continue;
-                if (!WearsRootingAttribute(property)) continue;
+                if (!WearsRootingAttribute(property, matcher)) continue;
 
                 RootPropertyAndAccessors(property, sink);
             }
         }
     }
 
-    private static bool WearsRootingAttribute(IPropertySymbol property)
+    private static bool WearsRootingAttribute(
+        IPropertySymbol property,
+        FrameworkTypeMatcher matcher)
     {
         foreach (var attr in property.GetAttributes())
-        {
-            var name = attr.AttributeClass?.Name;
-            if (name is null) continue;
-            var trimmed = name.EndsWith("Attribute", StringComparison.Ordinal)
-                ? name[..^"Attribute".Length]
-                : name;
-            if (RootingAttributeNames.Contains(trimmed)) return true;
-        }
+            if (RootingAttributes.Any(identity => matcher.MatchesAttribute(attr.AttributeClass, identity)))
+                return true;
+
         return false;
     }
 

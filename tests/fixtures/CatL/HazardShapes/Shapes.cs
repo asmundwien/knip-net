@@ -1,24 +1,7 @@
 namespace CatL.HazardShapes;
 
-// ── Local stand-ins (offline; the detector matches serializer/config APIs by simple method + containing
-//    type name, so no NuGet reference is needed — mirrors SerializationPlugin's local-serializer approach). ──
-public static class JsonConvert
-{
-    // Newtonsoft-shaped: JsonConvert.DeserializeObject<T> — the detector's usage-shaped serialization hook.
-    public static T DeserializeObject<T>(string json) => default!;
-}
-
-public interface IConfiguration { }
-
-public static class ConfigurationBinder
-{
-    // Microsoft.Extensions.Configuration-shaped: ConfigurationBinder.Get<T> — the config-bound hook.
-    public static T Get<T>(this IConfiguration config) => default!;
-}
-
-// Applied attributes are alive (D7); named so the detector recognizes them by simple name.
-public sealed class JsonPropertyAttribute : System.Attribute { }
-public sealed class SerializableAttribute : System.Attribute { }
+// The fixture uses framework-provided serializer and configuration symbols so namespace and defining-
+// assembly checks are exercised without a package restore.
 
 // ── USAGE-shaped serialization: UserDto is alive (deserialized in Startup) but its data members are never
 //    read in source — the field shape. Data members are tagged serializationShaped; the DEAD METHOD is not. ─
@@ -38,7 +21,7 @@ public sealed class PlainPoco
 
 // ── ATTRIBUTE-shaped serialization (type-level [Serializable]). Version is INTERNAL (no publicApi hazard),
 //    so it isolates the proof that a serialization hazard ALONE demotes the finding to low. ───────────────
-[Serializable]
+[System.Serializable]
 public sealed class LegacyDto
 {
     internal int Version;                     // DEAD internal field -> serializationShaped (type attr); low
@@ -49,7 +32,7 @@ public sealed class LegacyDto
 //    INTERNAL so the serialization hazard, not publicApi, is the graded signal. ───────────────────────────
 public sealed class TaggedDto
 {
-    [JsonProperty] internal string Marked { get; set; } = "";  // DEAD -> serializationShaped (member attr)
+    [System.Text.Json.Serialization.JsonPropertyName("marked")] internal string Marked { get; set; } = "";  // DEAD -> serializationShaped (member attr)
     internal string Plain { get; set; } = "";                  // DEAD, no attr, type not serialized -> NOT tagged (sibling)
 }
 
@@ -69,7 +52,8 @@ public sealed class HelperBoundOptions
 
 public static class OptionsFactory
 {
-    public static T Read<T>(IConfiguration config) => config.Get<T>();
+    public static T Read<T>(Microsoft.Extensions.Configuration.IConfiguration config) =>
+        Microsoft.Extensions.Configuration.ConfigurationBinder.Get<T>(config)!;
 }
 
 public class SharedOptions
@@ -94,12 +78,12 @@ public sealed class Startup
 {
     public void ConfigureServices()
     {
-        System.Console.WriteLine(JsonConvert.DeserializeObject<UserDto>("{}"));
+        System.Console.WriteLine(System.Text.Json.JsonSerializer.Deserialize<UserDto>("{}"));
 
-        IConfiguration config = null!;
-        System.Console.WriteLine(config.Get<DbOptions>());
+        Microsoft.Extensions.Configuration.IConfiguration config = null!;
+        System.Console.WriteLine(Microsoft.Extensions.Configuration.ConfigurationBinder.Get<DbOptions>(config));
         System.Console.WriteLine(OptionsFactory.Read<HelperBoundOptions>(config));
-        System.Console.WriteLine(config.Get<DerivedBoundOptions>());
+        System.Console.WriteLine(Microsoft.Extensions.Configuration.ConfigurationBinder.Get<DerivedBoundOptions>(config));
 
         System.Console.WriteLine(new LegacyDto());
         System.Console.WriteLine(new TaggedDto());

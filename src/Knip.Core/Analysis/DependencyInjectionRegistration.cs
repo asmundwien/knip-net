@@ -18,15 +18,26 @@ internal static class DependencyInjectionRegistration
         "TryAddTransient",
     };
 
+    internal static readonly string[] RegistrationProviders =
+    [
+        "Microsoft.Extensions.DependencyInjection.Abstractions::Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions",
+        "Microsoft.Extensions.DependencyInjection::Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions",
+        "Microsoft.Extensions.DependencyInjection.Abstractions::Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions",
+        "Microsoft.Extensions.DependencyInjection::Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions",
+    ];
+
     public static bool TryResolve(
         SemanticModel model,
         InvocationExpressionSyntax invocation,
         IMethodSymbol method,
+        FrameworkTypeMatcher matcher,
         CancellationToken ct,
         out DiRegistration registration)
     {
         registration = default;
-        if (!RegistrationMethodNames.Contains(method.Name))
+        if (!RegistrationMethodNames.Contains(method.Name)
+            || !RegistrationProviders.Any(identity =>
+                matcher.Matches((method.ReducedFrom ?? method).ContainingType, identity)))
             return false;
 
         if (model.GetOperation(invocation, ct) is not IInvocationOperation operation)
