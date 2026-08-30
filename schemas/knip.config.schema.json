@@ -31,9 +31,21 @@
           "items": { "type": "string" },
           "description": "Attribute identities. Built-ins use Assembly::Namespace.Type; namespace-qualified or simple configured values are explicit aliases. Attribute suffix optional."
         },
-        "baseTypes": { "type": "array", "items": { "type": "string" } },
-        "implementedInterfaces": { "type": "array", "items": { "type": "string" } },
-        "namePatterns": { "type": "array", "items": { "type": "string" } }
+        "baseTypes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Custom base types whose subtypes and externally visible members are roots. Built-in framework entry types use convention-specific plugins."
+        },
+        "implementedInterfaces": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Custom interfaces whose implementers and externally visible members are roots. Built-in hosted services use convention-specific plugin handling."
+        },
+        "namePatterns": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Custom type-name globs whose matching types and externally visible members are roots."
+        }
       }
     },
     "roots": {

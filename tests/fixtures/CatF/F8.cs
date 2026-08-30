@@ -1,10 +1,7 @@
 namespace CatF.F8;
 
-// F8: proves the entry-point config actually applies. This type is rooted by DEFAULT config (its name
-// matches the default "*Controller" NamePattern). The F8 test runs with a config whose EntryPoints has
-// ALL-EMPTY lists, so no default rooting survives: the type is entirely unreferenced and is flagged
-// (outermost). A green row means "config replacement removed the framework default that had kept it
-// alive" — the RED-FLIP evidence for the whole Category F rooting story.
+// F8: a controller-like name without MVC framework evidence is dead by default. The paired test then
+// configures the broad "*Controller" escape hatch explicitly and proves that custom rooting still works.
 public sealed class EmptyProbeController
 {
     public void Index() { }

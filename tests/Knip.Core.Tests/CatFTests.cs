@@ -34,11 +34,15 @@ public sealed class CatFTests
             findings);
     }
 
-    [Fact] // F2: *Controller name pattern (default) roots type + public members; private member and a
-           // non-controller type stay dead (dead-siblings).
-    public async Task F2_controller_name_pattern_roots_type_and_public_members()
+    [Fact] // F2: an explicitly configured *Controller pattern roots the type and public members;
+           // private members and non-matching types stay dead.
+    public async Task F2_configured_controller_name_pattern_roots_type_and_public_members()
     {
-        var findings = await FindingsIn("CatF.F2"); // default config
+        var config = new KnipConfig
+        {
+            EntryPoints = new EntryPointConfig { NamePatterns = ["*Controller"] },
+        };
+        var findings = await FindingsIn("CatF.F2", config);
         Assert.Equal(
             new HashSet<string> { "CatF.F2.FooController.Helper()", "CatF.F2.FooService" },
             findings);
@@ -126,32 +130,21 @@ public sealed class CatFTests
             findings);
     }
 
-    [Fact] // F8: RED-FLIP. Rooted by DEFAULT config (*Controller), then flagged once EntryPoints is
-           // emptied -> proves the config actually drives rooting.
-    public async Task F8_emptied_entry_points_flip_previously_rooted_to_dead()
+    [Fact] // F8: controller-like names are not framework roots without MVC evidence. The broad custom
+           // name-pattern escape hatch still roots the type when explicitly configured.
+    public async Task F8_controller_name_requires_framework_evidence_or_explicit_pattern()
     {
-        // Baseline: default config roots the *Controller type, so only the private-less public member
-        // is alive and the scenario is clean (nothing flagged in CatF.F8).
-        var rootedByDefault = await FindingsIn("CatF.F8"); // default config
-        Assert.Empty(rootedByDefault);
-
-        // Flip: all entry-point lists empty -> no default rooting -> the type is entirely dead and is
-        // reported (outermost).
-        var empty = new KnipConfig
-        {
-            EntryPoints = new EntryPointConfig
-            {
-                SymbolNames = [],
-                Attributes = [],
-                BaseTypes = [],
-                ImplementedInterfaces = [],
-                NamePatterns = [],
-            },
-        };
-        var flipped = await FindingsIn("CatF.F8", empty);
+        var byDefault = await FindingsIn("CatF.F8");
         Assert.Equal(
             new HashSet<string> { "CatF.F8.EmptyProbeController" },
-            flipped);
+            byDefault);
+
+        var explicitPattern = new KnipConfig
+        {
+            EntryPoints = new EntryPointConfig { NamePatterns = ["*Controller"] },
+        };
+        var configured = await FindingsIn("CatF.F8", explicitPattern);
+        Assert.Empty(configured);
     }
 
     [Fact] // F9: an explicit local [TestInitialize] alias roots setup and its helper; an unattributed
@@ -199,11 +192,14 @@ public sealed class CatFTests
             findings);
     }
 
-    [Fact] // F13 (FIX #4b): an entry type (*Controller) is DI-constructed, so its instance ctor is rooted;
-           // a ctor-assigned field and a ctor-only helper stay ALIVE; a never-used field is the dead-sibling.
+    [Fact] // F13: an explicitly configured entry type is runtime-activated, so its ctor closure stays alive.
     public async Task F13_entry_type_ctor_keeps_ctor_only_field_and_helper_alive()
     {
-        var findings = await FindingsIn("CatF.F13"); // default config
+        var config = new KnipConfig
+        {
+            EntryPoints = new EntryPointConfig { NamePatterns = ["*Controller"] },
+        };
+        var findings = await FindingsIn("CatF.F13", config);
         Assert.Equal(
             new HashSet<string> { "CatF.F13.WidgetController._unusedField" },
             findings);

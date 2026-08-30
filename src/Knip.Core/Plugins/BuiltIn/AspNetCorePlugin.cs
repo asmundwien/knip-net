@@ -25,10 +25,10 @@ namespace Knip.Core.Plugins.BuiltIn;
 /// Recognizes resolved framework type identities. Built-in matches require the expected namespace and
 /// defining assembly. <c>plugins.aspnetcore.aliases</c> can map a canonical framework type to explicit
 /// namespace-qualified stand-ins or compatible user extensions without making simple names global.
-/// Supported conventions are middleware, MVC/Razor filters, startup filters, authorization handlers and
-/// policy providers, Blazor component lifecycle methods, Application Insights processors/initializers,
-/// and health checks. Only the framework-dispatched entry members and runtime activation closure are rooted;
-/// unrelated members remain reportable.
+/// Supported conventions include MVC controllers, Razor page models, SignalR hubs, hosted services,
+/// Blazor components, middleware, MVC/Razor filters, startup filters, authorization handlers and policy
+/// providers, Application Insights processors/initializers, and health checks. Only framework-dispatched
+/// entry members and runtime activation closure are rooted; unrelated members remain reportable.
 ///
 /// ON by default because field validation found these conventions produce dangerous high-confidence false
 /// positives. Contributions remain additive, so an imprecise configured alias can only hide a finding.
@@ -47,6 +47,24 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         "Microsoft.AspNetCore.Authorization::Microsoft.AspNetCore.Authorization.IAuthorizationHandler";
     private const string AuthorizationHandlerBase =
         "Microsoft.AspNetCore.Authorization::Microsoft.AspNetCore.Authorization.AuthorizationHandler";
+    private const string ControllerBase =
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.ControllerBase";
+    private const string NonActionAttribute =
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.NonActionAttribute";
+    private const string ControllerAttribute =
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.ControllerAttribute";
+    private const string NonControllerAttribute =
+        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.NonControllerAttribute";
+    private const string HubBase =
+        "Microsoft.AspNetCore.SignalR.Core::Microsoft.AspNetCore.SignalR.Hub";
+    private const string PageModelBase =
+        "Microsoft.AspNetCore.Mvc.RazorPages::Microsoft.AspNetCore.Mvc.RazorPages.PageModel";
+    private const string NonHandlerAttribute =
+        "Microsoft.AspNetCore.Mvc.RazorPages::Microsoft.AspNetCore.Mvc.RazorPages.NonHandlerAttribute";
+    private const string HostedServiceInterface =
+        "Microsoft.Extensions.Hosting.Abstractions::Microsoft.Extensions.Hosting.IHostedService";
+    private const string BackgroundServiceBase =
+        "Microsoft.Extensions.Hosting.Abstractions::Microsoft.Extensions.Hosting.BackgroundService";
     private const string ComponentBase =
         "Microsoft.AspNetCore.Components::Microsoft.AspNetCore.Components.ComponentBase";
     private const string PolicyProviderInterface =
@@ -136,6 +154,9 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         var compilation = ctx.Compilation;
         var sink = ctx.Sink;
         var matcher = new FrameworkTypeMatcher(ctx.Settings);
+        var supportsConventionalControllers = matcher.Matches(
+            compilation.GetTypeByMetadataName("Microsoft.AspNetCore.Mvc.ControllerBase"),
+            ControllerBase);
 
         foreach (var tree in compilation.SyntaxTrees)
         {
@@ -163,7 +184,7 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
                 // Only concrete, instantiable classes are what the framework activates.
                 if (type.IsAbstract || type.TypeKind != TypeKind.Class) continue;
 
-                RootFrameworkDispatchedMembers(type, matcher, sink);
+                RootFrameworkDispatchedMembers(type, supportsConventionalControllers, matcher, sink);
             }
         }
     }
@@ -213,6 +234,7 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
     /// </summary>
     private static void RootFrameworkDispatchedMembers(
         INamedTypeSymbol type,
+        bool supportsConventionalControllers,
         FrameworkTypeMatcher matcher,
         IContributionSink sink)
     {
@@ -224,11 +246,35 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         var isTelemetryInitializer = false;
         var isHealthCheck = false;
         var isPolicyProvider = false;
+        var isController = false;
+        var isHub = false;
+        var isPageModel = false;
+        var isFrameworkEntryType = false;
         var isFrameworkActivated = false;
+        var isExcludedController = type.DeclaredAccessibility != Accessibility.Public
+            || type.ContainingType is not null
+            || type.IsGenericType
+            || HasAttributeInTypeHierarchy(type, NonControllerAttribute, matcher);
+        if (!isExcludedController
+            && (HasAttributeInTypeHierarchy(type, ControllerAttribute, matcher)
+                || supportsConventionalControllers
+                && type.Name.EndsWith("Controller", StringComparison.OrdinalIgnoreCase)))
+        {
+            isController = true;
+            isFrameworkEntryType = true;
+            isFrameworkActivated = true;
+        }
+
 
         foreach (var iface in type.AllInterfaces)
         {
-            if (matcher.Matches(iface, MiddlewareInterface))
+            if (matcher.Matches(iface, HostedServiceInterface))
+            {
+                isFrameworkEntryType = true;
+                isFrameworkActivated = true;
+                RootInterfaceMethodImplementations(type, iface, sink);
+            }
+            else if (matcher.Matches(iface, MiddlewareInterface))
             {
                 isFrameworkActivated = true;
                 RootInterfaceMethodImplementations(type, iface, sink);
@@ -273,14 +319,39 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         // Base-class conventions retain their role through explicit canonical-to-alias mappings.
         for (var b = type.BaseType; b is not null; b = b.BaseType)
         {
-            if (matcher.Matches(b, AuthorizationHandlerBase))
+            if (!isExcludedController && matcher.Matches(b, ControllerBase))
             {
-                isAuthorizationHandler = true;
+                isController = true;
+                isFrameworkEntryType = true;
                 isFrameworkActivated = true;
             }
             else if (matcher.Matches(b, ComponentBase))
             {
                 RootMethodsByName(type, BlazorLifecycleMethodNames, sink);
+                isFrameworkEntryType = true;
+                isFrameworkActivated = true;
+            }
+            else if (matcher.Matches(b, HubBase))
+            {
+                isHub = true;
+                isFrameworkEntryType = true;
+                isFrameworkActivated = true;
+            }
+            else if (matcher.Matches(b, PageModelBase))
+            {
+                isPageModel = true;
+                isFrameworkEntryType = true;
+                isFrameworkActivated = true;
+            }
+            else if (matcher.Matches(b, BackgroundServiceBase))
+            {
+                RootBackgroundServiceOverrides(type, matcher, sink);
+                isFrameworkEntryType = true;
+                isFrameworkActivated = true;
+            }
+            else if (matcher.Matches(b, AuthorizationHandlerBase))
+            {
+                isAuthorizationHandler = true;
                 isFrameworkActivated = true;
             }
             else if (matcher.Matches(b, DefaultPolicyProviderBase))
@@ -289,6 +360,25 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
                 isFrameworkActivated = true;
             }
         }
+
+        if (isController)
+            RootPublicInstanceMethods(type, static _ => true, NonActionAttribute, matcher, sink);
+
+        if (isHub)
+            RootPublicInstanceMethods(type, static _ => true, canonicalExclusionAttribute: null, matcher, sink);
+
+        if (isPageModel)
+            RootPublicInstanceMethods(
+                type,
+                static method => method.Name.Length > 2
+                    && method.Name.StartsWith("On", StringComparison.Ordinal)
+                    && char.IsUpper(method.Name[2]),
+                NonHandlerAttribute,
+                matcher,
+                sink);
+
+        if (isFrameworkEntryType)
+            sink.AddRoot(type);
 
         if (isAuthorizationHandler)
         {
@@ -340,6 +430,72 @@ internal sealed class AspNetCorePlugin : IKnipPlugin
         foreach (var member in type.GetMembers())
             if (member is IMethodSymbol { MethodKind: MethodKind.Ordinary } method && names.Contains(method.Name))
                 sink.AddRoot(method);
+    }
+
+
+    private static bool HasAttributeInTypeHierarchy(
+        INamedTypeSymbol type, string canonicalIdentity, FrameworkTypeMatcher matcher)
+    {
+        foreach (var current in RuntimeActivation.TypeChain(type))
+            if (current.GetAttributes().Any(attribute =>
+                    matcher.MatchesAttribute(attribute.AttributeClass, canonicalIdentity)))
+                return true;
+
+        return false;
+    }
+
+    private static bool HasAttributeInOverrideChain(
+        IMethodSymbol method, string canonicalIdentity, FrameworkTypeMatcher matcher)
+    {
+        for (var current = method; current is not null; current = current.OverriddenMethod)
+            if (current.GetAttributes().Any(attribute =>
+                    matcher.MatchesAttribute(attribute.AttributeClass, canonicalIdentity)))
+                return true;
+
+        return false;
+    }
+
+    private static void RootPublicInstanceMethods(
+        INamedTypeSymbol type,
+        Func<IMethodSymbol, bool> isEntryMethod,
+        string? canonicalExclusionAttribute,
+        FrameworkTypeMatcher matcher,
+        IContributionSink sink)
+    {
+        foreach (var current in RuntimeActivation.TypeChain(type))
+        {
+            foreach (var method in current.GetMembers().OfType<IMethodSymbol>())
+            {
+                var excluded = canonicalExclusionAttribute is not null
+                    && HasAttributeInOverrideChain(method, canonicalExclusionAttribute, matcher);
+                if (method.MethodKind != MethodKind.Ordinary
+                    || method.IsStatic
+                    || method.IsAbstract
+                    || method.IsGenericMethod
+                    || method.DeclaredAccessibility != Accessibility.Public
+                    || !isEntryMethod(method)
+                    || excluded)
+                    continue;
+
+                sink.AddRoot(method);
+            }
+        }
+    }
+
+    private static void RootBackgroundServiceOverrides(
+        INamedTypeSymbol type, FrameworkTypeMatcher matcher, IContributionSink sink)
+    {
+        foreach (var method in type.GetMembers().OfType<IMethodSymbol>())
+        {
+            for (var overridden = method.OverriddenMethod;
+                 overridden is not null;
+                 overridden = overridden.OverriddenMethod)
+            {
+                if (!matcher.Matches(overridden.ContainingType, BackgroundServiceBase)) continue;
+                sink.AddRoot(method);
+                break;
+            }
+        }
     }
 
     /// <summary>

@@ -660,7 +660,7 @@ public sealed class PluginsTests
     }
 
     [Fact]
-    public async Task Resolved_framework_shapes_remain_alive()
+    public async Task Resolved_framework_shapes_only_root_supported_conventions()
     {
         var config = new KnipConfig
         {
@@ -669,12 +669,92 @@ public sealed class PluginsTests
 
         var findings = await FindingsIn("CatH.QualifiedFrameworkShapes", config);
 
-        Assert.DoesNotContain("CatH.QualifiedFrameworkShapes.FrameworkEndpoint.Routed()", findings);
-        Assert.DoesNotContain("CatH.QualifiedFrameworkShapes.FrameworkEndpoint.RoutedCore()", findings);
+        Assert.Contains("CatH.QualifiedFrameworkShapes.FrameworkEndpoint.Routed()", findings);
+        Assert.Contains("CatH.QualifiedFrameworkShapes.FrameworkEndpoint.RoutedCore()", findings);
         Assert.DoesNotContain("CatH.QualifiedFrameworkShapes.FrameworkComponent.Value", findings);
         Assert.DoesNotContain("CatH.QualifiedFrameworkShapes.FrameworkComponent.InitializeCore()", findings);
         Assert.Contains("CatH.QualifiedFrameworkShapes.FrameworkEndpoint.NeverCalled()", findings);
         Assert.Contains("CatH.QualifiedFrameworkShapes.FrameworkComponent.NeverRendered()", findings);
+    }
+
+    [Fact]
+    public async Task Framework_controller_roots_actions_and_activation_without_blanket_members()
+    {
+        var findings = await FindingsIn("CatH.FrameworkControllerEntry", new KnipConfig());
+
+        Assert.Equal(
+            new HashSet<string>
+            {
+                "CatH.FrameworkControllerEntry.GhostController",
+                "CatH.FrameworkControllerEntry.OrdersController.PublicHelper()",
+                "CatH.FrameworkControllerEntry.OrdersController.ProtectedHelper()",
+                "CatH.FrameworkControllerEntry.OrdersController.GenericHelper<T>()",
+                "CatH.FrameworkControllerEntry.OrdersController.StaticHelper()",
+                "CatH.FrameworkControllerEntry.PlainController.PublicHelper()",
+                "CatH.FrameworkControllerEntry.PlainController.ProtectedHelper()",
+                "CatH.FrameworkControllerEntry.AttributedEndpoint.PublicHelper()",
+                "CatH.FrameworkControllerEntry.IgnoredController",
+                "CatH.FrameworkControllerEntry.InternalController",
+            },
+            findings);
+    }
+
+    [Fact]
+    public async Task Framework_component_roots_lifecycle_and_activation_without_blanket_members()
+    {
+        var findings = await FindingsIn("CatH.FrameworkComponentEntry", new KnipConfig());
+
+        Assert.Equal(
+            new HashSet<string>
+            {
+                "CatH.FrameworkComponentEntry.DashboardComponent.PublicHelper()",
+                "CatH.FrameworkComponentEntry.DashboardComponent.ProtectedHelper()",
+            },
+            findings);
+    }
+
+    [Fact]
+    public async Task Framework_hub_roots_hub_methods_and_activation_without_blanket_members()
+    {
+        var findings = await FindingsIn("CatH.FrameworkHubEntry", new KnipConfig());
+
+        Assert.Equal(
+            new HashSet<string>
+            {
+                "CatH.FrameworkHubEntry.ChatHub.ProtectedHelper()",
+            },
+            findings);
+    }
+
+    [Fact]
+    public async Task Framework_page_model_roots_handlers_and_activation_without_blanket_members()
+    {
+        var findings = await FindingsIn("CatH.FrameworkPageModelEntry", new KnipConfig());
+
+        Assert.Equal(
+            new HashSet<string>
+            {
+                "CatH.FrameworkPageModelEntry.IndexModel.OnPostHelper()",
+                "CatH.FrameworkPageModelEntry.IndexModel.PublicHelper()",
+                "CatH.FrameworkPageModelEntry.IndexModel.Onboarding()",
+                "CatH.FrameworkPageModelEntry.IndexModel.ProtectedHelper()",
+            },
+            findings);
+    }
+
+    [Fact]
+    public async Task Framework_hosted_service_roots_lifecycle_and_activation_without_blanket_members()
+    {
+        var findings = await FindingsIn("CatH.FrameworkHostedServiceEntry", new KnipConfig());
+
+        Assert.Equal(
+            new HashSet<string>
+            {
+                "CatH.FrameworkHostedServiceEntry.Worker.PublicHelper()",
+                "CatH.FrameworkHostedServiceEntry.Worker.ProtectedHelper()",
+                "CatH.FrameworkHostedServiceEntry.DirectHostedService.PublicHelper()",
+            },
+            findings);
     }
 
     [Fact]

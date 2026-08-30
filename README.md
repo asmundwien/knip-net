@@ -68,12 +68,11 @@ Knip.NET looks for the nearest `knip.json` starting from the analyzed solution's
 The annotated [`knip.json`](knip.json) documents the available settings and plugin defaults. [`schemas/knip.config.schema.json`](schemas/knip.config.schema.json) provides editor validation. The main decisions are:
 
 - Set `roots.treatAllPublicAsUsed` or `roots.publicApiProjects` when other repositories consume the public API. Matching public symbols become roots and leave the finding set.
-- Add project-specific entry points for code invoked by a framework or by reflection that the built-in plugins do not recognize.
+- Add project-specific entry points for code invoked by a framework or by reflection that the built-in plugins do not recognize. `baseTypes`, `implementedInterfaces`, and `namePatterns` deliberately root each matching type's whole externally visible surface.
 - Use ignores for generated code and known runtime-only references that static analysis cannot prove.
 - Enable opt-in plugins only for frameworks the solution uses.
-- Built-in framework matching uses resolved namespace and defining assembly identities. A same-named
-  application type is not a framework shape. For source-only stand-ins or compatible extensions, configure
-  an explicit attribute name or a plugin `aliases` mapping from canonical type to qualified local type.
+- Built-in ASP.NET Core handling roots only framework-dispatched members and runtime activation for controllers, components, hubs, page models, and hosted services; unrelated helpers remain reportable.
+- Built-in framework matching uses resolved namespace and defining assembly identities. A same-named application type is not a framework shape. For source-only stand-ins or compatible extensions, configure an explicit attribute name or a plugin `aliases` mapping from canonical type to qualified local type.
 
 `--print-config` prints the effective config. Unknown keys produce a warning instead of failing the run.
 

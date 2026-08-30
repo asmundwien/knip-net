@@ -271,34 +271,22 @@ public sealed class EntryPointConfig
         // BenchmarkDotNet
         "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.BenchmarkAttribute",
         "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.GlobalSetupAttribute",
-        // ASP.NET Core routing
-        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpGetAttribute",
-        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPostAttribute",
-        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPutAttribute",
-        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpDeleteAttribute",
-        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPatchAttribute",
-        "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.RouteAttribute",
     ];
 
-    /// <summary>Fully-qualified base classes whose subtypes (and their public members) are roots.</summary>
-    public List<string> BaseTypes { get; set; } =
-    [
-        "Microsoft.AspNetCore.Mvc.ControllerBase",
-        "Microsoft.AspNetCore.Mvc.Controller",
-        "Microsoft.AspNetCore.Components.ComponentBase",
-        "Microsoft.AspNetCore.SignalR.Hub",
-        "Microsoft.AspNetCore.Mvc.RazorPages.PageModel",
-    ];
+    /// <summary>
+    /// Custom base classes whose subtypes and externally visible members are roots. Built-in framework
+    /// entry types are handled by convention-specific plugins instead of this broad escape hatch.
+    /// </summary>
+    public List<string> BaseTypes { get; set; } = [];
 
-    /// <summary>Fully-qualified interfaces whose implementers (and their public members) are roots.</summary>
-    public List<string> ImplementedInterfaces { get; set; } =
-    [
-        "Microsoft.Extensions.Hosting.IHostedService",
-        "Microsoft.Extensions.Hosting.BackgroundService",
-    ];
+    /// <summary>
+    /// Custom interfaces whose implementers and externally visible members are roots. Built-in hosted
+    /// services are handled by convention-specific plugins instead of this broad escape hatch.
+    /// </summary>
+    public List<string> ImplementedInterfaces { get; set; } = [];
 
-    /// <summary>Type-name globs whose matching types (and public members) are roots, e.g. "*Controller".</summary>
-    public List<string> NamePatterns { get; set; } = ["*Controller"];
+    /// <summary>Custom type-name globs whose matching types and externally visible members are roots.</summary>
+    public List<string> NamePatterns { get; set; } = [];
 }
 
 public sealed class RootConfig

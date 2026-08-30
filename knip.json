@@ -49,20 +49,13 @@
       "nunit.framework::NUnit.Framework.OneTimeSetUpAttribute",
       "nunit.framework::NUnit.Framework.OneTimeTearDownAttribute",
       "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.BenchmarkAttribute",
-      "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.GlobalSetupAttribute",
-      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpGetAttribute",
-      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPostAttribute",
-      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPutAttribute",
-      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpDeleteAttribute",
-      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.HttpPatchAttribute",
-      "Microsoft.AspNetCore.Mvc.Core::Microsoft.AspNetCore.Mvc.RouteAttribute"
+      "BenchmarkDotNet.Annotations::BenchmarkDotNet.Attributes.GlobalSetupAttribute"
     ],
-    "baseTypes": [
-      "Microsoft.AspNetCore.Mvc.ControllerBase",
-      "Microsoft.AspNetCore.Components.ComponentBase"
-    ],
-    "implementedInterfaces": ["Microsoft.Extensions.Hosting.IHostedService"],
-    "namePatterns": ["*Controller"]
+    // Broad custom entry-type escape hatches. Built-in ASP.NET Core controllers, components, hubs,
+    // page models, and hosted services are modeled by their actual dispatch conventions instead.
+    "baseTypes": [],
+    "implementedInterfaces": [],
+    "namePatterns": []
   },
 
   "roots": {

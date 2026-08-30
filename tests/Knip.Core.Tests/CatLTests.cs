@@ -609,6 +609,9 @@ public sealed class CatLTests
         var symbolNames = root.GetProperty("entryPoints").GetProperty("symbolNames")
             .EnumerateArray().Select(e => e.GetString()).ToList();
         Assert.Empty(symbolNames);
+        Assert.Empty(root.GetProperty("entryPoints").GetProperty("baseTypes").EnumerateArray());
+        Assert.Empty(root.GetProperty("entryPoints").GetProperty("implementedInterfaces").EnumerateArray());
+        Assert.Empty(root.GetProperty("entryPoints").GetProperty("namePatterns").EnumerateArray());
 
 
         // No analysis ran (exit 0 despite the fixture having a dead sibling, and no findings JSON shape).

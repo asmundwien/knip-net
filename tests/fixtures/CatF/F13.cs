@@ -1,9 +1,8 @@
 namespace CatF.F13;
 
-// F13 (FIX #4b): an ENTRY TYPE (`*Controller` glob) is DI-constructed by the framework to invoke its
-// actions — so its instance ctor is USED. A ctor-injected field assigned ONLY inside the ctor and a
-// helper called ONLY from the ctor must stay ALIVE. Before FIX #4 the controller type + its public
-// members were rooted but NOT the ctor, so a ctor-only field/helper cascaded to dead.
+// F13: an entry type selected by an explicit `*Controller` glob is runtime-activated. A ctor-injected
+// field assigned only inside the ctor and a helper called only from the ctor must stay alive. Before
+// runtime activation was modeled, the type and public members were rooted but ctor-only state cascaded dead.
 public sealed class WidgetController
 {
     // ALIVE: assigned in the ctor from the injected dependency (used only during construction).
@@ -21,7 +20,7 @@ public sealed class WidgetController
     // ALIVE: called only from the ctor.
     private void Configure() { }
 
-    // ALIVE (root): public member of the entry type.
+    // ALIVE (root): public member of the explicitly configured entry type.
     public void Index() { }
 }
 
