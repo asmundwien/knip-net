@@ -1,4 +1,7 @@
-using System;
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Components;
+using Microsoft.Extensions.DependencyInjection;
 using PluginOrigin.Lib;
 
 namespace PluginOrigin.App;
@@ -18,32 +21,14 @@ internal static class Program
 
     private static void KeepType<T>() { }
 
-    private static void ConfigurePlugins()
+    private static void ConfigurePlugins(IApplicationBuilder app)
     {
         _ = typeof(Targets).GetMethod(nameof(Targets.ProductionReflection));
-        Serializer.Serialize<ProductionSerializationDto>(null!);
+        JsonSerializer.Serialize<ProductionSerializationDto>(null!);
         new ServiceCollection().AddTransient<ProductionRegisteredService>();
-        new MiddlewareBuilder().UseMiddleware<ProductionMiddleware>();
+        app.UseMiddleware<ProductionMiddleware>();
     }
 }
-
-internal static class Serializer
-{
-    public static void Serialize<T>(T value) { }
-}
-
-internal sealed class ServiceCollection
-{
-    public void AddTransient<T>() where T : class { }
-}
-
-internal sealed class MiddlewareBuilder
-{
-    public void UseMiddleware<T>() where T : class { }
-}
-
-[AttributeUsage(AttributeTargets.Property)]
-internal sealed class ParameterAttribute : Attribute { }
 
 internal sealed class ProductionComponent
 {
