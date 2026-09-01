@@ -133,6 +133,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     public override void VisitDelegateDeclaration(DelegateDeclarationSyntax node) => Enter(node, base.VisitDelegateDeclaration);
 
     public override void VisitMethodDeclaration(MethodDeclarationSyntax node) => Enter(node, base.VisitMethodDeclaration);
+    public override void VisitLocalFunctionStatement(LocalFunctionStatementSyntax node) => Enter(node, base.VisitLocalFunctionStatement);
     public override void VisitConstructorDeclaration(ConstructorDeclarationSyntax node) => Enter(node, base.VisitConstructorDeclaration);
     public override void VisitDestructorDeclaration(DestructorDeclarationSyntax node) => Enter(node, base.VisitDestructorDeclaration);
     public override void VisitOperatorDeclaration(OperatorDeclarationSyntax node) => Enter(node, base.VisitOperatorDeclaration);
@@ -140,6 +141,16 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     public override void VisitPropertyDeclaration(PropertyDeclarationSyntax node) => Enter(node, base.VisitPropertyDeclaration);
     public override void VisitIndexerDeclaration(IndexerDeclarationSyntax node) => Enter(node, base.VisitIndexerDeclaration);
     public override void VisitEventDeclaration(EventDeclarationSyntax node) => Enter(node, base.VisitEventDeclaration);
+    public override void VisitAccessorDeclaration(AccessorDeclarationSyntax node)
+    {
+        // A semicolon accessor (auto-property, interface, abstract declaration) has no body closure and
+        // may be inseparable from its enclosing declaration. Body-bearing accessors need graph nodes;
+        // reporting keeps property accessors independent and collapses event accessors to the event unit.
+        if (node.Body is null && node.ExpressionBody is null)
+            base.VisitAccessorDeclaration(node);
+        else
+            Enter(node, base.VisitAccessorDeclaration);
+    }
 
     public override void VisitFieldDeclaration(FieldDeclarationSyntax node) => EnterVariables(node.Declaration);
     public override void VisitEventFieldDeclaration(EventFieldDeclarationSyntax node) => EnterVariables(node.Declaration);
@@ -774,6 +785,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (info.Symbol is { } symbol)
         {
             AddEdge(source, symbol);
+            AddAccessorEdge(source, node, symbol);
             // Extension syntax (`obj.Used()`) resolves to a REDUCED extension method: the declaring
             // static class name never appears in source, so nothing else edges its TYPE node and it
             // would be flagged dead (hiding the genuinely-live method under the outermost-only rule).
@@ -791,6 +803,49 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         // candidate alive rather than guessing, so we don't flag a real overload as dead.
         foreach (var candidate in info.CandidateSymbols)
             AddEdge(source, candidate);
+    }
+
+    private void AddAccessorEdge(string source, SyntaxNode node, ISymbol symbol)
+    {
+        var operation = _model.GetOperation(node);
+
+        if (symbol is IPropertySymbol property && operation is IPropertyReferenceOperation propertyReference)
+        {
+            switch (propertyReference.Parent)
+            {
+                case IAssignmentOperation { Target: var target } when ReferenceEquals(target, propertyReference):
+                    if (property.SetMethod is { } setter) AddEdge(source, setter);
+                    break;
+                case ICompoundAssignmentOperation:
+                case IIncrementOrDecrementOperation:
+                case ICoalesceAssignmentOperation:
+                    if (property.GetMethod is { } getter) AddEdge(source, getter);
+                    if (property.SetMethod is { } compoundSetter) AddEdge(source, compoundSetter);
+                    break;
+                case INameOfOperation:
+                    if (property.GetMethod is { } nameGetter) AddEdge(source, nameGetter);
+                    if (property.SetMethod is { } nameSetter) AddEdge(source, nameSetter);
+                    break;
+                default:
+                    if (property.GetMethod is { } defaultGetter) AddEdge(source, defaultGetter);
+                    break;
+            }
+
+            return;
+        }
+
+        if (symbol is IEventSymbol @event)
+        {
+            if (@event.AddMethod is { } addMethod) AddEdge(source, addMethod);
+            if (@event.RemoveMethod is { } removeMethod) AddEdge(source, removeMethod);
+            return;
+        }
+
+        if (symbol is IMethodSymbol { AssociatedSymbol: IEventSymbol associatedEvent })
+        {
+            if (associatedEvent.AddMethod is { } addMethod) AddEdge(source, addMethod);
+            if (associatedEvent.RemoveMethod is { } removeMethod) AddEdge(source, removeMethod);
+        }
     }
 
     /// <summary>Edges implied by a declaration's signature: base types, field/return/parameter types, attributes.</summary>
@@ -869,6 +924,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         // assembly. Record (ownAssembly -> targetAssembly) so DeadCodeAnalyzer can tell which
         // <ProjectReference>s are actually exercised. Guard on ownAssembly being a distinct solution
         // assembly so intra-project references don't register as "uses" of a reference.
+
         if (_ownAssembly is not null
             && !string.Equals(assembly, _ownAssembly, StringComparison.Ordinal))
         {
@@ -887,6 +943,10 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
 
     private void EvaluateRoots(ISymbol symbol, string id)
     {
+        // Local functions have no external invocation path; name/attribute/public-entry rules apply only
+        // to members. A local named like a configured entry point is reachable solely through its caller.
+        if (symbol is IMethodSymbol { MethodKind: MethodKind.LocalFunction }) return;
+
         var ep = _config.EntryPoints;
 
         // A test-ATTRIBUTE-driven root is test-origin even in a production project (WS7 two-color).
@@ -904,6 +964,9 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
             // attribute. Startup conventions, public API, and ASP.NET routing are production roots.
             var asTest = _testProject || hasTestAttribute;
             AddRoot(id, asTest);
+            if (symbol is IMethodSymbol { AssociatedSymbol: { } associated }
+                && SymbolId.For(associated) is { } associatedId)
+                AddRoot(associatedId, asTest);
             // A framework-invoked member implies its declaring type is instantiated/used. The type chain
             // inherits the SAME origin as the member (a test class kept alive only by its [Fact]s is test).
             for (var container = symbol.ContainingType; container is not null; container = container.ContainingType)

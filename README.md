@@ -89,6 +89,11 @@ Each finding has a confidence, hazards, a remediation, and usually a deletion sp
 
 Hazards describe runtime shapes that a build may miss, such as external public API use, serialization, configuration binding, dependency injection, or build-only packages. Confidence, not the presence or absence of one hazard, controls the action.
 
+For package references, an ordinary package is used only when code touches an assembly it delivers itself.
+A package without its own compile surface may be a metapackage, so Knip.NET checks its dependency closure.
+Analyzer, source-generator, and build-only references remain low-confidence findings because symbol edges
+cannot prove their effects.
+
 If `reliability.degraded` is true, restore or workspace loading was incomplete. Do not delete from that run. Restore the solution with authenticated feeds and run Knip.NET again.
 
 `--why <symbol-or-id>` explains why a symbol is dead or shows the shortest root-to-symbol path for live code.
