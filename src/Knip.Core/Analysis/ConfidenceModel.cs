@@ -4,10 +4,8 @@ using Knip.Core.Model;
 namespace Knip.Core.Analysis;
 
 /// <summary>
-/// The L9 confidence &amp; hazard demotion engine (WS8 §4, SIGNED OFF 2026-07-15). Implements the REVISED
-/// invariant #8 ("recall over silence — but hazards are sacred"): findings are NEVER suppressed, only
-/// graded. Hazards are ADVISORY — they never change the emitted set, and a finding's presence/absence is
-/// unaffected. Confidence starts <see cref="Confidence.High"/> and is demoted by the FIRST matching rule:
+/// Grades findings without suppressing them. Hazards are advisory: they change confidence, never the emitted
+/// set. Local confidence starts <see cref="Confidence.High"/> and is demoted by the first matching rule:
 /// <list type="number">
 ///   <item>C1 (per-project reliability): a project that failed to load/restore, OR solution-GLOBAL
 ///     degradation, demotes to <see cref="Confidence.Low"/>. Per-project attribution — a healthy
@@ -30,15 +28,13 @@ namespace Knip.Core.Analysis;
 /// unknown external consumer — deleting the symbol + its tests goes green by construction); a
 /// configured-but-not-listed public test-only finding lands medium; an internal/private test-only finding
 /// (no publicApi hazard) falls through to C4 → medium.
-/// C5 (entry-point near-miss, DROPPED from v1) and serialization/config/DI hazard DETECTION (WS5) are
-/// DEFERRED — not applied here.
 /// </summary>
 internal static class ConfidenceModel
 {
-    /// <summary>
-    /// Grade every finding's confidence in place, using the FINAL reliability picture (so C1 sees
-    /// project-load/restore failures attributed by the engine) plus the hazards already attached by the
-    /// analyzer. Idempotent given the same inputs.
+    /// Grade every finding's local confidence using the FINAL reliability picture and attached hazards,
+    /// then cap each descendant by every finding in its <see cref="Finding.RootCause"/> chain. The published
+    /// confidence is therefore the effective autonomy tier of the complete outer deletion unit. Idempotent
+    /// given the same inputs.
     /// </summary>
     public static void Apply(AnalysisResult result, KnipConfig config)
     {
@@ -60,6 +56,58 @@ internal static class ConfidenceModel
             var confidence = Compute(finding, apiPostureDeclared, globalDegradation, failedProjects);
             if (confidence != finding.Confidence)
                 result.Findings[i] = finding with { Confidence = confidence };
+        }
+
+        // Confidence governs action on the complete deletion unit, not an isolated nested declaration.
+        // Hazards remain local facts; inheriting their resulting tier avoids claiming a private child is
+        // autonomously safe when its public or runtime-shaped ancestor is not.
+        ApplyRootCauseCeilings(result.Findings);
+
+        static void ApplyRootCauseCeilings(IList<Finding> findings)
+        {
+            var hasRootCause = false;
+            for (var i = 0; i < findings.Count; i++)
+                if (findings[i].RootCause is not null)
+                {
+                    hasRootCause = true;
+                    break;
+                }
+            if (!hasRootCause) return;
+
+            var indexById = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (var i = 0; i < findings.Count; i++)
+                if (findings[i].Id.Length > 0)
+                    indexById[findings[i].Id] = i;
+            var resolved = new bool[findings.Count];
+            var resolving = new bool[findings.Count];
+
+            for (var i = 0; i < findings.Count; i++)
+                Resolve(i);
+
+            Confidence Resolve(int index)
+            {
+                if (resolved[index]) return findings[index].Confidence;
+                if (resolving[index]) return Confidence.Low;
+
+                resolving[index] = true;
+                var finding = findings[index];
+                var confidence = finding.Confidence;
+                if (finding.RootCause is { } rootCause && indexById.TryGetValue(rootCause, out var parentIndex))
+                    confidence = MostRestrictive(confidence, Resolve(parentIndex));
+
+                if (confidence != finding.Confidence)
+                    findings[index] = finding with { Confidence = confidence };
+                resolving[index] = false;
+                resolved[index] = true;
+                return confidence;
+            }
+        }
+
+        static Confidence MostRestrictive(Confidence own, Confidence ancestor)
+        {
+            if (own is Confidence.Low || ancestor is Confidence.Low) return Confidence.Low;
+            if (own is Confidence.Medium || ancestor is Confidence.Medium) return Confidence.Medium;
+            return Confidence.High;
         }
     }
 
