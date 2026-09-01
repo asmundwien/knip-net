@@ -15,37 +15,40 @@ internal sealed class ContributionSink : IContributionSink
     private readonly GraphState _state;
     // ISet (not IReadOnlySet) is the common surface across net10.0 and net472 BCLs — mirrors ReferenceWalker.
     private readonly ISet<string> _solutionAssemblies;
+    private readonly bool _testProject;
 
-    public ContributionSink(GraphState state, ISet<string> solutionAssemblies)
+
+    public ContributionSink(GraphState state, ISet<string> solutionAssemblies, bool testProject)
     {
         _state = state;
         _solutionAssemblies = solutionAssemblies;
+        _testProject = testProject;
     }
 
-    /// <summary>Roots added since the last <see cref="ResetCounts"/> (observability, -v).</summary>
+    /// <summary>Roots added by this plugin pass (observability, -v).</summary>
     public int RootsAdded { get; private set; }
 
-    /// <summary>Edges added since the last <see cref="ResetCounts"/> (observability, -v).</summary>
+    /// <summary>Edges added by this plugin pass (observability, -v).</summary>
     public int EdgesAdded { get; private set; }
 
-    public void ResetCounts()
-    {
-        RootsAdded = 0;
-        EdgesAdded = 0;
-    }
 
     public void AddRoot(ISymbol symbol)
     {
         if (!IsSolutionDefined(symbol)) return;            // invariant #5: only solution symbols are nodes
-        if (SymbolId.For(symbol) is { } id && _state.Roots.Add(id)) // invariant #1: key derivation owned here
+        if (SymbolId.For(symbol) is { } id && _state.AddRoot(id, _testProject)) // invariant #1: key derivation owned here
             RootsAdded++;
     }
 
     internal void RequestRuntimeActivation(INamedTypeSymbol type)
     {
         foreach (var activatedType in RuntimeActivation.TypeChain(type))
-            if (IsSolutionDefined(activatedType) && SymbolId.For(activatedType) is { } typeId)
-                _state.RuntimeActivationRootTypes.Add(typeId);
+        {
+            if (!IsSolutionDefined(activatedType) || SymbolId.For(activatedType) is not { } typeId) continue;
+            var roots = _testProject
+                ? _state.TestRuntimeActivationRootTypes
+                : _state.ProductionRuntimeActivationRootTypes;
+            roots.Add(typeId);
+        }
     }
 
     public void AddEdge(ISymbol from, ISymbol to)
@@ -54,7 +57,7 @@ internal sealed class ContributionSink : IContributionSink
         if (SymbolId.For(from) is { } f && SymbolId.For(to) is { } t &&
             !string.Equals(f, t, StringComparison.Ordinal))
         {
-            _state.AddEdge(f, t);
+            _state.AddPluginEdge(f, t, _testProject);
             EdgesAdded++;
         }
     }

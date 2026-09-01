@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="PluginOrigin.Lib/PluginOrigin.Lib.csproj" />
+  <Project Path="PluginOrigin.App/PluginOrigin.App.csproj" />
+  <Project Path="PluginOrigin.Tests/PluginOrigin.Tests.csproj" />
+</Solution>

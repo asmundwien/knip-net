@@ -102,7 +102,7 @@ If `reliability.degraded` is true, restore or workspace loading was incomplete. 
 
 Tests are roots in the default analysis. Production code used only by its own tests therefore looks alive.
 
-`--production` runs separate production and test reachability. It reports this code as `onlyUsedByTests` with remediation `deleteCodeAndTests`. Direct findings list their test referrers. Transitive findings point to that boundary through `rootCause`.
+`--production` runs separate production and test reachability. Roots and edges added by analysis plugins inherit the project where the plugin discovered them; a contribution discovered from both production and test projects counts as production. Code reachable only through test roots or test-only plugin contributions is reported as `onlyUsedByTests` with remediation `deleteCodeAndTests`. Direct findings list their test referrers. Transitive findings point to that boundary through `rootCause`.
 
 These findings need human review. The deletion unit contains both production code and tests.
 
