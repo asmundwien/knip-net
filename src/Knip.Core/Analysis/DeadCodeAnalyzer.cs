@@ -35,10 +35,10 @@ public sealed class DeadCodeAnalyzer
     }
 
     public async Task<AnalysisResult> AnalyzeAsync(
-        Solution solution, IProgress<string>? progress, CancellationToken ct, bool captureProvenance = false)
+        Solution solution, IProgress<string>? progress, CancellationToken ct, bool captureExplanation = false)
     {
         var stopwatch = Stopwatch.StartNew();
-        var state = new GraphState { CaptureProvenance = captureProvenance };
+        var state = new GraphState { CaptureExplanation = captureExplanation };
         var result = new AnalysisResult();
 
         var projects = solution.Projects
@@ -51,13 +51,8 @@ public sealed class DeadCodeAnalyzer
             .Select(p => p.AssemblyName)
             .ToHashSet(StringComparer.Ordinal);
 
-        // Config typos surface as VISIBLE warnings rather than silently no-opping. Two channels, same
-        // list: (1) unknown TOP-LEVEL and NESTED keys anywhere in knip.json (WS8c / L7); (2) unknown
-        // plugin ids / per-plugin setting keys (the plugin-value validation ValidateKeys does not descend).
-        foreach (var warning in _config.ValidateKeys())
-            result.LoadDiagnostics.Add(warning);
         foreach (var warning in _config.ValidatePlugins())
-            result.LoadDiagnostics.Add(warning);
+            result.Reliability.LoadDiagnostics.Add(new LoadDiagnostic(LoadSeverity.Warning, "config", warning));
 
 
         // Per-DEFINING-assembly: does that project carry [InternalsVisibleTo] a NON-solution assembly?
@@ -184,20 +179,18 @@ public sealed class DeadCodeAnalyzer
         }
 
         if (state.UnresolvedTypeReferences > 0)
-            result.LoadDiagnostics.Insert(0,
-                $"{state.UnresolvedTypeReferences} reference(s) to unresolved types — the solution may not be " +
-                "fully restored/buildable. Run 'dotnet restore' (and ensure private feeds are authenticated); " +
-                "otherwise dead-code results can include false positives.");
+            result.Reliability.LoadDiagnostics.Insert(0, new LoadDiagnostic(
+                LoadSeverity.Warning,
+                "unresolvedTypes",
+                $"{state.UnresolvedTypeReferences} reference(s) to unresolved types. Restore the target before using findings for deletion."));
 
         // Reliability block (WS8 §1.1): what the analyzer knows. Project-load/restore failures observed at
         // the workspace boundary are attributed by KnipEngine after this returns.
         result.Reliability.ProjectsLoaded = result.ProjectsAnalyzed;
         result.Reliability.UnresolvedTypeReferences = state.UnresolvedTypeReferences;
 
-        // (WS8c) Retain the reachability graph for --why ONLY when provenance was requested; a default run
-        // drops it (memory unchanged). WhyService renders keys → display names + file:line (invariant #1).
-        if (captureProvenance)
-            result.WhyContext = new WhyContext(state, reachable);
+        if (captureExplanation)
+            result.ExplanationContext = new ExplanationContext(state, reachable);
 
         result.Elapsed = stopwatch.Elapsed;
         return result;

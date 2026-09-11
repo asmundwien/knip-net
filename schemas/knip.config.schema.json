@@ -1,19 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/asmundwien/knip-net/main/schemas/knip.config.schema.json",
+  "$id": "https://raw.githubusercontent.com/asmundwien/knip-net/v0.1.0-preview.1/schemas/knip.config.schema.json",
   "title": "Knip.NET configuration (knip.json)",
-  "description": "Config-as-code for a Knip.NET run. All keys optional; defaults tuned for ASP.NET Core and xUnit/MSTest/NUnit.",
+  "description": "Analysis policy for a Knip.NET run. Invocation target and report format are command arguments.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
-    "solution": {
-      "type": "string",
-      "description": "Path to the .sln/.slnx/.csproj to analyze. CLI --solution overrides this."
-    },
     "production": {
       "type": "boolean",
-      "description": "Report production code that is reachable only through tests as onlyUsedByTests. Off by default; --production also enables it."
+      "description": "Report production code reachable only through tests as onlyUsedByTests. --production also enables it."
     },
     "testProjects": {
       "type": "array",
@@ -23,44 +19,20 @@
     "entryPoints": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Members the framework/runtime invokes without a by-name reference in your code.",
       "properties": {
         "symbolNames": { "type": "array", "items": { "type": "string" } },
-        "attributes": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Attribute identities. Built-ins use Assembly::Namespace.Type; namespace-qualified or simple configured values are explicit aliases. Attribute suffix optional."
-        },
-        "baseTypes": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Custom base types whose subtypes and externally visible members are roots. Built-in framework entry types use convention-specific plugins."
-        },
-        "implementedInterfaces": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Custom interfaces whose implementers and externally visible members are roots. Built-in hosted services use convention-specific plugin handling."
-        },
-        "namePatterns": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Custom type-name globs whose matching types and externally visible members are roots."
-        }
+        "attributes": { "type": "array", "items": { "type": "string" } },
+        "baseTypes": { "type": "array", "items": { "type": "string" } },
+        "implementedInterfaces": { "type": "array", "items": { "type": "string" } },
+        "namePatterns": { "type": "array", "items": { "type": "string" } }
       }
     },
     "roots": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "treatAllPublicAsUsed": {
-          "type": "boolean",
-          "description": "Treat the whole public surface as used (libraries consumed by other repos)."
-        },
-        "publicApiProjects": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Project-name globs whose public API is treated as the used surface."
-        }
+        "treatAllPublicAsUsed": { "type": "boolean" },
+        "publicApiProjects": { "type": "array", "items": { "type": "string" } }
       }
     },
     "ignore": {
@@ -73,28 +45,50 @@
         "projects": { "type": "array", "items": { "type": "string" } }
       }
     },
-    "output": {
+    "plugins": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "format": { "type": "string", "enum": ["console", "json", "sarif"] }
+        "reflection": { "$ref": "#/$defs/enabledPlugin" },
+        "scanningDi": { "$ref": "#/$defs/aliasedPlugin" },
+        "blazorParameter": { "$ref": "#/$defs/aliasedPlugin" },
+        "serialization": { "$ref": "#/$defs/serializationPlugin" },
+        "aspnetcore": { "$ref": "#/$defs/aliasedPlugin" }
+      }
+    }
+  },
+  "$defs": {
+    "aliases": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string", "minLength": 1 }
       }
     },
-    "plugins": {
+    "enabledPlugin": {
       "type": "object",
-      "description": "Built-in analysis plugins keyed by camelCase plugin id. Each block sets 'enabled' plus optional settings.",
-      "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "enabled": { "type": "boolean" },
-          "aliases": {
-            "type": "object",
-            "description": "Explicit canonical framework type to local/user-extension type aliases. Keys and values are namespace-qualified type names; values may also use Assembly::Namespace.Type.",
-            "additionalProperties": {
-              "type": "array",
-              "items": { "type": "string", "minLength": 1 }
-            }
-          }
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "aliasedPlugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "aliases": { "$ref": "#/$defs/aliases" }
+      }
+    },
+    "serializationPlugin": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "aliases": { "$ref": "#/$defs/aliases" },
+        "namespaces": {
+          "type": "array",
+          "items": { "type": "string" }
         }
       }
     }

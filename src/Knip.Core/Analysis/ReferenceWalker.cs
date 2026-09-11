@@ -69,10 +69,8 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     private readonly string? _ownAssembly;
     private readonly Stack<string> _context = new();
 
-    // (WS8c) The reference-SITE location of the syntax node currently being recorded, so an edge can
-    // carry "where the reference lives" for the --why report. Set around RecordReference-style calls;
-    // only READ when GraphState.CaptureProvenance is on (default runs never touch it). Null falls back
-    // to the target/source declaration location at render time.
+    // Source location for the edge currently being recorded. Explanation runs retain it; ordinary runs
+    // leave it null and avoid the per-edge allocation.
     private Location? _currentSite;
 
     public ReferenceWalker(
@@ -194,8 +192,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     {
         var id = SymbolId.For(symbol);
         if (id is null) return null;
-        // Signature edges added below are not "reference sites" in a body — clear any stale --why site
-        // so they fall back to the target declaration location rather than an unrelated prior node.
+        // Signature edges have no single source site. Fall back to the target declaration.
         _currentSite = null;
         // A declaration whose id first appears in a generated tree is "generated" for reporting: its own
         // dead code is not the user's to delete (H11). Marked here — where "declared in THIS tree" is
@@ -751,8 +748,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
     {
         if (_context.Count == 0 || type is null) return;
         var source = _context.Peek();
-        // No single reference-site node here (pattern dispose is implicit); leave the site unset so
-        // --why falls back to the target declaration location.
+        // Implicit pattern disposal has no single source site. Fall back to the target declaration.
         _currentSite = null;
         foreach (var member in type.GetMembers("Dispose"))
             if (member is IMethodSymbol { Parameters.IsEmpty: true, IsStatic: false })
@@ -772,15 +768,14 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
             AddEdge(source, method);
     }
 
-    /// <summary>(WS8c) Set the reference-site for the edges a body-recording helper is about to add.</summary>
-    private void SetSite(SyntaxNode node) => _currentSite = _state.CaptureProvenance ? node.GetLocation() : null;
+    /// <summary>Set the source location for edges added by the next body-recording helper.</summary>
+    private void SetSite(SyntaxNode node) => _currentSite = _state.CaptureExplanation ? node.GetLocation() : null;
 
     private void RecordReference(SyntaxNode node)
     {
         if (_context.Count == 0) return;
         var source = _context.Peek();
-        // (WS8c) Remember the reference SITE so any edge recorded below carries its file:line for --why.
-        _currentSite = _state.CaptureProvenance ? node.GetLocation() : null;
+        _currentSite = _state.CaptureExplanation ? node.GetLocation() : null;
         var info = _model.GetSymbolInfo(node);
         if (info.Symbol is { } symbol)
         {
@@ -935,7 +930,7 @@ internal sealed class ReferenceWalker : CSharpSyntaxWalker
         if (targetId is null || string.Equals(targetId, sourceId, StringComparison.Ordinal)) return;
 
         _state.AddEdge(sourceId, targetId);
-        // (WS8c) Attach the reference-site location for --why (no-op unless provenance is on).
+        // Attach the source location only during an explanation run.
         _state.RecordEdgeSource(sourceId, targetId, _currentSite);
     }
 

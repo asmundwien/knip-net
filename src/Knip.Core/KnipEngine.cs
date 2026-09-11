@@ -7,80 +7,67 @@ using Microsoft.CodeAnalysis.MSBuild;
 namespace Knip.Core;
 
 /// <summary>
-/// Entry point for a Knip.NET run: opens the solution/project via MSBuild and runs the analyzer.
-/// The caller must have registered an MSBuild instance (via MSBuildLocator) before calling this.
+/// Opens a target through MSBuild and returns either an analysis result or one typed symbol explanation.
+/// The caller must register MSBuild before invoking this module.
 /// </summary>
 public static class KnipEngine
 {
-    public static async Task<AnalysisResult> RunAsync(
+    public static Task<AnalysisResult> RunAsync(
         KnipConfig config,
         string targetPath,
         IProgress<string>? progress = null,
-        CancellationToken ct = default,
-        bool captureProvenance = false)
+        CancellationToken ct = default) =>
+        RunCoreAsync(config, targetPath, progress, ct, captureExplanation: false);
+
+    public static async Task<ExplanationResult> ExplainAsync(
+        KnipConfig config,
+        string targetPath,
+        string symbol,
+        IProgress<string>? progress = null,
+        CancellationToken ct = default)
+    {
+        var result = await RunCoreAsync(config, targetPath, progress, ct, captureExplanation: true);
+        return ExplanationService.Explain(result, symbol);
+    }
+
+    private static async Task<AnalysisResult> RunCoreAsync(
+        KnipConfig config,
+        string targetPath,
+        IProgress<string>? progress,
+        CancellationToken ct,
+        bool captureExplanation)
     {
         using var workspace = MSBuildWorkspace.Create();
         workspace.SkipUnrecognizedProjects = true;
 
-        var loadDiagnostics = new List<(WorkspaceDiagnosticKind Kind, string Message)>();
-        workspace.WorkspaceFailed += (_, e) =>
+        var workspaceDiagnostics = new List<string>();
+        workspace.WorkspaceFailed += (_, eventArgs) =>
         {
-            if (e.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
-                loadDiagnostics.Add((e.Diagnostic.Kind, e.Diagnostic.Message));
+            if (eventArgs.Diagnostic.Kind == WorkspaceDiagnosticKind.Failure)
+                workspaceDiagnostics.Add(eventArgs.Diagnostic.Message);
         };
 
         progress?.Report($"Loading {Path.GetFileName(targetPath)}");
-
         Solution solution = IsProjectFile(targetPath)
             ? (await workspace.OpenProjectAsync(targetPath, cancellationToken: ct)).Solution
             : await workspace.OpenSolutionAsync(targetPath, cancellationToken: ct);
 
         var analyzer = new DeadCodeAnalyzer(config);
-        var result = await analyzer.AnalyzeAsync(solution, progress, ct, captureProvenance);
+        var result = await analyzer.AnalyzeAsync(solution, progress, ct, captureExplanation);
 
-        foreach (var (_, message) in loadDiagnostics)
+        foreach (var message in workspaceDiagnostics)
         {
-            result.LoadDiagnostics.Add(message);
-
-            // WS8: MSBuildWorkspace surfaces benign NuGet restore-audit / pruning advisories (NU1510,
-            // the NU19xx vulnerability family) as "Msbuild failed …" workspace FAILURES even though the
-            // projects loaded fine. Those must stay VISIBLE (invariant #8) but must NOT be treated as
-            // restore failures — otherwise harmless audit noise flips `degraded` and nukes confidence on
-            // a good solution. Everything else is still a genuine load failure (invariant #6: stay LOUD)
-            // and is attributed as a restore failure → degraded => true.
-            if (!WorkspaceDiagnosticClassifier.IsBenignNuGetAdvisory(message))
+            var benign = WorkspaceDiagnosticClassifier.IsBenignNuGetAdvisory(message);
+            if (!benign)
                 result.Reliability.RestoreFailures.Add(message);
+            result.Reliability.LoadDiagnostics.Add(new LoadDiagnostic(
+                benign ? LoadSeverity.Warning : LoadSeverity.Error,
+                benign ? "nugetAdvisory" : "loadFailure",
+                message));
         }
 
-        BuildStructuredDiagnostics(result);
-
-        // WS8b-2 L9: grade confidence in a FINAL pass, once reliability (incl. workspace restore/load
-        // failures attributed above) is complete — C1 per-project attribution needs the full picture.
-        // Hazards were attached by the analyzer; this only demotes confidence off them + reliability.
-        Analysis.ConfidenceModel.Apply(result, config);
+        ConfidenceModel.Apply(result, config);
         return result;
-    }
-
-    /// <summary>
-    /// Mirror the human-readable <see cref="AnalysisResult.LoadDiagnostics"/> into the structured
-    /// reliability channel (WS8 §1.1). Workspace/restore failures are error-severity (they drive
-    /// <see cref="Reliability.Degraded"/>); everything else is a warning.
-    /// </summary>
-    private static void BuildStructuredDiagnostics(AnalysisResult result)
-    {
-        var restoreFailures = new HashSet<string>(result.Reliability.RestoreFailures, StringComparer.Ordinal);
-        foreach (var message in result.LoadDiagnostics)
-        {
-            var isRestoreFailure = restoreFailures.Contains(message);
-            var severity = isRestoreFailure ? LoadSeverity.Error : LoadSeverity.Warning;
-            var code = isRestoreFailure ? "loadFailure"
-                : message.Contains("unresolved types") ? "unresolvedTypes"
-                // WS8: a benign NuGet restore-audit / pruning advisory that was NOT recorded as a restore
-                // failure — surfaced as a warning so a human/agent still sees it, but it does not degrade.
-                : Analysis.WorkspaceDiagnosticClassifier.IsBenignNuGetAdvisory(message) ? "nugetAdvisory"
-                : "loadWarning";
-            result.Reliability.LoadDiagnostics.Add(new LoadDiagnostic(severity, code, message));
-        }
     }
 
     private static bool IsProjectFile(string path) =>

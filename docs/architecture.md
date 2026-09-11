@@ -1,6 +1,6 @@
 # Architecture
 
-Knip.NET has two projects. `Knip.Core` analyzes code. `Knip.Cli` loads MSBuild, handles commands, and writes reports. Keep that boundary sharp. The engine must compile unchanged for `net10.0` and `net472`.
+Knip.NET has two projects. `Knip.Core` analyzes code and returns typed analysis or explanation results. `Knip.Cli` owns commands, discovery, validation, versioning, reporting, and MSBuild registration. Keep that seam sharp. The engine must compile unchanged for `net10.0` and `net472`.
 
 ## Analysis flow
 
@@ -13,7 +13,7 @@ Knip.NET has two projects. `Knip.Core` analyzes code. `Knip.Cli` loads MSBuild, 
 5. Unreachable declarations become findings. Project and package reference checks add structural findings.
 6. The analyzer assigns IDs, deletion spans, remediation, root causes, and hazards.
 7. `KnipEngine` completes reliability data, then `ConfidenceModel` grades each finding.
-8. Reporters write console, JSON v2, or SARIF output.
+8. CLI reporters write console, JSON v2, or SARIF output from the typed result.
 
 ## Graph identity
 
@@ -47,14 +47,16 @@ Plugins implement `IKnipPlugin` and contribute through a project-scoped `Contrib
 
 Built-in plugins live under `src/Knip.Core/Plugins/BuiltIn`. Configuration selects them by id. Runtime hazard detection is separate from plugin reachability because a disabled plugin may still need to warn that a finding has a risky shape.
 
-## CLI boundary
+## CLI seam
 
-`Program.cs` registers `MSBuildLocator` before code touches Roslyn MSBuild types. `Runner` owns argument parsing, config discovery, engine invocation, reporting, and exit codes. `Knip.Core` has no CLI or locator dependency.
+`Program.cs` registers `MSBuildLocator` before code touches Roslyn MSBuild types. `Runner` owns strict command parsing, target and config discovery, engine invocation, diagnostics, streams, and exit codes.
 
-`src/Knip.Cli/Resources/AgentInstructions.md` is the agent consumer protocol. `AgentInstructionsProvider` embeds that file. Both `--agent-instructions` and `init --agent` use the embedded text.
+`analyze`, `explain`, and `config doctor` have separate option scopes. The CLI validates `knip.json` against its embedded schema before analysis. Target and report format are invocation settings; they do not enter the Core config model.
+
+Report adapters live in `Knip.Cli`. `Knip.Core` returns `AnalysisResult` or `ExplanationResult` and has no presentation or version dependency. One CLI version provider supplies `--version`, JSON, and SARIF.
 
 ## Public contracts
 
-The JSON v2 schema in `schemas/knip.output.schema.json` is the machine contract. `schemas/knip.config.schema.json` defines `knip.json`. The annotated root `knip.json` explains settings that need examples.
+The JSON v2 schema in `schemas/knip.output.schema.json` is the machine contract. Optional `span`, `rootCause`, and `referencedProject` properties are omitted rather than emitted as null. `schemas/knip.config.schema.json` defines `knip.json`, and the CLI embeds that same file for offline validation. The annotated root `knip.json` explains settings that need examples.
 
 A behavior change updates the owning schema and its contract tests in the same change. README prose should explain user decisions, not duplicate every schema field or implementation branch.

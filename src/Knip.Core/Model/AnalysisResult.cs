@@ -7,7 +7,7 @@ public enum LoadSeverity
     Error,
 }
 
-/// <summary>A structured load diagnostic: the existing LoadDiagnostics channel, machine-readable.</summary>
+/// <summary>A structured diagnostic emitted while loading or analyzing a target.</summary>
 public sealed record LoadDiagnostic(LoadSeverity Severity, string Code, string Message);
 
 /// <summary>A project that failed to load, attributed per-project (needed later for C1 per-project demotion).</summary>
@@ -65,8 +65,6 @@ public sealed class AnalysisResult
 {
     public List<Finding> Findings { get; } = [];
 
-    /// <summary>Non-fatal problems loading the solution (missing SDK workloads, unresolved refs, ...).</summary>
-    public List<string> LoadDiagnostics { get; } = [];
 
     /// <summary>Trust signal for the run (WS8 §1.1).</summary>
     public Reliability Reliability { get; } = new();
@@ -76,11 +74,6 @@ public sealed class AnalysisResult
     public int RootCount { get; set; }
     public TimeSpan Elapsed { get; set; }
 
-    /// <summary>
-    /// (WS8c) Provenance graph retained ONLY when a run requests <c>--why</c> (gated so default runs keep
-    /// their memory profile). Opaque to callers — an <c>object</c> so no internal graph type or graph key
-    /// (invariant #1) crosses the public API; <see cref="Knip.Core.Analysis.WhyService"/> consumes it to
-    /// render the report. Null on a normal run.
-    /// </summary>
-    public object? WhyContext { get; set; }
+    /// <summary>Internal graph state retained only for an explanation run.</summary>
+    internal object? ExplanationContext { get; set; }
 }

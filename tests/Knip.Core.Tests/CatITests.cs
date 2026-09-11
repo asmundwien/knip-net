@@ -131,11 +131,11 @@ public sealed class CatITests
 
         // Default run (no --config): I5.Cli has NO solution-adjacent knip.json, and RepoRoot's own
         // knip.json does not ignore this symbol, so the single dead symbol is found -> exit 1.
-        var defaultRun = RunCli("-s", solution);
+        var defaultRun = RunCli("analyze", solution);
         Assert.Equal(1, defaultRun.ExitCode);
 
         // With --config pointing at a knip.json that ignores that symbol: nothing found -> exit 0.
-        var overridden = RunCli("-s", solution, "-c", overrideConfig);
+        var overridden = RunCli("analyze", solution, "--config", overrideConfig);
         Assert.Equal(0, overridden.ExitCode);
     }
 
@@ -160,7 +160,7 @@ public sealed class CatITests
 
         // No --config: discovery starts from the SOLUTION's directory (not RepoRoot cwd). The
         // solution-adjacent knip.json ignores the only dead symbol -> nothing reported -> exit 0.
-        var discovered = RunCli("-s", solution);
+        var discovered = RunCli("analyze", solution);
         Assert.Equal(0, discovered.ExitCode);
 
         // RED-FLIP (anti-vacuous): point --config at a config that does NOT ignore the symbol
@@ -169,7 +169,7 @@ public sealed class CatITests
         // always-clean fixture, and keeps --config OVERRIDING discovery.
         var otherConfig = Path.Combine(
             RepoRoot(), "tests", "fixtures", "CatI", "I5.Cli", "override.knip.json");
-        var overridden = RunCli("-s", solution, "-c", otherConfig);
+        var overridden = RunCli("analyze", solution, "--config", otherConfig);
         Assert.Equal(1, overridden.ExitCode);
     }
 
@@ -189,7 +189,7 @@ public sealed class CatITests
         var solution = Path.Combine(RepoRoot(), "tests", "fixtures", "CatI", "I5.Cli", "Fixture.slnx");
         var malformed = Path.Combine(RepoRoot(), "tests", "fixtures", "CatI", "I6", "malformed.knip.json");
 
-        var r = RunCli("-s", solution, "-c", malformed);
+        var r = RunCli("analyze", solution, "--config", malformed);
 
         // Contract: a bad config is a usage/load error (exit 2), not a crash.
         Assert.Equal(2, r.ExitCode);
@@ -204,7 +204,7 @@ public sealed class CatITests
     public async Task I7_unresolved_type_emits_load_warning()
     {
         var result = await RunSolution(FixtureSolution("I7"), new KnipConfig());
-        Assert.Contains(result.LoadDiagnostics, d => d.Contains("unresolved types"));
+        Assert.Contains(result.Reliability.LoadDiagnostics, d => d.Message.Contains("unresolved types"));
     }
 
     // ── I8: clean, fully-resolved solution → NO unresolved-type warning ───────────────────────
@@ -212,7 +212,7 @@ public sealed class CatITests
     public async Task I8_clean_solution_has_no_unresolved_type_warning()
     {
         var result = await RunSolution(MainSolution(), new KnipConfig());
-        Assert.DoesNotContain(result.LoadDiagnostics, d => d.Contains("unresolved types"));
+        Assert.DoesNotContain(result.Reliability.LoadDiagnostics, d => d.Message.Contains("unresolved types"));
         // Guard against a vacuous pass: the clean solution DID analyze real code (it has findings).
         Assert.NotEmpty(result.Findings);
     }

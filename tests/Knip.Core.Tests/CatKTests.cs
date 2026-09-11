@@ -1,8 +1,6 @@
-using System.Text.Json;
 using Knip.Core;
 using Knip.Core.Configuration;
 using Knip.Core.Model;
-using Knip.Core.Reporting;
 using Xunit;
 
 namespace Knip.Core.Tests;
@@ -190,18 +188,6 @@ public sealed class CatKTests
         Assert.Empty(a.TestReferrers);
         Assert.Equal(new[] { "CatK.K5.ChainTests.Exercises_B()" }, b.TestReferrers.Select(r => r.Symbol));
 
-        using var writer = new StringWriter();
-        new JsonReporter().Report(result, writer);
-        using var document = JsonDocument.Parse(writer.ToString());
-        var jsonFindings = document.RootElement.GetProperty("findings").EnumerateArray().ToList();
-        var aJson = jsonFindings.Single(f => f.GetProperty("symbol").GetString() == a.Symbol);
-        var bJson = jsonFindings.Single(f => f.GetProperty("symbol").GetString() == b.Symbol);
-        Assert.Equal(b.Id, aJson.GetProperty("rootCause").GetString());
-        Assert.False(bJson.TryGetProperty("rootCause", out _));
-        Assert.False(aJson.GetProperty("details").TryGetProperty("testReferrers", out _));
-        Assert.Equal(
-            "CatK.K5.ChainTests.Exercises_B()",
-            bJson.GetProperty("details").GetProperty("testReferrers")[0].GetProperty("symbol").GetString());
     }
 
     // ---- K6: Contract — code used by production AND tests is never OnlyUsedByTests -----------

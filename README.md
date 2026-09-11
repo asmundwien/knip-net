@@ -19,67 +19,63 @@ See [the architecture guide](docs/architecture.md) for module ownership and the 
 From this repository:
 
 ```bash
-dotnet run --project src/Knip.Cli -- path/to/Your.sln
+dotnet run --project src/Knip.Cli -- analyze path/to/Your.sln
 ```
 
-To install the local package as a global tool:
+To install a local package as a global tool:
 
 ```bash
 dotnet pack src/Knip.Cli -c Release
-dotnet tool install -g Hdir.Knip --add-source src/Knip.Cli/bin/Release
-dotnet-knip path/to/Your.sln
+dotnet tool install --global AsmundWien.Knip --add-source src/Knip.Cli/bin/Release --version 0.1.0-preview.1
+dotnet-knip analyze path/to/Your.sln
 ```
 
 The command also works as `dotnet knip`.
 
-Common options:
-
 ```text
--s, --solution <path>
--c, --config <path>
--f, --format console|json|sarif
--v, --verbose
-    --no-fail
-    --production
-    --why <symbol-or-id>
-    --print-config
+dotnet-knip analyze [target]
+  [--config <path>]
+  [--production]
+  [--format console|json|sarif]
+  [--no-fail]
+  [--verbose]
+
+dotnet-knip explain [target]
+  --symbol <finding-id-or-display-name>
+  [--config <path>]
+  [--production]
+  [--verbose]
+
+dotnet-knip config doctor [target] [--config <path>]
 ```
 
-Exit codes are `0` for a clean run, `1` when findings exist, `2` for usage or load errors, and `130` when the run is cancelled. `--no-fail` changes exit `1` to `0`. It never masks an error.
+Run `dotnet-knip <command> --help` for command-specific examples. Bare `dotnet-knip` prints help and does not start analysis. `dotnet-knip --version` prints the package version without target or config discovery.
 
-## Agent use
+Only long option names are supported. Commands, options, and enum values are case-sensitive. The removed flat syntax and agent-bootstrap commands have no compatibility aliases.
 
-JSON v2 is the product API. Run this before letting an agent delete code:
+Reports use stdout. Progress, safety warnings, and errors use stderr. Exit codes are `0` for a successful query, config check, clean analysis, or findings with `--no-fail`; `1` for completed analysis with findings; `2` for usage, config, explanation, startup, or load errors; and `130` for cancellation. `--no-fail` changes only exit `1` to `0`.
 
-```bash
-dotnet-knip init --agent
-```
-
-The command writes `knip.json` and `.knip/AGENTS.md` in the current directory. It does not run analysis. It keeps an existing `knip.json`, and it will not replace a changed `.knip/AGENTS.md` unless you pass `--force`.
-
-`dotnet-knip --agent-instructions` prints the same protocol without writing files. The source is [`src/Knip.Cli/Resources/AgentInstructions.md`](src/Knip.Cli/Resources/AgentInstructions.md).
-
-The protocol requires agents to check `formatVersion`, stop on degraded reliability, triage by confidence, delete by `span`, and verify every high-confidence deletion with a build, the full test suite, and another Knip run.
+The installable `knip` Agent Skill owns the agent deletion workflow. The CLI does not install or copy agent instructions.
 
 ## Configuration
 
-Knip.NET looks for the nearest `knip.json` starting from the analyzed solution's directory. Pass `--config` to choose another file.
+`knip.json` contains analysis policy only. The target and report format are command arguments. With an explicit or discovered target, Knip.NET finds the nearest `knip.json` from the target directory through its ancestors. With no config, analysis uses built-in defaults.
 
-The annotated [`knip.json`](knip.json) documents the available settings and plugin defaults. [`schemas/knip.config.schema.json`](schemas/knip.config.schema.json) provides editor validation. The main decisions are:
+Run `dotnet-knip config doctor` to validate a config without loading a solution or using the network. It accepts JSON comments and trailing commas. Wrong casing, unknown keys, unknown plugins, unknown plugin settings, wrong shapes, and invalid values fail with exit `2`.
+
+The annotated [`knip.json`](knip.json) documents the available settings and plugin defaults. [`schemas/knip.config.schema.json`](schemas/knip.config.schema.json) is the bundled runtime contract. The main decisions are:
 
 - Set `roots.treatAllPublicAsUsed` or `roots.publicApiProjects` when other repositories consume the public API. Matching public symbols become roots and leave the finding set.
-- Add project-specific entry points for code invoked by a framework or by reflection that the built-in plugins do not recognize. `baseTypes`, `implementedInterfaces`, and `namePatterns` deliberately root each matching type's whole externally visible surface.
+- Add project-specific entry points for code invoked by a framework or by reflection that the built-in plugins do not recognize. `baseTypes`, `implementedInterfaces`, and `namePatterns` root each matching type's externally visible surface.
 - Use ignores for generated code and known runtime-only references that static analysis cannot prove.
 - Enable opt-in plugins only for frameworks the solution uses.
-- Built-in ASP.NET Core handling roots only framework-dispatched members and runtime activation for controllers, components, hubs, page models, and hosted services; unrelated helpers remain reportable.
+- Built-in ASP.NET Core handling roots only framework-dispatched members and runtime activation for controllers, components, hubs, page models, and hosted services. Unrelated helpers remain reportable.
 - Built-in framework matching uses resolved namespace and defining assembly identities. A same-named application type is not a framework shape. For source-only stand-ins or compatible extensions, configure an explicit attribute name or a plugin `aliases` mapping from canonical type to qualified local type.
 - Built-in test roots use resolved attributes from xUnit v2/v3, MSTest, and NUnit. Assembly qualification prevents same-named application attributes from becoming roots.
 
-`--print-config` prints the effective config. Unknown keys produce a warning instead of failing the run.
-
 ## Results and safe deletion
 
-Use `--format json` for automation. The output schema is [`schemas/knip.output.schema.json`](schemas/knip.output.schema.json).
+Use `dotnet-knip analyze --format json` for automation. The output schema is [`schemas/knip.output.schema.json`](schemas/knip.output.schema.json).
 
 Each finding has a confidence, hazards, a remediation, and usually a deletion span. Confidence is effective for the complete deletion unit: a descendant linked by `rootCause` cannot advertise greater autonomy than its governing ancestor, and summary confidence counts use that effective tier. `span` uses 1-based, half-open coordinates: `[start, end)`. `location` is for navigation and is not a deletion range.
 
@@ -96,13 +92,13 @@ cannot prove their effects.
 
 If `reliability.degraded` is true, restore or workspace loading was incomplete. Do not delete from that run. Restore the solution with authenticated feeds and run Knip.NET again.
 
-`--why <symbol-or-id>` explains why a symbol is dead or shows the shortest root-to-symbol path for live code.
+`dotnet-knip explain --symbol <finding-id-or-display-name>` reports whether one exact graph symbol is alive, unreachable, or reachable only from tests. It includes a shortest root path or sorted unreachable referrers without exposing internal graph keys.
 
 ## Production mode
 
 Tests are roots in the default analysis. Production code used only by its own tests therefore looks alive.
 
-`--production` runs separate production and test reachability. Roots and edges added by analysis plugins inherit the project where the plugin discovered them; a contribution discovered from both production and test projects counts as production. Code reachable only through test roots or test-only plugin contributions is reported as `onlyUsedByTests` with remediation `deleteCodeAndTests`. Direct findings list their test referrers. Transitive findings point to that boundary through `rootCause`.
+`dotnet-knip analyze --production` runs separate production and test reachability. Roots and edges added by analysis plugins inherit the project where the plugin discovered them; a contribution discovered from both production and test projects counts as production. Code reachable only through test roots or test-only plugin contributions is reported as `onlyUsedByTests` with remediation `deleteCodeAndTests`. Direct findings list their test referrers. Transitive findings point to that boundary through `rootCause`.
 
 These findings need human review. The deletion unit contains both production code and tests.
 
@@ -112,7 +108,7 @@ Restore before analysis. Missing packages create unresolved Roslyn types and mak
 
 ```yaml
 - run: dotnet restore Your.sln
-- run: dotnet-knip Your.sln --format sarif > knip.sarif
+- run: dotnet-knip analyze Your.sln --format sarif > knip.sarif
 ```
 
 A non-empty run exits `1`. Add `--no-fail` for report-only CI.

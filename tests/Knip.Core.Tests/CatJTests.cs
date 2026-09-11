@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Json.Schema;
 using Xunit;
 
 namespace Knip.Core.Tests;
@@ -22,240 +23,297 @@ public sealed class CatJTests
     private static readonly string WithFindingsSolution =
         FixtureSolution("WithFindings");
 
-    // ── J1: clean solution → exit 0 ──────────────────────────────────────────────────────────
     [Fact]
-    public void J1_clean_solution_exits_zero()
+    public void J1_help_and_version_are_standalone_queries()
     {
-        var r = RunCli("-s", CleanSolution);
-        Assert.Equal(0, r.ExitCode);
+        using var temp = new TempDir();
+
+        var bare = RunCliIn(temp.Path);
+        Assert.Equal(0, bare.ExitCode);
+        Assert.Contains("dotnet-knip analyze", bare.StdOut);
+        Assert.Equal(string.Empty, bare.StdErr.Trim());
+
+        foreach (var args in new[]
+                 {
+                     new[] { "analyze", "--help" },
+                     new[] { "explain", "--help" },
+                     new[] { "config", "--help" },
+                     new[] { "config", "doctor", "--help" },
+                 })
+        {
+            var help = RunCliIn(temp.Path, args);
+            Assert.Equal(0, help.ExitCode);
+            Assert.Contains("Examples", help.StdOut);
+            Assert.Equal(string.Empty, help.StdErr.Trim());
+        }
+
+        var version = RunCliIn(temp.Path, "--version");
+        Assert.Equal(0, version.ExitCode);
+        Assert.Equal("Knip.NET 0.1.0-preview.1", version.StdOut.Trim());
+        Assert.Equal(string.Empty, version.StdErr.Trim());
     }
 
-    // ── J2: findings → exit 1; with --no-fail → exit 0 ───────────────────────────────────────
     [Fact]
-    public void J2_findings_exit_one_and_no_fail_exit_zero()
+    public void J2_analysis_exit_codes_and_discovery_are_stable()
     {
-        var withFail = RunCli("-s", WithFindingsSolution);
-        Assert.Equal(1, withFail.ExitCode);
+        Assert.Equal(0, RunCli("analyze", CleanSolution).ExitCode);
+        Assert.Equal(1, RunCli("analyze", WithFindingsSolution).ExitCode);
+        Assert.Equal(0, RunCli("analyze", WithFindingsSolution, "--no-fail").ExitCode);
 
-        var noFail = RunCli("-s", WithFindingsSolution, "--no-fail");
-        Assert.Equal(0, noFail.ExitCode);
-    }
-
-    // ── J3: bad args / missing target → exit 2 + usage on STDERR ──────────────────────────────
-    [Fact]
-    public void J3_bad_option_exits_two_with_usage_on_stderr()
-    {
-        var r = RunCli("--definitely-not-an-option");
-        Assert.Equal(2, r.ExitCode);
-        // Usage text goes to stderr; stdout stays clean.
-        Assert.Contains("Usage:", r.StdErr);
-        Assert.Contains("dotnet-knip", r.StdErr);
-        Assert.Equal(string.Empty, r.StdOut.Trim());
+        var discovered = RunCliIn(
+            Path.GetDirectoryName(WithFindingsSolution)!, "analyze", "--no-fail");
+        Assert.Equal(0, discovered.ExitCode);
     }
 
     [Fact]
-    public void J3_missing_target_exits_two_on_stderr()
+    public void J3_invalid_and_removed_syntax_fails_before_file_access()
     {
-        var missing = Path.Combine(Path.GetDirectoryName(WithFindingsSolution)!, "DoesNotExist.slnx");
-        var r = RunCli("-s", missing);
-        Assert.Equal(2, r.ExitCode);
-        Assert.Contains("error:", r.StdErr);
-        Assert.Equal(string.Empty, r.StdOut.Trim());
+        var cases = new[]
+        {
+            new[] { "--definitely-not-an-option" },
+            new[] { "-s", WithFindingsSolution },
+            new[] { WithFindingsSolution },
+            new[] { "analyze", WithFindingsSolution, "extra.slnx" },
+            new[] { "analyze", WithFindingsSolution, "--format", "json", "--format", "sarif" },
+            new[] { "analyze", WithFindingsSolution, "--symbol", "Anything" },
+            new[] { "analyze", WithFindingsSolution, "--why", "Anything" },
+            new[] { "analyze", WithFindingsSolution, "--print-config" },
+            new[] { "--agent-instructions" },
+            new[] { "init", "--agent" },
+            new[] { "analyze", "--help", WithFindingsSolution },
+            new[] { "--version", WithFindingsSolution },
+        };
+
+        foreach (var args in cases)
+        {
+            var result = RunCli(args);
+            Assert.Equal(2, result.ExitCode);
+            Assert.Equal(string.Empty, result.StdOut.Trim());
+            Assert.Contains("error:", result.StdErr);
+            Assert.Contains("--help", result.StdErr);
+        }
     }
 
-    // ── J4: --format json is v2 shape; findings sorted project→file→line, stable across runs ──
-    // Updated to JSON v2 (WS8b): formatVersion 2 with tool/run/reliability/summary/findings; the
-    // finding's location moved under `location.{file,line}`. This is the sanctioned breaking change
-    // (§1: "we do NOT maintain both shapes"). The ordering + stability contract is unchanged.
     [Fact]
-    public void J4_json_is_v2_and_is_sorted_and_stable()
+    public void J4_target_errors_are_explicit_and_ambiguous_candidates_are_sorted()
     {
-        var first = RunCli("-s", WithFindingsSolution, "-f", "json");
+        using var temp = new TempDir();
+        var missing = RunCliIn(temp.Path, "analyze", "Missing.slnx");
+        Assert.Equal(2, missing.ExitCode);
+        Assert.Contains("target not found", missing.StdErr);
+
+        File.WriteAllText(Path.Combine(temp.Path, "input.txt"), "text");
+        var unsupported = RunCliIn(temp.Path, "analyze", "input.txt");
+        Assert.Equal(2, unsupported.ExitCode);
+        Assert.Contains("unsupported target", unsupported.StdErr);
+
+        File.WriteAllText(Path.Combine(temp.Path, "B.slnx"), "<Solution />");
+        File.WriteAllText(Path.Combine(temp.Path, "A.slnx"), "<Solution />");
+        var ambiguous = RunCliIn(temp.Path, "analyze");
+        Assert.Equal(2, ambiguous.ExitCode);
+        Assert.True(ambiguous.StdErr.IndexOf("A.slnx", StringComparison.Ordinal) <
+                    ambiguous.StdErr.IndexOf("B.slnx", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void J5_json_is_v2_stable_and_uses_the_product_version()
+    {
+        var first = RunCli("analyze", WithFindingsSolution, "--format", "json");
         Assert.Equal(1, first.ExitCode);
+        using var document = JsonDocument.Parse(first.StdOut);
+        var root = document.RootElement;
+        Assert.Equal(2, root.GetProperty("formatVersion").GetInt32());
+        Assert.Equal("Knip.NET", root.GetProperty("tool").GetProperty("name").GetString());
+        Assert.Equal("0.1.0-preview.1", root.GetProperty("tool").GetProperty("version").GetString());
 
-        using (var doc = JsonDocument.Parse(first.StdOut))
+        var findings = root.GetProperty("findings").EnumerateArray().ToList();
+        Assert.NotEmpty(findings);
+        Assert.All(findings, finding =>
         {
-            var root = doc.RootElement;
-            Assert.Equal(2, root.GetProperty("formatVersion").GetInt32());
-            Assert.Equal("Knip.NET", root.GetProperty("tool").GetProperty("name").GetString());
-            Assert.True(root.TryGetProperty("run", out _));
-            Assert.True(root.TryGetProperty("reliability", out _));
-            Assert.True(root.TryGetProperty("summary", out _));
-            Assert.True(root.TryGetProperty("findings", out _));
-        }
+            if (finding.GetProperty("symbol").GetString() == "CatJ.WithFindings.Program.UnusedAlpha()")
+                Assert.False(finding.TryGetProperty("rootCause", out _));
+        });
 
-        var order1 = FindingKeys(first.StdOut);
-        Assert.NotEmpty(order1);
-
-        // project → file → line ordering (ordinal on project/file, numeric on line).
-        var expected = order1
-            .OrderBy(k => k.Project, StringComparer.Ordinal)
-            .ThenBy(k => k.File, StringComparer.Ordinal)
-            .ThenBy(k => k.Line)
+        var expected = FindingKeys(first.StdOut)
+            .OrderBy(key => key.Project, StringComparer.Ordinal)
+            .ThenBy(key => key.File, StringComparer.Ordinal)
+            .ThenBy(key => key.Line)
             .ToList();
-        Assert.Equal(expected, order1);
-
-        // Stability: a second identical run yields the identical ordering AND identical ids.
-        var second = RunCli("-s", WithFindingsSolution, "-f", "json");
-        var order2 = FindingKeys(second.StdOut);
-        Assert.Equal(order1, order2);
+        Assert.Equal(expected, FindingKeys(first.StdOut));
+        Assert.Equal(FindingKeys(first.StdOut), FindingKeys(
+            RunCli("analyze", WithFindingsSolution, "--format", "json").StdOut));
     }
 
-    // ── J5: --format sarif → valid minimal SARIF 2.1.0 with one located result per finding ────
     [Fact]
-    public void J5_sarif_is_valid_minimal_2_1_0()
+    public void J6_verbose_json_keeps_stdout_pure_and_writes_progress_to_stderr()
     {
-        var r = RunCli("-s", WithFindingsSolution, "-f", "sarif");
-        Assert.Equal(1, r.ExitCode);
+        var result = RunCli(
+            "analyze", WithFindingsSolution, "--format", "json", "--verbose", "--no-fail");
 
-        using var doc = JsonDocument.Parse(r.StdOut);
-        var root = doc.RootElement;
+        Assert.Equal(0, result.ExitCode);
+        using var document = JsonDocument.Parse(result.StdOut);
+        Assert.Equal(JsonValueKind.Object, document.RootElement.ValueKind);
+        Assert.Contains("Loading", result.StdErr);
+    }
 
-        // version must be exactly "2.1.0".
-        Assert.Equal("2.1.0", root.GetProperty("version").GetString());
+    [Fact]
+    public void J7_sarif_carries_stable_ids_safety_properties_and_relative_paths()
+    {
+        var sarif = RunCli("analyze", WithFindingsSolution, "--format", "sarif");
+        var json = RunCli("analyze", WithFindingsSolution, "--format", "json");
+        Assert.Equal(1, sarif.ExitCode);
 
-        // A schema URI must be present under the SARIF 2.1.0 spec name "$schema" (GitHub
-        // code-scanning keys on it).
+        using var sarifDocument = JsonDocument.Parse(sarif.StdOut);
+        using var jsonDocument = JsonDocument.Parse(json.StdOut);
+
+        // The vendored OASIS schema declares draft 4. JsonSchema.Net starts at draft 6, so adapt only
+        // the dialect and identifier keywords before evaluating the unchanged SARIF definitions.
+        var schemaText = File.ReadAllText(Path.Combine(
+            RepoRoot(), "tests", "schemas", "sarif-schema-2.1.0.json"))
+            .Replace("http://json-schema.org/draft-04/schema#", "http://json-schema.org/draft-07/schema#", StringComparison.Ordinal)
+            .Replace("\"id\": \"https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json\"",
+                "\"$id\": \"https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json\"",
+                StringComparison.Ordinal);
+        var schema = JsonSchema.FromText(schemaText);
+        var evaluation = schema.Evaluate(
+            sarifDocument.RootElement,
+            new EvaluationOptions { OutputFormat = OutputFormat.List });
         Assert.True(
-            root.TryGetProperty("$schema", out _),
-            "SARIF output is missing the \"$schema\" pointer required by SARIF 2.1.0.");
+            evaluation.IsValid,
+            string.Join(Environment.NewLine, evaluation.Details
+                .Where(detail => detail.HasErrors)
+                .SelectMany(detail => detail.Errors!.Select(error =>
+                    $"{detail.InstanceLocation}: {error.Value}"))));
+        var run = sarifDocument.RootElement.GetProperty("runs")[0];
+        Assert.Equal("2.1.0", sarifDocument.RootElement.GetProperty("version").GetString());
+        Assert.Equal("0.1.0-preview.1", run.GetProperty("tool").GetProperty("driver").GetProperty("version").GetString());
+        Assert.Equal(
+            jsonDocument.RootElement.GetProperty("findings").GetArrayLength(),
+            run.GetProperty("results").GetArrayLength());
 
-        var runs = root.GetProperty("runs");
-        Assert.Equal(1, runs.GetArrayLength());
-        var run = runs[0];
-
-        // tool.driver.name present and non-empty.
-        var name = run.GetProperty("tool").GetProperty("driver").GetProperty("name").GetString();
-        Assert.False(string.IsNullOrWhiteSpace(name));
-
-        // One result per finding, each with a physicalLocation.
-        var results = run.GetProperty("results");
-        Assert.True(results.GetArrayLength() >= 1);
-        foreach (var result in results.EnumerateArray())
+        foreach (var result in run.GetProperty("results").EnumerateArray())
         {
-            var locations = result.GetProperty("locations");
-            Assert.True(locations.GetArrayLength() >= 1);
-            Assert.True(
-                locations[0].TryGetProperty("physicalLocation", out _),
-                "SARIF result location has no physicalLocation.");
+            Assert.Matches("^[a-z]", result.GetProperty("ruleId").GetString()!);
+            Assert.Equal("warning", result.GetProperty("level").GetString());
+            Assert.StartsWith("k1_", result.GetProperty("partialFingerprints").GetProperty("knipId/v1").GetString());
+            Assert.True(result.GetProperty("properties").TryGetProperty("confidence", out _));
+            var uri = result.GetProperty("locations")[0].GetProperty("physicalLocation")
+                .GetProperty("artifactLocation").GetProperty("uri").GetString()!;
+            Assert.False(Path.IsPathRooted(uri));
         }
-
-        // Cross-check: result count matches the json finding count for the same fixture.
-        var json = RunCli("-s", WithFindingsSolution, "-f", "json");
-        Assert.Equal(FindingKeys(json.StdOut).Count, results.GetArrayLength());
     }
 
-    // ── J6: machine output on stdout stays uncorrupted; -v progress goes to stderr ────────────
     [Fact]
-    public void J6_verbose_progress_on_stderr_stdout_stays_pure_json()
+    public void J8_console_report_contains_deletion_safety_fields_and_ascii_only()
     {
-        var r = RunCli("-s", WithFindingsSolution, "-f", "json", "-v");
-        Assert.Equal(1, r.ExitCode);
+        var result = RunCli("analyze", WithFindingsSolution);
 
-        // stdout must parse as JSON despite -v: no progress line leaked in.
-        using var doc = JsonDocument.Parse(r.StdOut);
-        Assert.Equal(JsonValueKind.Object, doc.RootElement.ValueKind);
-
-        // Progress must have gone to stderr.
-        Assert.False(string.IsNullOrWhiteSpace(r.StdErr), "-v produced no progress on stderr.");
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("confidence:", result.StdOut);
+        Assert.Contains("remediation:", result.StdOut);
+        Assert.Contains("reliability:", result.StdOut);
+        Assert.Contains("k1_", result.StdOut);
+        Assert.All(result.StdOut, character => Assert.True(character <= 127));
+        Assert.Equal(string.Empty, result.StdErr.Trim());
     }
 
-    // ── J7: --agent-instructions → exit 0, protocol on stdout, no solution/config needed ─────
     [Fact]
-    public void J7_agent_instructions_prints_protocol_without_solution()
+    public void J9_config_doctor_is_offline_strict_and_read_only()
     {
-        // Run from an EMPTY temp dir: proves the command needs no solution and no knip.json.
-        using var tmp = new TempDir();
-        var r = RunCliIn(tmp.Path, "--agent-instructions");
+        using var temp = new TempDir();
+        var path = Path.Combine(temp.Path, "knip.json");
+        File.WriteAllText(path, "{ // comment\n \"production\": false,\n}");
+        var before = File.ReadAllBytes(path);
 
-        Assert.Equal(0, r.ExitCode);
-        Assert.False(string.IsNullOrWhiteSpace(r.StdOut));
-        Assert.Equal(string.Empty, r.StdErr.Trim());
+        var valid = RunCliIn(temp.Path, "config", "doctor");
+        Assert.Equal(0, valid.ExitCode);
+        Assert.EndsWith("/knip.json", valid.StdOut.Trim().Replace('\\', '/'));
+        Assert.Equal(before, File.ReadAllBytes(path));
 
-        // The protocol must name the machine-contract fields an agent gates on.
-        foreach (var token in new[] { "formatVersion == 2", "reliability.degraded", "confidence", "span", "rootCause" })
-            Assert.Contains(token, r.StdOut);
+        foreach (var invalid in new[]
+                 {
+                     "{ \"Production\": true }",
+                     "{ \"production\": \"yes\" }",
+                     "{ \"solution\": \"App.slnx\" }",
+                     "{ \"output\": { \"format\": \"json\" } }",
+                     "{ \"plugins\": { \"missing\": { \"enabled\": true } } }",
+                     "{ \"plugins\": { \"reflection\": { \"aliases\": {} } } }",
+                 })
+        {
+            File.WriteAllText(path, invalid);
+            var failed = RunCliIn(temp.Path, "config", "doctor");
+            Assert.Equal(2, failed.ExitCode);
+            Assert.Equal(string.Empty, failed.StdOut.Trim());
+            Assert.Contains("invalid config", failed.StdErr);
+        }
     }
 
-    // ── J8: init --agent bootstraps a repo (both files, AGENTS.md == --agent-instructions) ────
     [Fact]
-    public void J8_init_agent_writes_both_files_and_matches_instructions()
+    public void J10_missing_config_and_explanation_errors_leave_stdout_empty()
     {
-        using var tmp = new TempDir();
-        var r = RunCliIn(tmp.Path, "init", "--agent");
+        var missingConfig = RunCli(
+            "analyze", WithFindingsSolution, "--config", "missing-knip.json", "--no-fail");
+        Assert.Equal(2, missingConfig.ExitCode);
+        Assert.Equal(string.Empty, missingConfig.StdOut.Trim());
 
-        Assert.Equal(0, r.ExitCode);
+        var missingSymbol = RunCli(
+            "explain", WithFindingsSolution, "--symbol", "CatJ.WithFindings.DoesNotExist");
+        Assert.Equal(2, missingSymbol.ExitCode);
+        Assert.Equal(string.Empty, missingSymbol.StdOut.Trim());
+        Assert.Contains("no symbol matches", missingSymbol.StdErr);
 
-        var configPath = Path.Combine(tmp.Path, "knip.json");
-        var agentsPath = Path.Combine(tmp.Path, ".knip", "AGENTS.md");
-        Assert.True(File.Exists(configPath), "init --agent did not create knip.json");
-        Assert.True(File.Exists(agentsPath), "init --agent did not create .knip/AGENTS.md");
-
-        // .knip/AGENTS.md is byte-for-byte the --agent-instructions output (single source of truth).
-        var instructions = RunCliIn(tmp.Path, "--agent-instructions").StdOut;
-        Assert.Equal(Normalize(instructions), Normalize(File.ReadAllText(agentsPath)));
-
-        // stdout names both created files; no analysis JSON leaked in.
-        Assert.Contains("knip.json", r.StdOut);
-        Assert.Contains(".knip/AGENTS.md", r.StdOut);
-        Assert.DoesNotContain("formatVersion", r.StdOut);
+        var projectTarget = Path.Combine(RepoRoot(), "tests", "fixtures", "WS2", "Fixture.slnx");
+        var projectJson = RunCli("analyze", projectTarget, "--format", "json", "--no-fail");
+        using var document = JsonDocument.Parse(projectJson.StdOut);
+        var projectReferenceId = document.RootElement.GetProperty("findings").EnumerateArray()
+            .Single(finding => finding.GetProperty("kind").GetString() == "unusedProjectReference")
+            .GetProperty("id").GetString()!;
+        var unsupported = RunCli("explain", projectTarget, "--symbol", projectReferenceId);
+        Assert.Equal(2, unsupported.ExitCode);
+        Assert.Equal(string.Empty, unsupported.StdOut.Trim());
+        Assert.Contains("not a graph symbol", unsupported.StdErr);
     }
 
-    // ── J9: idempotency — second run succeeds; existing knip.json survives byte-for-byte ──────
     [Fact]
-    public void J9_init_agent_is_idempotent_and_keeps_config()
+    public void J11_analysis_does_not_modify_target_or_config()
     {
-        using var tmp = new TempDir();
-        Assert.Equal(0, RunCliIn(tmp.Path, "init", "--agent").ExitCode);
+        var source = Path.Combine(Path.GetDirectoryName(WithFindingsSolution)!, "Program.cs");
+        var config = Path.Combine(RepoRoot(), "knip.json");
+        var sourceBefore = File.ReadAllBytes(source);
+        var configBefore = File.ReadAllBytes(config);
 
-        var configPath = Path.Combine(tmp.Path, "knip.json");
-        var configBefore = File.ReadAllBytes(configPath);
-
-        var second = RunCliIn(tmp.Path, "init", "--agent");
-        Assert.Equal(0, second.ExitCode);
-        Assert.Equal(configBefore, File.ReadAllBytes(configPath)); // untouched
+        Assert.Equal(0, RunCli(
+            "analyze", WithFindingsSolution, "--format", "json", "--no-fail").ExitCode);
+        Assert.Equal(sourceBefore, File.ReadAllBytes(source));
+        Assert.Equal(configBefore, File.ReadAllBytes(config));
     }
 
-    // ── J10: conflict protection — differing AGENTS.md not overwritten without --force ────────
     [Fact]
-    public void J10_init_agent_protects_custom_agents_md()
+    public void J12_explain_reports_code_reachable_only_from_tests()
     {
-        using var tmp = new TempDir();
-        var knipDir = Path.Combine(tmp.Path, ".knip");
-        Directory.CreateDirectory(knipDir);
-        var agentsPath = Path.Combine(knipDir, "AGENTS.md");
-        File.WriteAllText(agentsPath, "my hand-written notes\n");
+        using var temp = new TempDir();
+        var config = Path.Combine(temp.Path, "knip.json");
+        File.WriteAllText(config,
+            "{ \"entryPoints\": { \"symbolNames\": [\"Main\"], \"attributes\": [\"Fact\"] } }");
+        var target = Path.Combine(RepoRoot(), "tests", "fixtures", "CatK", "Fixture.slnx");
 
-        var blocked = RunCliIn(tmp.Path, "init", "--agent");
-        Assert.Equal(2, blocked.ExitCode);
-        Assert.Equal("my hand-written notes\n", File.ReadAllText(agentsPath)); // not overwritten
+        var result = RunCli(
+            "explain", target,
+            "--symbol", "CatK.K5.Chain.B()",
+            "--production",
+            "--config", config);
 
-        var forced = RunCliIn(tmp.Path, "init", "--agent", "--force");
-        Assert.Equal(0, forced.ExitCode);
-        var instructions = RunCliIn(tmp.Path, "--agent-instructions").StdOut;
-        Assert.Equal(Normalize(instructions), Normalize(File.ReadAllText(agentsPath)));
+        Assert.Equal(0, result.ExitCode);
+        Assert.Contains("status: only-used-by-tests", result.StdOut);
+        Assert.Contains("production root path: none", result.StdOut);
+        Assert.Contains("test root path:", result.StdOut);
     }
 
-    // ── J11: usage — unknown init option exits 2 with usage on stderr ─────────────────────────
-    [Fact]
-    public void J11_init_unknown_option_exits_two_with_usage()
-    {
-        using var tmp = new TempDir();
-        var r = RunCliIn(tmp.Path, "init", "--unknown");
-        Assert.Equal(2, r.ExitCode);
-        Assert.Contains("Usage:", r.StdErr);
-        Assert.Equal(string.Empty, r.StdOut.Trim());
-    }
-
-    // ── helpers ──────────────────────────────────────────────────────────────────────────────
-
-    private static string Normalize(string s) => s.Replace("\r\n", "\n").TrimEnd('\n');
-
-    /// <summary>A self-deleting temp directory for out-of-process init tests.</summary>
+    // Helpers
     private sealed class TempDir : IDisposable
     {
         public string Path { get; } =
-            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "knip-init-" + Guid.NewGuid().ToString("N"));
+            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "knip-cli-" + Guid.NewGuid().ToString("N"));
 
         public TempDir() => Directory.CreateDirectory(Path);
 
@@ -282,11 +340,7 @@ public sealed class CatJTests
 
     private static CliResult RunCli(params string[] args) => RunCliIn(RepoRoot(), args);
 
-    /// <summary>
-    /// Like <see cref="RunCli"/> but runs the CLI with an explicit working directory — required for
-    /// the <c>init --agent</c> tests, which bootstrap the CURRENT directory and must land their files
-    /// in an isolated temp dir, not the repo root.
-    /// </summary>
+    /// <summary>Invoke the built CLI with an explicit working directory.</summary>
     private static CliResult RunCliIn(string workingDirectory, params string[] args)
     {
         var cliProject = Path.Combine(RepoRoot(), "src", "Knip.Cli", "Knip.Cli.csproj");

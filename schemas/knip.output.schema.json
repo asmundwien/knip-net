@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/asmundwien/knip-net/main/schemas/knip.output.schema.json",
+  "$id": "https://raw.githubusercontent.com/asmundwien/knip-net/v0.1.0-preview.1/schemas/knip.output.schema.json",
   "title": "Knip.NET JSON output (formatVersion 2)",
   "description": "The machine-readable product API for a Knip.NET run.",
   "type": "object",
@@ -17,7 +17,7 @@
       "additionalProperties": false,
       "required": ["name", "version"],
       "properties": {
-        "name": { "type": "string" },
+        "name": { "type": "string", "const": "Knip.NET" },
         "version": { "type": "string" }
       }
     },
@@ -197,7 +197,7 @@
           }
         },
         "span": {
-          "type": ["object", "null"],
+          "type": "object",
           "additionalProperties": false,
           "required": ["file", "start", "end"],
           "properties": {
@@ -206,14 +206,15 @@
             "end": { "$ref": "#/$defs/position" }
           }
         },
-        "referencedProject": { "type": ["string", "null"] },
+        "referencedProject": { "type": "string" },
         "rootCause": {
-          "type": ["string", "null"],
+          "type": "string",
           "pattern": "^k1_[0-9a-f]{10}$",
           "description": "Nearest reported finding in the same unreachable class whose deletion covers this finding. For transitive onlyUsedByTests findings, follow this chain to the direct test boundary carrying details.testReferrers."
         },
         "details": {
           "type": "object",
+          "additionalProperties": false,
           "description": "Kind-specific data. onlyUsedByTests findings use testReferrers for direct references from tests.",
           "properties": {
             "testReferrers": {

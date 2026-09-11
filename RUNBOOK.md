@@ -54,7 +54,7 @@ Run after every change:
 ```bash
 dotnet build Knip.slnx -warnaserror
 dotnet test tests/Knip.Core.Tests/Knip.Core.Tests.csproj --no-build
-dotnet run --project src/Knip.Cli -- tests/fixtures/<relevant>/Fixture.slnx
+dotnet run --project src/Knip.Cli -- analyze tests/fixtures/<relevant>/Fixture.slnx
 ```
 
 The test battery is the feature contract. Each fixture asserts the exact finding set. Every alive assertion needs a dead sibling or another check that proves the fixture can fail. A skipped test records a deferred feature. Promote it when the feature lands; do not delete it.

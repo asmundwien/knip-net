@@ -455,7 +455,7 @@ public sealed class PluginsTests
 
         // 'namespaces' is a known key → no unknown-key warning.
         var result = await FixtureRunner.RunAsync(Category, config);
-        Assert.DoesNotContain(result.LoadDiagnostics, d => d.Contains("plugins.serialization.namespaces"));
+        Assert.DoesNotContain(result.Reliability.LoadDiagnostics, d => d.Message.Contains("plugins.serialization.namespaces"));
     }
 
     // ── aspnetcore differential + over-rooting guard: middleware Invoke (UseMiddleware<T>) ──────────
@@ -800,7 +800,7 @@ public sealed class PluginsTests
         var config = new KnipConfig { Plugins = { ["aspnetcore"] = settings } };
 
         var result = await FixtureRunner.RunAsync(Category, config);
-        Assert.Contains(result.LoadDiagnostics, d => d.Contains("plugins.aspnetcore.enabldd"));
+        Assert.Contains(result.Reliability.LoadDiagnostics, d => d.Message.Contains("plugins.aspnetcore.enabldd"));
     }
 
     // A typo in the blazorParameter block surfaces a visible unknown-key warning (never silently no-ops).
@@ -812,7 +812,7 @@ public sealed class PluginsTests
         var config = new KnipConfig { Plugins = { ["blazorParameter"] = settings } };
 
         var result = await FixtureRunner.RunAsync(Category, config);
-        Assert.Contains(result.LoadDiagnostics, d => d.Contains("plugins.blazorParameter.enabldd"));
+        Assert.Contains(result.Reliability.LoadDiagnostics, d => d.Message.Contains("plugins.blazorParameter.enabldd"));
     }
 
     // ── default-enabled set (F8-style): pin which plugins run under a default config ──────────
@@ -853,7 +853,7 @@ public sealed class PluginsTests
             Plugins = { ["reflectoin"] = new PluginSettings { Enabled = true } }, // typo of "reflection"
         };
         var result = await FixtureRunner.RunAsync(Category, config);
-        Assert.Contains(result.LoadDiagnostics, d => d.Contains("unknown plugin 'reflectoin'"));
+        Assert.Contains(result.Reliability.LoadDiagnostics, d => d.Message.Contains("unknown plugin 'reflectoin'"));
     }
 
     // ── config warnings: unknown per-plugin key ───────────────────────────────────────────────
@@ -866,7 +866,7 @@ public sealed class PluginsTests
         var config = new KnipConfig { Plugins = { ["reflection"] = settings } };
 
         var result = await FixtureRunner.RunAsync(Category, config);
-        Assert.Contains(result.LoadDiagnostics, d => d.Contains("plugins.reflection.enabldd"));
+        Assert.Contains(result.Reliability.LoadDiagnostics, d => d.Message.Contains("plugins.reflection.enabldd"));
     }
 
     // ── config warnings: unknown per-plugin key on scanningDi ──────────────────────────────────
@@ -878,7 +878,7 @@ public sealed class PluginsTests
         var config = new KnipConfig { Plugins = { ["scanningDi"] = settings } };
 
         var result = await FixtureRunner.RunAsync(Category, config);
-        Assert.Contains(result.LoadDiagnostics, d => d.Contains("plugins.scanningDi.enabldd"));
+        Assert.Contains(result.Reliability.LoadDiagnostics, d => d.Message.Contains("plugins.scanningDi.enabldd"));
     }
 
     // A clean, fully-specified config produces NO plugin warnings (anti-vacuous-green for the above).

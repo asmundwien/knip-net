@@ -1,15 +1,10 @@
-using System.Text.Json;
 using Knip.Core;
-using Knip.Core.Analysis;
 using Knip.Core.Configuration;
-using Knip.Core.Reporting;
+using Knip.Core.Model;
 
 namespace Knip.Cli;
 
-/// <summary>
-/// CLI surface. Isolated from Program.cs so MSBuild registration completes before any Roslyn
-/// MSBuild type is JIT-loaded.
-/// </summary>
+/// <summary>Owns command parsing, discovery, engine invocation, streams, and exit codes.</summary>
 internal static class Runner
 {
     public static async Task<int> RunAsync(string[] args)
@@ -19,46 +14,43 @@ internal static class Runner
         {
             options = CliOptions.Parse(args);
         }
-        catch (ArgumentException ex)
+        catch (CliUsageException ex)
         {
             Console.Error.WriteLine($"error: {ex.Message}");
-            CliOptions.PrintUsage(Console.Error);
+            Console.Error.WriteLine($"run `{ex.HelpCommand}` for usage.");
             return 2;
         }
 
-        if (options.ShowHelp)
+        if (options.Command == CliCommand.Help)
         {
-            CliOptions.PrintUsage(Console.Out);
+            CliOptions.PrintHelp(Console.Out, options.HelpCommand);
             return 0;
         }
 
-        // WS9 agent-bootstrap surfaces run BEFORE any config discovery or solution load — both must work
-        // in an empty directory with no solution and no knip.json.
-        if (options.AgentInstructions)
+        if (options.Command == CliCommand.Version)
         {
-            // Write (not WriteLine): the provider text already ends in a newline, so stdout stays
-            // byte-for-byte identical to what `init --agent` writes to .knip/AGENTS.md.
-            Console.Out.Write(AgentInstructionsProvider.Text);
+            Console.Out.WriteLine($"{ProductInfo.Name} {ProductInfo.Version}");
             return 0;
         }
 
-        if (options.Command == CliCommand.Init)
-            return InitCommand.Run(options, Directory.GetCurrentDirectory(), Console.Out, Console.Error);
+        if (options.Command == CliCommand.ConfigDoctor)
+            return RunConfigDoctor(options);
 
-        // Config discovery is relative to the ANALYZED solution, not the caller's cwd. When an explicit
-        // target is given (-s/--solution or the positional arg), start the walk-up from THAT solution
-        // file's directory so a knip.json next to it always wins — running the tool on an external
-        // solution from an unrelated directory must not pick up (and mis-apply) the caller's knip.json.
-        // Only when no explicit solution is given do we fall back to cwd (the config may then itself name
-        // the solution). --config still overrides discovery entirely.
-        var searchDir = options.Solution is { } solution
-            ? Path.GetDirectoryName(Path.GetFullPath(solution)) ?? Directory.GetCurrentDirectory()
-            : Directory.GetCurrentDirectory();
-        var configPath = options.ConfigPath ?? KnipConfig.Discover(searchDir);
+        string target;
+        string? configPath;
         KnipConfig config;
         try
         {
-            config = KnipConfig.Load(configPath);
+            target = ResolveAnalysisTarget(options.Target, options.HelpCommand);
+            configPath = ResolveConfigPath(
+                options.ConfigPath, Path.GetDirectoryName(target)!, required: false, options.HelpCommand);
+            config = LoadConfig(configPath);
+        }
+        catch (CliUsageException ex)
+        {
+            Console.Error.WriteLine($"error: {ex.Message}");
+            Console.Error.WriteLine($"run `{ex.HelpCommand}` for usage.");
+            return 2;
         }
         catch (Exception ex)
         {
@@ -66,72 +58,44 @@ internal static class Runner
             return 2;
         }
 
-        // WS7: production mode enables via the CLI flag OR the config key (flag never turns it OFF).
-        // Applied before --print-config so the printed effective config reflects the CLI override.
-        if (options.Production) config.Production = true;
+        if (options.Production)
+            config.Production = true;
 
-        // Unknown-key warnings (WS8c / L7) surface through the LoadDiagnostics channel during analysis
-        // (analyzer → reporter/reliability block), exactly like the plugin warnings. The QUERY commands
-        // below (--print-config / --why) bypass that channel, so for them we emit the same warnings LOUD
-        // on stderr here so config typos never silently no-op. stdout stays clean (J6).
-        if (options.PrintConfig || options.Why is not null)
-            foreach (var warning in config.ValidateKeys())
-                Console.Error.WriteLine($"warning: {warning}");
-
-        // --print-config (WS8c / L6): the EFFECTIVE merged config (file over defaults) as JSON to stdout,
-        // exit 0. No analysis. SourcePath is [JsonIgnore] (loader-internal) so it never appears.
-        if (options.PrintConfig)
-        {
-            Console.Out.WriteLine(JsonSerializer.Serialize(config, KnipConfig.JsonOptions));
-            return 0;
-        }
-
-        var target = options.Solution ?? config.Solution ?? DiscoverTarget();
-        if (target is null)
-        {
-            Console.Error.WriteLine("error: no solution/project found. Pass --solution <path> or set it in knip.json.");
-            return 2;
-        }
-        if (!File.Exists(target))
-        {
-            Console.Error.WriteLine($"error: target not found: {target}");
-            return 2;
-        }
-
-        var format = options.Format ?? config.Output.Format;
-        var verbose = options.Verbose;
-
-        var progress = verbose
-            ? new Progress<string>(message => Console.Error.WriteLine($"  {message}"))
+        var progress = options.Verbose
+            ? new Progress<string>(message => Console.Error.WriteLine(message))
             : null;
 
-        using var cts = new CancellationTokenSource();
-        Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
+        using var cancellation = new CancellationTokenSource();
+        ConsoleCancelEventHandler cancelHandler = (_, eventArgs) =>
+        {
+            eventArgs.Cancel = true;
+            cancellation.Cancel();
+        };
+        Console.CancelKeyPress += cancelHandler;
 
         try
         {
-            // --why (WS8c / L5) captures provenance so we can trace a symbol; a plain run does NOT
-            // (memory unchanged). It is a QUERY, not a gate: prose report to stdout, always exit 0.
-            var result = await KnipEngine.RunAsync(
-                config, Path.GetFullPath(target), progress, cts.Token, captureProvenance: options.Why is not null);
-
-            // WS7: production-mode warnings (e.g. zero test projects detected) are LOUD on stderr
-            // regardless of -v — they change the meaning of the results. Machine output stays clean
-            // on stdout (J6); the same warnings are in reliability.productionModeWarnings for consumers.
-            foreach (var warning in result.Reliability.ProductionModeWarnings)
-                Console.Error.WriteLine($"warning: {warning}");
-
-            if (options.Why is not null)
+            if (options.Command == CliCommand.Explain)
             {
-                Console.Out.WriteLine(WhyService.Explain(result, options.Why));
-                return 0; // a query never gates CI.
+                var explanation = await KnipEngine.ExplainAsync(
+                    config, target, options.Symbol!, progress, cancellation.Token);
+                WriteSafetyDiagnostics(explanation.Reliability);
+                if (explanation.Error is not null)
+                {
+                    Console.Error.WriteLine($"error: {explanation.Error}");
+                    foreach (var nearby in explanation.NearbyNames)
+                        Console.Error.WriteLine($"  {nearby}");
+                    return 2;
+                }
+
+                ExplanationTextWriter.Write(explanation, target, Console.Out);
+                return 0;
             }
 
-            ReporterFactory.Create(format).Report(result, Console.Out);
-
-            if (result.Findings.Count > 0 && !options.NoFail)
-                return 1; // CI gate: unused code found
-            return 0;
+            var result = await KnipEngine.RunAsync(config, target, progress, cancellation.Token);
+            WriteSafetyDiagnostics(result.Reliability);
+            Reporting.Write(options.Format, result, target, Console.Out);
+            return result.Findings.Count > 0 && !options.NoFail ? 1 : 0;
         }
         catch (OperationCanceledException)
         {
@@ -141,17 +105,141 @@ internal static class Runner
         catch (Exception ex)
         {
             Console.Error.WriteLine($"error: {ex.Message}");
-            if (verbose) Console.Error.WriteLine(ex);
+            if (options.Verbose)
+                Console.Error.WriteLine(ex);
+            return 2;
+        }
+        finally
+        {
+            Console.CancelKeyPress -= cancelHandler;
+        }
+    }
+
+    private static int RunConfigDoctor(CliOptions options)
+    {
+        try
+        {
+            var searchDirectory = Directory.GetCurrentDirectory();
+            if (options.Target is not null)
+            {
+                var target = ValidateTarget(options.Target, "dotnet-knip config doctor --help");
+                searchDirectory = Path.GetDirectoryName(target)!;
+            }
+
+            var path = ResolveConfigPath(
+                options.ConfigPath, searchDirectory, required: true, options.HelpCommand)!;
+            var validation = ConfigSchemaValidator.Validate(path);
+            if (!validation.IsValid)
+            {
+                Console.Error.WriteLine($"error: invalid config '{path}':");
+                foreach (var error in validation.Errors)
+                    Console.Error.WriteLine($"  {error}");
+                return 2;
+            }
+
+            Console.Out.WriteLine($"valid: {path}");
+            return 0;
+        }
+        catch (CliUsageException ex)
+        {
+            Console.Error.WriteLine($"error: {ex.Message}");
+            Console.Error.WriteLine($"run `{ex.HelpCommand}` for usage.");
+            return 2;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"error: {ex.Message}");
             return 2;
         }
     }
 
-    private static string? DiscoverTarget()
+    private static KnipConfig LoadConfig(string? path)
     {
-        var cwd = Directory.GetCurrentDirectory();
-        var solutions = Directory.GetFiles(cwd, "*.sln").Concat(Directory.GetFiles(cwd, "*.slnx")).ToArray();
-        if (solutions.Length > 0) return solutions[0];
-        var projects = Directory.GetFiles(cwd, "*.csproj");
-        return projects.Length == 1 ? projects[0] : null;
+        if (path is null)
+            return new KnipConfig();
+
+        var validation = ConfigSchemaValidator.Validate(path);
+        if (!validation.IsValid)
+            throw new InvalidOperationException(
+                $"invalid config '{path}':{Environment.NewLine}  " +
+                string.Join(Environment.NewLine + "  ", validation.Errors));
+        return KnipConfig.Load(path);
+    }
+
+    private static string ResolveAnalysisTarget(string? requested, string helpCommand)
+    {
+        if (requested is not null)
+            return ValidateTarget(requested, helpCommand);
+
+        var directory = Directory.GetCurrentDirectory();
+        var solutions = Directory.GetFiles(directory, "*.sln")
+            .Concat(Directory.GetFiles(directory, "*.slnx"))
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+        if (solutions.Length == 1)
+            return Path.GetFullPath(solutions[0]);
+        if (solutions.Length > 1)
+            throw AmbiguousTarget(solutions, helpCommand);
+
+        var projects = Directory.GetFiles(directory, "*.csproj")
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+        if (projects.Length == 1)
+            return Path.GetFullPath(projects[0]);
+        if (projects.Length > 1)
+            throw AmbiguousTarget(projects, helpCommand);
+
+        throw new CliUsageException(
+            "no .sln, .slnx, or .csproj target found in the current directory.",
+            helpCommand);
+    }
+
+    private static CliUsageException AmbiguousTarget(IEnumerable<string> candidates, string helpCommand) => new(
+        "target discovery is ambiguous. Pass one target explicitly. Candidates:" +
+        Environment.NewLine + string.Join(Environment.NewLine, candidates.Select(Path.GetFileName)),
+        helpCommand);
+
+    private static string ValidateTarget(string target, string helpCommand)
+    {
+        var path = Path.GetFullPath(target);
+        var extension = Path.GetExtension(path);
+        if (extension is not (".sln" or ".slnx" or ".csproj"))
+            throw new CliUsageException(
+                $"unsupported target '{target}'. Expected an existing .sln, .slnx, or .csproj file.",
+                helpCommand);
+        if (!File.Exists(path))
+            throw new CliUsageException($"target not found: {path}", helpCommand);
+        return path;
+    }
+
+    private static string? ResolveConfigPath(
+        string? requested, string searchDirectory, bool required, string helpCommand)
+    {
+        if (requested is not null)
+        {
+            var explicitPath = Path.GetFullPath(requested);
+            if (!File.Exists(explicitPath))
+                throw new CliUsageException($"config not found: {explicitPath}", helpCommand);
+            return explicitPath;
+        }
+
+        var discovered = KnipConfig.Discover(searchDirectory);
+        if (discovered is not null)
+            return Path.GetFullPath(discovered);
+        if (required)
+            throw new CliUsageException(
+                $"no knip.json found from '{Path.GetFullPath(searchDirectory)}' through its ancestors.",
+                helpCommand);
+        return null;
+    }
+
+    private static void WriteSafetyDiagnostics(Reliability reliability)
+    {
+        foreach (var diagnostic in reliability.LoadDiagnostics)
+            Console.Error.WriteLine($"{(diagnostic.Severity == LoadSeverity.Error ? "error" : "warning")}: {diagnostic.Message}");
+        foreach (var warning in reliability.ProductionModeWarnings)
+            Console.Error.WriteLine($"warning: {warning}");
+        if (reliability.Degraded)
+            Console.Error.WriteLine("warning: analysis reliability is degraded; do not use this run for deletion.");
     }
 }

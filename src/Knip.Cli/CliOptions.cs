@@ -1,149 +1,263 @@
 namespace Knip.Cli;
 
-/// <summary>(WS9) Top-level verb. The default <see cref="Run"/> is the analysis path; <see cref="Init"/>
-/// is the <c>init --agent</c> bootstrap, selected by a leading <c>init</c> positional.</summary>
 internal enum CliCommand
 {
-    Run,
-    Init,
+    Help,
+    Version,
+    Analyze,
+    Explain,
+    ConfigDoctor,
+}
+
+internal enum ReportFormat
+{
+    Console,
+    Json,
+    Sarif,
+}
+
+internal sealed class CliUsageException(string message, string helpCommand) : Exception(message)
+{
+    public string HelpCommand { get; } = helpCommand;
 }
 
 internal sealed class CliOptions
 {
-    /// <summary>(WS9) Selected top-level verb; <see cref="CliCommand.Init"/> when the first positional is <c>init</c>.</summary>
-    public CliCommand Command { get; private set; } = CliCommand.Run;
-
-    /// <summary>(WS9) Print the canonical agent-consumer protocol to stdout and exit 0, without loading a solution or config.</summary>
-    public bool AgentInstructions { get; private set; }
-
-    /// <summary>(WS9) `init --agent`: bootstrap the repo for agent consumption (.knip/AGENTS.md + knip.json).</summary>
-    public bool InitAgent { get; private set; }
-
-    /// <summary>(WS9) `--force`: overwrite an existing, differing `.knip/AGENTS.md` during `init` (never overwrites knip.json).</summary>
-    public bool Force { get; private set; }
-
-    public string? Solution { get; private set; }
+    public CliCommand Command { get; private set; }
+    public string? Target { get; private set; }
     public string? ConfigPath { get; private set; }
-    public string? Format { get; private set; }
-    public bool Verbose { get; private set; }
-    public bool NoFail { get; private set; }
-    public bool ShowHelp { get; private set; }
-
-    /// <summary>(WS7) Production mode: flag production code reachable only via tests as OnlyUsedByTests.</summary>
+    public string? Symbol { get; private set; }
+    public ReportFormat Format { get; private set; } = ReportFormat.Console;
     public bool Production { get; private set; }
-
-    /// <summary>(WS8c) The symbol id (k1_…) or display name to trace with <c>--why</c>; null when not requested.</summary>
-    public string? Why { get; private set; }
-
-    /// <summary>(WS8c) Print the effective merged config as JSON and exit, without running analysis.</summary>
-    public bool PrintConfig { get; private set; }
+    public bool NoFail { get; private set; }
+    public bool Verbose { get; private set; }
+    public string HelpCommand { get; private set; } = "dotnet-knip --help";
 
     public static CliOptions Parse(string[] args)
     {
-        var options = new CliOptions();
+        if (args.Length == 0)
+            return new CliOptions { Command = CliCommand.Help };
 
-        for (var i = 0; i < args.Length; i++)
+        if (args[0] == "--help")
+        {
+            RequireOnly(args, "--help", "dotnet-knip --help");
+            return new CliOptions { Command = CliCommand.Help };
+        }
+
+        if (args[0] == "--version")
+        {
+            RequireOnly(args, "--version", "dotnet-knip --help");
+            return new CliOptions { Command = CliCommand.Version };
+        }
+
+        return args[0] switch
+        {
+            "analyze" => ParseCommand(args, CliCommand.Analyze, 1, "dotnet-knip analyze --help"),
+            "explain" => ParseCommand(args, CliCommand.Explain, 1, "dotnet-knip explain --help"),
+            "config" => ParseConfig(args),
+            _ => throw new CliUsageException(
+                $"unknown command '{args[0]}'. Expected analyze, explain, or config.",
+                "dotnet-knip --help"),
+        };
+    }
+
+    private static CliOptions ParseConfig(string[] args)
+    {
+        if (args.Length == 2 && args[1] == "--help")
+            return new CliOptions { Command = CliCommand.Help, HelpCommand = "dotnet-knip config --help" };
+
+        if (args.Length < 2 || args[1] != "doctor")
+            throw new CliUsageException("config requires the doctor command.", "dotnet-knip config --help");
+
+        return ParseCommand(args, CliCommand.ConfigDoctor, 2, "dotnet-knip config doctor --help");
+    }
+
+    private static CliOptions ParseCommand(
+        string[] args, CliCommand command, int start, string helpCommand)
+    {
+        if (args.Skip(start).Contains("--help", StringComparer.Ordinal))
+        {
+            if (args.Length == start + 1 && args[start] == "--help")
+                return new CliOptions { Command = CliCommand.Help, HelpCommand = helpCommand };
+            throw new CliUsageException("--help cannot be combined with operational arguments.", helpCommand);
+        }
+
+        var options = new CliOptions { Command = command, HelpCommand = helpCommand };
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        for (var i = start; i < args.Length; i++)
         {
             var arg = args[i];
+            if (!arg.StartsWith("--", StringComparison.Ordinal))
+            {
+                if (options.Target is not null)
+                    throw new CliUsageException($"unexpected extra positional argument '{arg}'.", helpCommand);
+                options.Target = arg;
+                continue;
+            }
+
+            if (!seen.Add(arg))
+                throw new CliUsageException($"duplicate option '{arg}'.", helpCommand);
+
             switch (arg)
             {
-                case "-h" or "--help":
-                    options.ShowHelp = true;
+                case "--config":
+                    options.ConfigPath = Next(args, ref i, arg, helpCommand);
                     break;
-                case "-s" or "--solution":
-                    options.Solution = Next(args, ref i, arg);
-                    break;
-                case "-c" or "--config":
-                    options.ConfigPath = Next(args, ref i, arg);
-                    break;
-                case "-f" or "--format":
-                    options.Format = Next(args, ref i, arg);
-                    break;
-                case "-v" or "--verbose":
-                    options.Verbose = true;
-                    break;
-                case "--no-fail":
-                    options.NoFail = true;
-                    break;
-                case "--production":
+                case "--production" when command is CliCommand.Analyze or CliCommand.Explain:
                     options.Production = true;
                     break;
-                case "--why":
-                    options.Why = Next(args, ref i, arg);
+                case "--verbose" when command is CliCommand.Analyze or CliCommand.Explain:
+                    options.Verbose = true;
                     break;
-                case "--print-config":
-                    options.PrintConfig = true;
+                case "--format" when command == CliCommand.Analyze:
+                    options.Format = ParseFormat(Next(args, ref i, arg, helpCommand), helpCommand);
                     break;
-                case "--agent-instructions":
-                    options.AgentInstructions = true;
+                case "--no-fail" when command == CliCommand.Analyze:
+                    options.NoFail = true;
                     break;
-                case "--agent":
-                    options.InitAgent = true;
-                    break;
-                case "--force":
-                    options.Force = true;
+                case "--symbol" when command == CliCommand.Explain:
+                    options.Symbol = Next(args, ref i, arg, helpCommand);
                     break;
                 default:
-                    if (arg.StartsWith("-", StringComparison.Ordinal))
-                        throw new ArgumentException($"unknown option: {arg}");
-                    // A leading bare `init` selects the bootstrap verb; any other first bare argument is
-                    // the target solution/project.
-                    if (options.Command == CliCommand.Run && options.Solution is null && arg == "init")
-                        options.Command = CliCommand.Init;
-                    else
-                        options.Solution ??= arg;
-                    break;
+                    throw new CliUsageException($"unknown option '{arg}' for this command.", helpCommand);
             }
         }
 
-        if (options.Format is not null and not ("console" or "json" or "sarif"))
-            throw new ArgumentException($"invalid --format '{options.Format}' (expected console|json|sarif)");
+        if (command == CliCommand.Explain && options.Symbol is null)
+            throw new CliUsageException("explain requires --symbol <finding-id-or-display-name>.", helpCommand);
 
         return options;
     }
 
-    private static string Next(string[] args, ref int i, string flag)
+    private static ReportFormat ParseFormat(string value, string helpCommand) => value switch
     {
-        if (i + 1 >= args.Length)
-            throw new ArgumentException($"{flag} requires a value");
+        "console" => ReportFormat.Console,
+        "json" => ReportFormat.Json,
+        "sarif" => ReportFormat.Sarif,
+        _ => throw new CliUsageException(
+            $"invalid --format '{value}'. Expected console, json, or sarif.", helpCommand),
+    };
+
+    private static string Next(string[] args, ref int i, string option, string helpCommand)
+    {
+        if (i + 1 >= args.Length || args[i + 1].StartsWith("--", StringComparison.Ordinal))
+            throw new CliUsageException($"{option} requires a value.", helpCommand);
         return args[++i];
     }
 
-    public static void PrintUsage(TextWriter output)
+    private static void RequireOnly(string[] args, string option, string helpCommand)
     {
-        output.WriteLine(
-            """
-            Knip.NET: find unused code across a .NET solution.
-
-            Usage:
-              dotnet-knip [target] [options]
-              dotnet-knip init --agent [--force]
-              dotnet-knip --agent-instructions
-
-            Arguments:
-              target                 Path to a .sln/.slnx/.csproj (default: discovered in cwd or knip.json)
-
-            Agent bootstrap:
-                  --agent-instructions  Print the agent-consumer protocol to stdout and exit 0 (no solution/config)
-              init --agent           Write .knip/AGENTS.md and knip.json into the current directory (no analysis)
-                  --force            With `init`, overwrite an existing, differing .knip/AGENTS.md (never knip.json)
-
-            Options:
-              -s, --solution <path>  Solution or project to analyze
-              -c, --config <path>    Path to knip.json (default: nearest knip.json up the tree)
-              -f, --format <fmt>     Output format: console | json | sarif (default: console)
-              -v, --verbose          Print per-project progress (incl. test/production classification) to stderr
-                  --no-fail          Always exit 0, even when unused code is found
-                  --production       Flag production code reachable only via tests (OnlyUsedByTests)
-                  --why <sym-or-id>  Explain why one symbol is dead/alive (finding id k1_... or display name); exit 0
-                  --print-config     Print the effective merged config as JSON and exit 0 (no analysis)
-              -h, --help             Show this help
-
-            Exit codes:
-              0    no unused code (or --no-fail, --why, --print-config)
-              1    unused code found
-              2    usage/load error
-              130  cancelled
-            """);
+        if (args.Length != 1)
+            throw new CliUsageException($"{option} cannot be combined with other arguments.", helpCommand);
     }
+
+    public static void PrintHelp(TextWriter output, string helpCommand)
+    {
+        switch (helpCommand)
+        {
+            case "dotnet-knip analyze --help": PrintAnalyzeHelp(output); break;
+            case "dotnet-knip explain --help": PrintExplainHelp(output); break;
+            case "dotnet-knip config --help": PrintConfigHelp(output); break;
+            case "dotnet-knip config doctor --help": PrintDoctorHelp(output); break;
+            default: PrintTopLevelHelp(output); break;
+        }
+    }
+
+    private static void PrintTopLevelHelp(TextWriter output) => output.WriteLine(
+        """
+        Knip.NET finds removable code and references in .NET solutions.
+
+        Usage:
+          dotnet-knip <command> [arguments] [options]
+          dotnet-knip --version
+
+        Commands:
+          analyze        Analyze a solution or project.
+          explain        Explain one graph symbol.
+          config doctor  Validate knip.json without loading a target.
+
+        Run `dotnet-knip <command> --help` for command options and examples.
+
+        Examples:
+          dotnet-knip analyze
+          dotnet-knip analyze MyApp.slnx --format json --no-fail
+          dotnet-knip explain MyApp.slnx --symbol "MyApp.Services.Worker.Run()"
+          dotnet-knip config doctor
+        """);
+
+    private static void PrintAnalyzeHelp(TextWriter output) => output.WriteLine(
+        """
+        Usage:
+          dotnet-knip analyze [target] [options]
+
+        Arguments:
+          target              Existing .sln, .slnx, or .csproj file. Strictly discovered when omitted.
+
+        Options:
+          --config <path>     Use this exact knip.json file.
+          --production        Include code reachable only from tests.
+          --format <format>   console, json, or sarif. Default: console.
+          --no-fail           Change only a findings exit from 1 to 0.
+          --verbose           Write progress to stderr.
+          --help              Show this help.
+
+        Exit codes: 0 clean, 1 findings, 2 error, 130 cancelled.
+
+        Examples:
+          dotnet-knip analyze
+          dotnet-knip analyze MyApp.slnx --format json --no-fail
+          dotnet-knip analyze src/MyApp.csproj --config config/knip.json --production
+        """);
+
+    private static void PrintExplainHelp(TextWriter output) => output.WriteLine(
+        """
+        Usage:
+          dotnet-knip explain [target] --symbol <finding-id-or-display-name> [options]
+
+        Options:
+          --symbol <value>    Exact k1_ finding ID or fully qualified Roslyn display name. Required.
+          --config <path>     Use this exact knip.json file.
+          --production        Explain production and test reachability separately.
+          --verbose           Write progress to stderr.
+          --help              Show this help.
+
+        Exit codes: 0 found, 2 error, 130 cancelled.
+
+        Examples:
+          dotnet-knip explain MyApp.slnx --symbol k1_0123456789
+          dotnet-knip explain --symbol "MyApp.Services.Worker.Run()" --production
+        """);
+
+    private static void PrintConfigHelp(TextWriter output) => output.WriteLine(
+        """
+        Usage:
+          dotnet-knip config doctor [target] [--config <path>]
+
+        Commands:
+          doctor  Validate one knip.json against the bundled schema.
+
+        Examples:
+          dotnet-knip config doctor
+        """);
+
+    private static void PrintDoctorHelp(TextWriter output) => output.WriteLine(
+        """
+        Usage:
+          dotnet-knip config doctor [target] [--config <path>]
+
+        Arguments:
+          target           Optional existing .sln, .slnx, or .csproj used only as the discovery location.
+
+        Options:
+          --config <path>  Validate this exact knip.json file.
+          --help           Show this help.
+
+        Exit codes: 0 valid, 2 missing or invalid.
+
+        Examples:
+          dotnet-knip config doctor
+          dotnet-knip config doctor MyApp.slnx
+          dotnet-knip config doctor --config config/knip.json
+        """);
 }

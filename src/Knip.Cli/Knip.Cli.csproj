@@ -10,16 +10,14 @@
 
     <RollForward>LatestMajor</RollForward>
 
-    <!-- Package metadata for the .NET global tool: `dotnet tool install -g Hdir.Knip` -> `dotnet-knip`.
-         A .NET global tool runs on .NET (not .NET Framework), so the tool is packed for net10.0 ONLY.
-         net472 exists so the engine can be built against full-framework MSBuild for legacy
-         (packages.config) solutions on Windows — it is a normal build target, NOT the tool
-         distribution. PackAsTool + a net4x TFM errors (NETSDK1054), so tool packaging is scoped to
-         net10.0 below and metadata common to both TFMs (harmless on net472, which is never packed). -->
-    <PackageId>Hdir.Knip</PackageId>
-    <Version>0.1.0</Version>
-    <Authors>Helsedirektoratet</Authors>
-    <Description>Knip for .NET — a Roslyn-based, solution-wide dead-code finder (and unused project/package reference detector) for .NET, shipped as a `dotnet-knip` global tool with console/JSON/SARIF output and CI exit codes.</Description>
+    <!-- The global tool is packed for net10.0 only. The net472 target remains a compile-time contract
+         for legacy MSBuild hosts and is excluded from the tool package below. -->
+    <PackageId>AsmundWien.Knip</PackageId>
+    <Version>0.1.0-preview.1</Version>
+    <Authors>AsmundWien</Authors>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/asmundwien/knip-net</RepositoryUrl>
+    <Description>Knip.NET finds unused code and project or package references across .NET solutions.</Description>
     <PackageTags>dead-code;roslyn;dotnet-tool;analyzer;knip;unused-code;static-analysis;cleanup;migration</PackageTags>
   </PropertyGroup>
 
@@ -52,6 +50,7 @@
   <ItemGroup>
     <!-- Locator must be able to find the SDK's MSBuild; keep it out of the way of Roslyn's copy. -->
     <PackageReference Include="Microsoft.Build.Locator" Version="1.11.2" />
+    <PackageReference Include="JsonSchema.Net" Version="7.3.4" />
   </ItemGroup>
 
   <!-- Do not ship MSBuild assemblies; Locator loads the SDK's/VS's copies at runtime (MSBL001).
@@ -73,13 +72,11 @@
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
   </ItemGroup>
 
-  <!-- WS9: the agent-consumer protocol ships as an embedded resource so the installed global tool
-       reads it at runtime without depending on a source-checkout path. LogicalName is pinned so the
-       provider's GetManifestResourceStream key is stable regardless of RootNamespace changes. -->
   <ItemGroup>
-    <EmbeddedResource Include="Resources\AgentInstructions.md" LogicalName="Knip.Cli.Resources.AgentInstructions.md" />
+    <EmbeddedResource Include="..\..\schemas\knip.config.schema.json"
+                      Link="Schemas\knip.config.schema.json"
+                      LogicalName="Knip.Cli.Schemas.knip.config.schema.json" />
   </ItemGroup>
-
   <ItemGroup>
     <ProjectReference Include="..\Knip.Core\Knip.Core.csproj" />
   </ItemGroup>
