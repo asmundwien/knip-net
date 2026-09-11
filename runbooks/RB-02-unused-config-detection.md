@@ -141,9 +141,7 @@ Config surface (`knip.json` — user-facing API, pre-approved scope):
 
 Update in the SAME commits as behavior: `schemas/knip.config.schema.json`,
 `schemas/knip.output.schema.json` (new kind), README (new section: what is detected, the
-allowlist, the honest limits), `knip.json` example at repo root,
-`src/Knip.Cli/Resources/AgentInstructions.md` (one line: `unusedConfigKey` findings are always
-`low`/surface-only; never delete config autonomously).
+allowlist, the honest limits), and the `knip.json` example at the repo root.
 
 ## Task 3 — Reporting polish
 

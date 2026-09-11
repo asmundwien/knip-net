@@ -4,9 +4,7 @@ Read [RUNBOOK.md](RUNBOOK.md) before changing source, tests, schemas, or CLI beh
 
 Read [docs/architecture.md](docs/architecture.md) before changing module boundaries or the analysis flow.
 
-The JSON v2 output and `knip.json` are public contracts. Change their schemas with the behavior they describe. Update the embedded consumer protocol only when an agent's workflow or autonomy rules change.
-
-The consumer protocol has one source: `src/Knip.Cli/Resources/AgentInstructions.md`. The CLI prints it through `--agent-instructions` and writes it through `init --agent`. Do not copy it into this file.
+The installable `knip` Agent Skill is the sole agent workflow. Update `skills/knip/SKILL.md` and its disclosed references when that workflow or its autonomy rules change; do not duplicate it in repository instructions or the CLI.
 
 Keep this file limited to repository-specific instructions that project files cannot enforce. Do not repeat build commands, compiler settings, or formatting rules here.
 

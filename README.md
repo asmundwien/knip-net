@@ -14,6 +14,28 @@ Framework plugins add roots and edges for reflection, dependency injection, ASP.
 
 See [the architecture guide](docs/architecture.md) for module ownership and the analysis model.
 
+## Install the Agent Skill
+
+Install the release-pinned `knip` skill globally:
+
+```bash
+npx skills add https://github.com/asmundwien/knip-net/tree/v0.1.0-preview.1/skills/knip --global
+```
+
+Or install it for one project:
+
+```bash
+npx skills add https://github.com/asmundwien/knip-net/tree/v0.1.0-preview.1/skills/knip
+```
+
+Both commands retain the standard installer's confirmation prompt. The skill checks for the matching `AsmundWien.Knip` global tool and asks before installing or changing it.
+
+Repository contributors can install the current checkout instead:
+
+```bash
+npx skills add asmundwien/knip-net --skill knip
+```
+
 ## Run it
 
 From this repository:

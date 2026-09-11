@@ -2,7 +2,7 @@
 
 This guide owns the maintenance invariants, verification gate, and escalation rules. It describes the current product, not its design history.
 
-Read [README.md](README.md) for user behavior, [docs/architecture.md](docs/architecture.md) for module ownership and domain terms, and `src/Knip.Cli/Resources/AgentInstructions.md` for the agent consumer protocol.
+Read [README.md](README.md) for user behavior, [docs/architecture.md](docs/architecture.md) for module ownership and domain terms, and `skills/knip/SKILL.md` for the agent workflow.
 
 ## 1. Scope
 

@@ -212,9 +212,8 @@ Assertions: exact finding presence/absence per project, `kind == unusedProject`,
 `confidence == medium` (C3 tier — same reasoning as project references: structural findings whose
 verification is cheap), `remediation` string `"removeProject"`, `span == null`.
 
-`span == null` is deliberate: per the agent protocol (§4, `Resources/AgentInstructions.md`),
-findings without a span are **surfaced, never auto-deleted** — removing a project from a solution
-is always a human-reviewed act in v1.
+`span == null` is deliberate: the finding has no machine-editable deletion range, so removing a
+project from a solution remains a human-reviewed act in v1.
 
 ### Detection rule (v1, keep it narrow)
 
@@ -234,10 +233,7 @@ list, and the project-reference table. Add `BuildUnusedProjectFindings` alongsid
 member in `FindingKind` (`Finding.cs`) with a doc comment matching the house style.
 
 **Schema + docs (same commit):** `schemas/knip.output.schema.json` gains the new `kind` and
-`remediation` values; README's finding-kind table gains a row;
-`src/Knip.Cli/Resources/AgentInstructions.md` gains one line in §3/§4 territory stating that
-`unusedProject` findings are always surface-only (span is null). Touching AgentInstructions.md is a
-protocol-surface change — flag it explicitly in the PR description even though pre-approved here.
+`remediation` values; README's finding-kind table gains a row.
 
 ---
 
